@@ -76,7 +76,7 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # abort if we already have exactly this gateway id/host
         # reload the integration if the host got updated
         await self.async_set_unique_id(discovery_info.hostname)
-        self._abort_if_unique_id_configured(updates=self.data)
+        self._abort_if_unique_id_configured(updates=self.data, reload_on_update=False)
 
         return await self.async_step_serial()
 
@@ -99,7 +99,7 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
                 # Abort if the gateway is already registered, reload if necessary
                 await self.async_set_unique_id(device_id)
-                self._abort_if_unique_id_configured(updates=self.data)
+                self._abort_if_unique_id_configured(updates=self.data, reload_on_update=False)
 
                 return await step_method()
 

@@ -107,10 +107,7 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     This function is called by Home Assistant when the integration configuration is updated.
     """
     # Unload the entry and its dependent components
-    await async_unload_entry(hass, entry)
-
-    # Set up the entry again
-    await async_setup_entry(hass, entry)
+    hass.config_entries.async_schedule_reload(entry.entry_id)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
