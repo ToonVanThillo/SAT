@@ -103,14 +103,16 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
   refactor. Tests that pin known bugs are labelled as such.
+- Characterization tests assert observable behaviour (published MQTT messages,
+  public properties, entity states, logs), not private attributes, so they
+  survive the refactor.
 - Channel logic is unit tested separately from the backends.
 
 ## Plan
-1. Characterization tests for the coordinator and MQTT layers.
-2. Snapshot; climate reads only from the snapshot. No behaviour change.
-3. `DesiredState` and channels for EMS-ESP.
-4. Channel diagnostics; remove the synchro sensors.
-5. Migrate the other backends.
+1. Snapshot; climate reads only from the snapshot. No behaviour change.
+2. `DesiredState` and channels for EMS-ESP.
+3. Channel diagnostics; remove the synchro sensors.
+4. Migrate the other backends.
 
 ## Open questions
 - EMS-ESP read-back keys and echo behaviour (for example, whether sending 10 as
@@ -120,3 +122,8 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
   how control cycles are triggered is outside this layer but needs fixing.
 - `boiler_temperature_filtered` is a noise measure but is used as PID input;
   investigate separately.
+- Platforms are set up concurrently, so `binary_sensor` and `sensor` can run
+  before `climate` has registered itself; their entities are then intermittently
+  missing. Left unfixed for now; tests set up the base components first.
+- Whether confirmed channels need a periodic refresh for devices that revert
+  settings; decide from observed drift.

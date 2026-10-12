@@ -1,13 +1,26 @@
 """Fixtures for testing."""
+import asyncio
+import json
+from collections.abc import Awaitable, Callable, Iterator
+from datetime import timedelta
+from unittest.mock import patch
+
 import pytest
 from _pytest.logging import LogCaptureFixture
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import assert_setup_component, MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    assert_setup_component,
+    async_fire_mqtt_message,
+    async_fire_time_changed,
+)
 
-from custom_components.sat.const import DOMAIN, CLIMATE, COORDINATOR
 from custom_components.sat.climate import SatClimate
+from custom_components.sat.const import CLIMATE, CONF_MQTT_TOPIC, COORDINATOR, DOMAIN
 from custom_components.sat.fake import SatFakeCoordinator
+from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
 from tests.const import DEFAULT_USER_DATA
 
 
@@ -45,3 +58,52 @@ async def climate(hass, entry: MockConfigEntry) -> SatClimate:
 @pytest.fixture
 async def coordinator(hass, entry: MockConfigEntry) -> SatFakeCoordinator:
     return hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+
+
+@pytest.fixture
+def no_publish_delay() -> Iterator[None]:
+    """Replace asyncio.sleep globally with a zero-delay yield, so the 1s wait after an MQTT publish does not slow the tests."""
+    real_sleep = asyncio.sleep
+
+    with patch("custom_components.sat.mqtt.asyncio.sleep", new=lambda *_a, **_k: real_sleep(0)):
+        yield
+
+
+async def advance(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float) -> None:
+    """Advance the frozen clock and fire the timers that are due."""
+    freezer.tick(timedelta(seconds=seconds))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+@pytest.fixture
+def published(mqtt_mock) -> Callable[[], list[tuple]]:
+    """Return the (topic, payload, qos, retain) tuples published through the MQTT mock so far."""
+    return lambda: [call.args for call in mqtt_mock.async_publish.call_args_list]
+
+
+@pytest.fixture
+async def base_components(hass: HomeAssistant) -> None:
+    """Set up the platforms' base components first, so that all SAT entities get created."""
+    for domain in ("climate", "binary_sensor", "sensor"):
+        assert await async_setup_component(hass, domain, {})
+
+
+@pytest.fixture
+async def ems(hass: HomeAssistant, mqtt_mock, no_publish_delay) -> SatEmsMqttCoordinator:
+    """Return a started EMS MQTT coordinator on topic `ems-esp`, with the startup publishes cleared."""
+    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: "ems-esp"})
+    await coordinator.async_added_to_hass()
+    mqtt_mock.async_publish.reset_mock()
+
+    return coordinator
+
+
+@pytest.fixture
+def boiler_data(hass: HomeAssistant) -> Callable[..., Awaitable[None]]:
+    """Return a coroutine function that publishes an EMS `boiler_data` payload on topic `ems-esp`."""
+    async def publish(**data) -> None:
+        async_fire_mqtt_message(hass, "ems-esp/boiler_data", json.dumps(data))
+        await hass.async_block_till_done()
+
+    return publish
