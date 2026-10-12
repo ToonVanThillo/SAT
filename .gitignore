@@ -1,1 +1,7 @@
 .idea
+CLAUDE.md
+.claude/
+custom_components/sat/__pycache__
+custom_components/sat/mqtt/__pycache__
+custom_components/sat/mqtt/ems_mqtt_example_payloads
+custom_components/sat/manufacturers/__pycache__
