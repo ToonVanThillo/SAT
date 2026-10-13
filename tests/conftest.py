@@ -107,3 +107,17 @@ def boiler_data(hass: HomeAssistant) -> Callable[..., Awaitable[None]]:
         await hass.async_block_till_done()
 
     return publish
+
+
+@pytest.fixture
+async def loop_entry(mqtt_mock, no_publish_delay, freezer: FrozenDateTimeFactory, base_components: None, entry: MockConfigEntry) -> MockConfigEntry:
+    """Opt-in: set up MQTT without publish delays, freeze time and set up the base components before the entry."""
+    return entry
+
+
+@pytest.fixture
+def no_publish_error(caplog: LogCaptureFixture) -> Iterator[None]:
+    """Opt-in: fail the test if an MQTT publish failed during its call phase."""
+    yield
+    # After the yield only teardown logs are in caplog.text, so inspect the call phase
+    assert not [r for r in caplog.get_records("call") if "Failed to publish MQTT command" in r.getMessage()]

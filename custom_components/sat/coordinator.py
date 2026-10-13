@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from abc import abstractmethod
+from dataclasses import dataclass
 from time import monotonic
 from typing import TYPE_CHECKING, Mapping, Any, Optional, Callable
 
@@ -30,6 +31,15 @@ _LOGGER: logging.Logger = logging.getLogger(__name__)
 class DeviceState(str, Enum):
     ON = "on"
     OFF = "off"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BoilerSnapshot:
+    """Immutable view of the boiler that the control logic reads during one cycle."""
+    boiler: BoilerState
+    flame: FlameState
+    maximum_relative_modulation_value: float | None
+    manufacturer: Manufacturer | None
 
 
 class SatData(dict):
@@ -424,6 +434,15 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
     async def async_will_remove_from_hass(self) -> None:
         """Run when an entity is removed from hass."""
         pass
+
+    def snapshot(self) -> BoilerSnapshot:
+        """Read the device and derived values once; take it right after the update step of the cycle."""
+        return BoilerSnapshot(
+            boiler=self.boiler,
+            flame=self.flame,
+            maximum_relative_modulation_value=self.maximum_relative_modulation_value,
+            manufacturer=self.manufacturer,
+        )
 
     async def async_control_heating_loop(self, climate: Optional[SatClimate] = None, pwm_state: Optional[PWMState] = None, _time=None) -> None:
         """Control the heating loop for the device."""

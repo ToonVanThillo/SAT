@@ -12,16 +12,10 @@ from custom_components.sat.const import CONF_FORCE_PULSE_WIDTH_MODULATION
 from tests.conftest import advance
 from tests.const import ems_entry
 
-pytestmark = pytest.mark.usefixtures("mqtt_mock", "no_publish_delay")
+pytestmark = pytest.mark.usefixtures("loop_entry")
 
 BOILER = "ems-esp/boiler"
 IDLE = {"selflowtemp": 40, "curflowtemp": 40.5, "rettemp": 35, "curburnpow": 0, "burnmaxpower": 31, "heatingactive": "off", "burngas": "off", "tapactivated": "off"}
-
-
-@pytest.fixture
-async def entry(freezer, base_components, entry):
-    """Freeze time and set up the base components before the entry."""
-    return entry
 
 
 def message(payload: str) -> tuple:

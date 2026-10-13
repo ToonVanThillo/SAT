@@ -19,17 +19,11 @@ from tests.conftest import advance
 from tests.const import ems_entry
 from tests.test_climate_loop import IDLE, message, run_loop
 
-pytestmark = pytest.mark.usefixtures("mqtt_mock", "no_publish_delay")
+pytestmark = pytest.mark.usefixtures("loop_entry")
 
 INSIDE = "sensor.test_inside_sensor"
 OUTSIDE = "sensor.test_outside_sensor"
 RADIATOR = "climate.radiator"
-
-
-@pytest.fixture
-async def entry(freezer, base_components, entry):
-    """Freeze time and set up the base components before the entry."""
-    return entry
 
 
 def with_data(data: dict, options: dict | None = None) -> tuple[str, list[tuple]]:

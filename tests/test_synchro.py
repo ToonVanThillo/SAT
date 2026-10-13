@@ -18,17 +18,12 @@ from custom_components.sat.const import (
     CONF_FORCE_PULSE_WIDTH_MODULATION,
     CONF_MAXIMUM_SETPOINT,
 )
+from tests.conftest import advance
 from tests.const import ems_entry
 
-pytestmark = pytest.mark.usefixtures("mqtt_mock", "no_publish_delay")
+pytestmark = pytest.mark.usefixtures("loop_entry")
 
 IDLE = {"selflowtemp": 40, "curflowtemp": 40.5, "rettemp": 35, "curburnpow": 0, "burnmaxpower": 100, "heatingactive": "off", "burngas": "off", "tapactivated": "off"}
-
-
-@pytest.fixture
-async def entry(freezer, base_components, entry):
-    """Freeze time and set up the base components before the entry."""
-    return entry
 
 
 def is_on_after_delay(sensor: BinarySensorEntity, freezer: FrozenDateTimeFactory) -> tuple[bool, bool]:
@@ -42,7 +37,7 @@ def is_on_after_delay(sensor: BinarySensorEntity, freezer: FrozenDateTimeFactory
 
 
 @pytest.mark.parametrize(*ems_entry({CONF_MAXIMUM_SETPOINT: 30}))
-async def test_control_setpoint_synchro_turns_on_above_maximum_setpoint(entry, climate, coordinator, boiler_data, freezer, published):
+async def test_control_setpoint_synchro_turns_on_above_maximum_setpoint(hass, entry, climate, coordinator, boiler_data, freezer, published):
     sensor = SatControlSetpointSynchroSensor(coordinator, entry, climate)
     await boiler_data(**IDLE)
     await climate.async_set_target_temperature(21.0)
@@ -57,10 +52,11 @@ async def test_control_setpoint_synchro_turns_on_above_maximum_setpoint(entry, c
     assert climate.setpoint == 35.0
     assert coordinator.setpoint == 30.0
     assert is_on_after_delay(sensor, freezer) == (False, True)
+    await advance(hass, freezer, 0)  # run the debounced loop before teardown
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_control_setpoint_synchro_stays_off_when_values_match(entry, climate, coordinator, boiler_data, freezer):
+async def test_control_setpoint_synchro_stays_off_when_values_match(hass, entry, climate, coordinator, boiler_data, freezer):
     sensor = SatControlSetpointSynchroSensor(coordinator, entry, climate)
     await boiler_data(**IDLE)
     await climate.async_set_target_temperature(21.0)
@@ -69,10 +65,11 @@ async def test_control_setpoint_synchro_stays_off_when_values_match(entry, clima
     await boiler_data(selflowtemp=35.0)
 
     assert is_on_after_delay(sensor, freezer) == (False, False)
+    await advance(hass, freezer, 0)  # run the debounced loop before teardown
 
 
 @pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
-async def test_relative_modulation_synchro_stays_on_for_ems(entry, climate, coordinator, boiler_data, freezer):
+async def test_relative_modulation_synchro_stays_on_for_ems(hass, entry, climate, coordinator, boiler_data, freezer):
     sensor = SatRelativeModulationSynchroSensor(coordinator, entry, climate)
     await boiler_data(**IDLE)
     await climate.async_set_target_temperature(21.0)
@@ -87,10 +84,11 @@ async def test_relative_modulation_synchro_stays_on_for_ems(entry, climate, coor
 
     freezer.tick(3600)
     assert sensor.is_on is True
+    await advance(hass, freezer, 0)  # run the debounced loop before teardown
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_central_heating_synchro_never_turns_on_in_heat_mode(entry, climate, coordinator, boiler_data, freezer):
+async def test_central_heating_synchro_never_turns_on_in_heat_mode(hass, entry, climate, coordinator, boiler_data, freezer):
     sensor = SatCentralHeatingSynchroSensor(coordinator, entry, climate)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
@@ -98,12 +96,14 @@ async def test_central_heating_synchro_never_turns_on_in_heat_mode(entry, climat
     for heating_active in ("off", "on", "off"):
         await boiler_data(**IDLE | {"heatingactive": heating_active})
         assert is_on_after_delay(sensor, freezer) == (False, False)
+    await advance(hass, freezer, 0)  # run the debounced loop before teardown
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_central_heating_synchro_turns_on_when_off_but_device_active(entry, climate, coordinator, boiler_data, freezer):
+async def test_central_heating_synchro_turns_on_when_off_but_device_active(hass, entry, climate, coordinator, boiler_data, freezer):
     sensor = SatCentralHeatingSynchroSensor(coordinator, entry, climate)
     await boiler_data(**IDLE | {"heatingactive": "on"})
     await climate.async_set_hvac_mode(HVACMode.OFF)
 
     assert is_on_after_delay(sensor, freezer) == (False, True)
+    await advance(hass, freezer, 0)  # run the debounced loop before teardown

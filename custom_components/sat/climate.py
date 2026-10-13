@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import timedelta, datetime
 from time import monotonic, time
 from typing import Optional, Callable
@@ -35,11 +36,12 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .area import Areas, SENSOR_TEMPERATURE_ID
+from .boiler import BoilerState
 from .const import *
 from .const import PWMStatus
-from .coordinator import SatDataUpdateCoordinator, DeviceState
+from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
 from .entity import SatEntity
-from .errors import Errors, Error
+from .errors import Error
 from .helpers import convert_time_str_to_seconds, is_state_stale, state_age_seconds
 from .manufacturers.geminox import Geminox
 from .pwm import PWMState
@@ -75,6 +77,15 @@ class SatWarmingUp:
     @property
     def elapsed(self):
         return int(time()) - self.started
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ClimateInputs:
+    """Immutable view of the climate's own inputs that the control logic reads during one cycle."""
+    target_temperature: float | None
+    current_temperature: float | None
+    outside_temperature: float | None
+    valves_open: bool
 
 
 class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
@@ -172,7 +183,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.areas = Areas(config_entry.data, config_options)
 
         # Create Relative Modulation controller
-        self.relative_modulation = RelativeModulation(coordinator, self._heating_system)
+        self.relative_modulation = RelativeModulation(self._heating_system)
 
         # Create a Heating Curve controller with given configuration options
         self.heating_curve = create_heating_curve_controller(config_entry.data, config_options)
@@ -364,6 +375,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
     @property
     def extra_state_attributes(self):
         """Return device state attributes."""
+        boiler = self._coordinator.boiler
+
         return {
             "error": self.max_error.value,
             "error_pid": self.pid.last_error,
@@ -404,9 +417,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             "optimal_coefficient": self.heating_curve.optimal_coefficient,
             "coefficient_derivative": self.heating_curve.coefficient_derivative,
 
-            "relative_modulation_value": self.relative_modulation_value,
-            "relative_modulation_enabled": self.relative_modulation.enabled,
-            "relative_modulation_state": self.relative_modulation_state.name,
+            "relative_modulation_value": self.get_relative_modulation_value(boiler),
+            "relative_modulation_enabled": self.relative_modulation.enabled(boiler),
+            "relative_modulation_state": self.relative_modulation.state(boiler).name,
 
             "pulse_width_modulation_enabled": self.pwm.enabled,
             "pulse_width_modulation_state": self.pwm.status.name,
@@ -438,12 +451,17 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return self._target_temperature
 
     @property
-    def error(self):
+    def error(self) -> float:
         """Return the error value."""
-        if self.target_temperature is None or self.current_temperature is None:
+        return self.get_error(self.target_temperature, self.current_temperature)
+
+    @staticmethod
+    def get_error(target_temperature: float | None, current_temperature: float | None) -> float:
+        """Return the target minus the inside temperature, or 0 if either is unknown."""
+        if target_temperature is None or current_temperature is None:
             return 0
 
-        return round(self.target_temperature - self.current_temperature, 2)
+        return round(target_temperature - current_temperature, 2)
 
     @property
     def current_outside_temperature(self):
@@ -487,16 +505,16 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return HVACAction.HEATING
 
     @property
-    def errors(self) -> Errors:
-        errors = Errors([Error(self.entity_id, self.error)])
-        if self._heating_mode == HEATING_MODE_ECO:
-            return errors
-
-        return errors + self.areas.errors
-
-    @property
     def max_error(self) -> Error:
-        return max(self.errors, key=lambda error: error.value)
+        return self.get_max_error(self.error)
+
+    def get_max_error(self, error: float) -> Error:
+        """Return the largest of the given climate error and, unless in eco mode, the areas' live errors."""
+        errors = [Error(self.entity_id, error)]
+        if self._heating_mode != HEATING_MODE_ECO:
+            errors += self.areas.errors
+
+        return max(errors, key=lambda e: e.value)
 
     @property
     def setpoint(self) -> float | None:
@@ -569,14 +587,18 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
     @property
     def relative_modulation_value(self) -> int:
-        if not self.relative_modulation.enabled and self._coordinator.supports_relative_modulation_management:
-            return MINIMUM_RELATIVE_MODULATION
-
-        return self._maximum_relative_modulation
+        return self.get_relative_modulation_value(self._coordinator.boiler)
 
     @property
     def relative_modulation_state(self) -> RelativeModulationState:
-        return self.relative_modulation.state
+        return self.relative_modulation.state(self._coordinator.boiler)
+
+    def get_relative_modulation_value(self, boiler: BoilerState) -> int:
+        """Return the maximum relative modulation to send for the given boiler state."""
+        if not self.relative_modulation.enabled(boiler) and self._coordinator.supports_relative_modulation_management:
+            return MINIMUM_RELATIVE_MODULATION
+
+        return self._maximum_relative_modulation
 
     @property
     def minimum_setpoint_value(self) -> float:
@@ -835,7 +857,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         await self._coordinator.async_set_control_setpoint(min(self._setpoint, self._coordinator.maximum_setpoint))
         _LOGGER.info("Control setpoint has been updated to: %.1f°C", self._setpoint)
 
-    async def _async_control_relative_modulation(self) -> None:
+    async def _async_control_relative_modulation(self, snapshot: BoilerSnapshot) -> None:
         """Control the relative modulation value based on the conditions."""
         if not self._coordinator.supports_relative_modulation_management:
             _LOGGER.debug("Relative modulation management is not supported. Skipping control.")
@@ -845,14 +867,14 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         await self.relative_modulation.update(self.pulse_width_modulation_enabled)
 
         # Retrieve the relative modulation
-        relative_modulation_value = self.relative_modulation_value
+        relative_modulation_value = self.get_relative_modulation_value(snapshot.boiler)
 
         # Apply some filters based on the manufacturer
-        if isinstance(self._coordinator.manufacturer, Geminox):
+        if isinstance(snapshot.manufacturer, Geminox):
             relative_modulation_value = max(10, relative_modulation_value)
 
         # Determine if the value needs to be updated
-        if self._coordinator.maximum_relative_modulation_value == relative_modulation_value:
+        if snapshot.maximum_relative_modulation_value == relative_modulation_value:
             _LOGGER.debug("Relative modulation value unchanged (%d%%). No update necessary.", relative_modulation_value)
             return
 
@@ -926,8 +948,15 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Let the sub know we have run
         self._control_heating_loop_unsub = None
 
+        inputs = ClimateInputs(
+            target_temperature=self.target_temperature,
+            current_temperature=self.current_temperature,
+            outside_temperature=self.current_outside_temperature,
+            valves_open=self.valves_open,
+        )
+
         # If the current, target or outside temperature is not available, do nothing
-        if self.current_temperature is None or self.target_temperature is None or self.current_outside_temperature is None:
+        if inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
             return
 
         # No need to do anything if we are not on
@@ -936,6 +965,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         # Control the heating through the coordinator
         await self._coordinator.async_control_heating_loop(climate=self, pwm_state=self.pwm.state)
+        snapshot = self._coordinator.snapshot()
 
         if self._calculated_setpoint is None:
             # Default to the calculated setpoint
@@ -945,7 +975,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self._calculated_setpoint = round(self._alpha * self._calculate_control_setpoint() + (1 - self._alpha) * self._calculated_setpoint, 1)
 
         # Check for overshoot
-        if self._coordinator.device_status == BoilerStatus.OVERSHOOT_HANDLING:
+        if snapshot.boiler.status == BoilerStatus.OVERSHOOT_HANDLING:
             _LOGGER.info("Overshoot Handling detected, enabling Pulse Width Modulation.")
             self.pwm.enable()
 
@@ -953,50 +983,51 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if not self.pulse_width_modulation_enabled:
             self.pwm.reset()
         else:
-            await self.pwm.update(flame=self._coordinator.flame, boiler=self._coordinator.boiler, requested_setpoint=self._calculated_setpoint)
+            await self.pwm.update(flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint)
 
         # Set the control setpoint to make sure we always stay in control
         await self._async_control_setpoint(self.pwm.state)
 
         # Set the relative modulation value, if supported
-        await self._async_control_relative_modulation()
+        await self._async_control_relative_modulation(snapshot)
 
         # Control the integral (if exceeded the time limit)
         if self.heating_curve.value is not None:
-            self.pid.update_integral(self.max_error, self.heating_curve.value)
+            error = self.get_error(inputs.target_temperature, inputs.current_temperature)
+            self.pid.update_integral(self.get_max_error(error), self.heating_curve.value)
 
         # Control our areas
         await self.areas.async_control_heating_loops()
 
         # Control our dynamic minimum setpoint (version 1)
-        if not self._coordinator.hot_water_active and self._coordinator.flame_active:
+        if not snapshot.boiler.hot_water_active and snapshot.boiler.flame_active:
             # Calculate the base return temperature
-            if self._coordinator.device_status == BoilerStatus.HEATING_UP:
-                self.minimum_setpoint.warming_up(self._coordinator.boiler)
+            if snapshot.boiler.status == BoilerStatus.HEATING_UP:
+                self.minimum_setpoint.warming_up(snapshot.boiler)
 
             # Calculate the dynamic minimum setpoint
-            self.minimum_setpoint.calculate(self._coordinator.boiler, self.pwm.status)
+            self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.status)
 
         # If the setpoint is high, turn on the heater
-        await self.async_set_heater_state(DeviceState.ON if self._setpoint is not None and self._setpoint > COLD_SETPOINT else DeviceState.OFF)
+        await self.async_set_heater_state(DeviceState.ON if self._setpoint is not None and self._setpoint > COLD_SETPOINT else DeviceState.OFF, snapshot, valves_open=inputs.valves_open)
 
         self.async_write_ha_state()
 
-    async def async_set_heater_state(self, state: DeviceState):
-        """Set the heater state, ensuring proper conditions are met."""
+    async def async_set_heater_state(self, state: DeviceState, snapshot: BoilerSnapshot, *, valves_open: bool = False) -> None:
+        """Set the heater state, ensuring proper conditions are met. `valves_open` is only checked when turning on."""
         _LOGGER.debug("Attempting to set heater state to: %s", state)
 
         if state == DeviceState.ON:
-            if self._coordinator.device_active:
+            if snapshot.boiler.is_active:
                 _LOGGER.info("Heater is already active. No action taken.")
                 return
 
-            if not self.valves_open:
+            if not valves_open:
                 _LOGGER.warning("Cannot turn on heater: no valves are open.")
                 return
 
         elif state == DeviceState.OFF:
-            if not self._coordinator.device_active:
+            if not snapshot.boiler.is_active:
                 _LOGGER.info("Heater is already off. No action taken.")
                 return
 
@@ -1022,7 +1053,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self._hvac_mode = HVACMode.HEAT
         elif hvac_mode == HVACMode.OFF:
             self._hvac_mode = HVACMode.OFF
-            await self.async_set_heater_state(DeviceState.OFF)
+            await self.async_set_heater_state(DeviceState.OFF, self._coordinator.snapshot())
         else:
             # If an unsupported mode is passed, log an error message
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
