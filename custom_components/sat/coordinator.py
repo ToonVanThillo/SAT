@@ -3,13 +3,16 @@ from __future__ import annotations
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from time import monotonic
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping, Any, Optional, Callable
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback, HassJob
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
 from .const import *
@@ -34,33 +37,54 @@ class DeviceState(str, Enum):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class Reading:
+    """A raw device value with the time it was received; a value restored from storage has no receive time."""
+    value: Any
+    received_at: datetime | None
+
+    @property
+    def restored(self) -> bool:
+        return self.received_at is None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class BoilerSnapshot:
     """Immutable view of the boiler that the control logic reads during one cycle."""
     boiler: BoilerState
     flame: FlameState
     maximum_relative_modulation_value: float | None
     manufacturer: Manufacturer | None
+    readings: Mapping[str, Reading]
 
 
 class SatData(dict):
-    _is_dirty: bool = False
+    def __init__(self) -> None:
+        super().__init__()
+        self._is_dirty: bool = False
+        self._received_at: dict[str, datetime | None] = {}
 
     def __setitem__(self, key, value):
-        if self.get(key) != value:
-            self._is_dirty = True
+        self.update({key: value})
 
-        super().__setitem__(key, value)
+    def update(self, other: Mapping[str, Any], *, restored: bool = False) -> None:
+        """Store the values, stamped with the current time, or without a time when they are restored from storage."""
+        received_at = None if restored else dt_util.utcnow()
 
-    def update(self, other: dict, **kwargs):
         for key, value in other.items():
             if self.get(key) != value:
                 self._is_dirty = True
 
             super().__setitem__(key, value)
+            self._received_at[key] = received_at
 
     def __delitem__(self, key):
         self._is_dirty = True
         super().__delitem__(key)
+        self._received_at.pop(key, None)
+
+    def readings(self) -> Mapping[str, Reading]:
+        """Return a read-only copy of the current values with their receive times."""
+        return MappingProxyType({key: Reading(value=value, received_at=self._received_at.get(key)) for key, value in self.items()})
 
     def reset_dirty(self):
         self._is_dirty = False
@@ -442,6 +466,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             flame=self.flame,
             maximum_relative_modulation_value=self.maximum_relative_modulation_value,
             manufacturer=self.manufacturer,
+            readings=self.data.readings(),
         )
 
     async def async_control_heating_loop(self, climate: Optional[SatClimate] = None, pwm_state: Optional[PWMState] = None, _time=None) -> None:
@@ -530,10 +555,10 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         self.async_update_listeners()
 
     @callback
-    def async_set_updated_data(self, data: dict) -> None:
-        """Update the stored data and notify listeners if changes are detected."""
+    def async_set_updated_data(self, data: dict, *, restored: bool = False) -> None:
+        """Update the stored data and notify listeners if changes are detected; `restored` marks values loaded from storage."""
         # Update the internal data store with new values
-        self.data.update(data)
+        self.data.update(data, restored=restored)
 
         if self.data.is_dirty():
             # Cancel previous scheduled run, if any

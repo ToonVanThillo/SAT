@@ -54,7 +54,7 @@ class SatMqttCoordinator(SatDataUpdateCoordinator):
     async def _load_stored_data(self) -> None:
         """Load the data from persistent storage."""
         if stored_data := await self._store.async_load():
-            self.async_set_updated_data({key: value for key, value in stored_data.items() if value not in (None, "")})
+            self.async_set_updated_data({key: value for key, value in stored_data.items() if value not in (None, "")}, restored=True)
 
     async def _save_data(self) -> None:
         """Save the data to persistent storage."""
