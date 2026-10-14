@@ -10,22 +10,24 @@ upstream compatibility is not a goal.
 Each cycle has three phases, in this order:
 
 1. **Snapshot**: the climate captures its inputs, then the coordinator runs its
-   update step and builds one immutable `BoilerSnapshot`.
+   update step and builds one immutable `BoilerSnapshot`. The channels verify
+   the previous cycle's writes against it.
 2. **Decide**: the control logic (climate, PWM, PID, relative modulation) reads
    only the snapshot, the inputs, and the coordinator's capabilities and
    configured limits, and produces a `DesiredState`. No device writes happen
    here.
-3. **Reconcile**: the coordinator hands the `DesiredState` to its channels, which
-   write what differs and track confirmation.
+3. **Reconcile**: the coordinator hands the `DesiredState` to its channels,
+   which write what is needed.
 
 Every write goes through this path, including HVAC mode OFF and pushing the
-setpoint to the thermostat.
+setpoint to the thermostat. Hot water control is out of scope; the hot water
+setpoint keeps its direct write path.
 
 ## Snapshot
 - Built once per cycle by `coordinator.snapshot()`, right after the
   coordinator's update step (flame state, temperature history, tracker). It is a
-  frozen dataclass filled from the coordinator's public properties, so backends
-  need no changes.
+  frozen dataclass filled from the coordinator's public properties and its raw
+  device values (`readings`, by device key), so backends need no changes.
 - It holds the device and derived values the control logic reads (boiler state
   including device status, flame state) and the manufacturer, each read once per
   cycle. Capabilities (`supports_*`) and configured setpoint limits stay on the
@@ -42,8 +44,8 @@ setpoint to the thermostat.
 
 ## Desired state
 - A `DesiredState` holds one optional value per controllable quantity: control
-  setpoint, heater on/off, max relative modulation, max setpoint, hot water
-  setpoint, thermostat setpoint.
+  setpoint, heater on/off, max relative modulation, max setpoint, thermostat
+  setpoint.
 - A requested value becomes the channel's target and stays the target until a
   different value is requested. `None` means "keep the current target".
 - Submitting the same desired state twice therefore has no extra effect.
@@ -53,40 +55,41 @@ One channel per controllable quantity per backend.
 
 **Definition**
 - `encode(requested) -> wire value`: clamps, unit conversion and device quirks,
-  gated by manufacturer where they only apply to some boilers.
+  gated by manufacturer or configuration where they only apply to some boilers.
 - `write(wire value)`: the backend-specific send. A failed write raises inside
-  the channel layer; reconciliation catches it per channel, logs a warning and
-  counts a failed attempt. A failure never stops the control loop or other
-  channels.
-- `read(snapshot) -> value | None`: reads the device setting back.
+  the channel layer; reconciliation catches it per channel and logs a warning.
+  The sent value is not updated, so the next cycle writes again. A failure
+  never stops the control loop or other channels.
+- `read(snapshot) -> reading | None`: reads the device setting back, with the
+  time it was received.
 - A channel has a read, a write, or both. Without a read it is write-only;
   without a write it is read-only. Quantities a backend can neither read nor
   write have no channel.
-- Tolerance, confirmation timeout, maximum retries, and a resend interval for
-  write-only channels.
+- Tolerance, and whether to write every cycle.
 
 **Tracked state:** target value, sent (wire) value and time, read-back value
-and time, attempt count, drift count, status.
+and time, drift count, status.
 
-**Statuses:** `IDLE` (no target yet), `PENDING`, `IN_SYNC`, `DRIFTED`,
-`FAILED`, `WRITE_ONLY`, `READ_ONLY`.
+**Statuses:** `IDLE` (no target yet), `PENDING`, `IN_SYNC`, `OUT_OF_SYNC`,
+`DRIFTED`, `WRITE_ONLY`, `READ_ONLY`.
 
-**Reconcile rules** (every cycle, every channel)
-1. Verify: if a value was sent and a read-back newer than the send exists,
-   compare it with the sent value. A mismatch on an `IN_SYNC` channel gives
-   `DRIFTED`. This runs whether or not a new value was requested: with an
-   unchanged target, the read-back in cycle x+1 must equal the value sent in
-   cycle x.
-2. Write: encode the target. Write it if the wire value differs from the last
-   sent value, or if the channel is `DRIFTED`, and go to `PENDING`.
-3. Confirm: `PENDING` with a matching read-back newer than the send gives
-   `IN_SYNC`. After the timeout, retry. Once the maximum number of retries is
-   reached, go to `FAILED`.
-4. Write-only: resend after the resend interval.
-5. Read-only: a requested value is ignored and a warning is logged once.
+**Verify** (read-write channels, every cycle, right after the snapshot)
+Compare the latest read-back received after the last send with the sent value:
+- a match gives `IN_SYNC`;
+- a mismatch gives `DRIFTED` if the channel was `IN_SYNC`, else `OUT_OF_SYNC`;
+- without such a read-back the status is unchanged.
+
+**Write** (every cycle, after the decide phase)
+- Read-write: encode the target and write it if the wire value differs from
+  the last sent value, if the channel is `OUT_OF_SYNC` or `DRIFTED`, or if it
+  writes every cycle; the channel goes to `PENDING`.
+- Write-only: write the target every cycle; it cannot be verified.
+- Read-only: a requested value is ignored and a warning is logged once.
+- Reading a write-only channel returns nothing and logs a warning once.
 
 Read-backs are compared with the sent value, not the requested one, so clamps
-and quirks don't count as mismatches.
+and quirks don't count as mismatches. Read-backs received before the last send
+are ignored: they describe the device before the write.
 
 **Confirmation:** a channel confirms that the device accepted a value (its
 setting reads back as sent). Whether the boiler acts on it is out of scope.
@@ -100,17 +103,16 @@ setting reads back as sent). Whether the boiler acts on it is out of scope.
 ## Diagnostics
 Each channel gets a diagnostic entity whose state is a filtered status, so
 short transients such as `PENDING` don't show:
-- `OK`: the channel behaves as intended, including `PENDING` within its
-  confirmation timeout.
+- `OK`: the channel behaves as intended, including `PENDING`.
 - `DRIFTED`: the setting drifted from the sent value at least once within the
   diagnostic window. It stays until a full window passes without drift, so a
   value that keeps drifting and being rewritten stays visible.
-- `FAILED`: the latest value could not be written or was not accepted after
-  all retries. It stays until a write is confirmed.
-- `UNVERIFIED` (write-only), `READ_ONLY` (read-only), `IDLE` (no target yet).
+- `OUT_OF_SYNC`: the latest value did not read back as sent. It stays until a
+  write is confirmed.
+- `WRITE_ONLY`, `READ_ONLY`, `IDLE` (no target yet).
 
 Attributes: the internal status, target, sent and read-back values with
-timestamps, and attempt and drift counts. These entities replace the Control
+timestamps, and the drift count. These entities replace the Control
 Setpoint, Relative Modulation and Central Heating synchro sensors.
 
 ## Testing
@@ -127,18 +129,29 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
 ## Plan
 1. Snapshot and climate inputs; the climate loop reads only from them.
 2. Receive timestamps and restored marker; `DesiredState` and channels for
-   EMS-ESP.
+   EMS-ESP:
+   a. Receive timestamps and restored marker on device values.
+   b. `DesiredState` and the channel engine, unit tested, not yet used.
+   c. All writers submit a `DesiredState`; backends not yet migrated map it to
+      their `async_set_*`.
+   d. EMS-ESP: max relative modulation floor of 31 only for the Junkers
+      Cerapur, via a config option.
+   e. EMS-ESP: hot water active read from `tapwateractive`.
+   f. EMS-ESP migrated to channels; a failed publish raises.
 3. Channel diagnostics; remove the synchro sensors.
 4. Migrate the other backends.
 5. Update the PID and heating curve inside the control cycle from the captured
    inputs, instead of on sensor events.
 
 ## Open questions
-- EMS-ESP read-back keys and echo behaviour (for example, whether sending 10 as
-  0 is echoed as 0).
-- Default values for the confirmation timeout, retries and diagnostic window.
+- EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
+  knob value; a written setpoint must be below it and reverts to it after a
+  few minutes. Whether 0 (sent for 10) is echoed as 0 is unknown.
+- The length of the diagnostic window.
 - The listener debounce can starve while the device keeps publishing changes;
   how control cycles are triggered is outside this layer but needs fixing.
-- Whether confirmed channels need a periodic refresh for devices that revert
-  settings; decide from observed drift.
+- MQTT brokers redeliver retained messages on reconnect; they are stamped as
+  new and can look like a mismatch after a send.
+- Serial (pyotgw) values are timestamped per status section, not per field;
+  channels for serial need per-field times.
 - Whether areas should capture their inputs once per cycle.
