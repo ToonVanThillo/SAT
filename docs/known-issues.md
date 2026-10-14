@@ -46,6 +46,29 @@ known bug".
 - Central Heating Synchro can never trigger in HEAT mode: it compares
   `hvac_action`, which is derived from `device_active`, with `device_active`.
 
+## Startup and stored data
+- When HA is already running (reload or new entry), the first control loop runs
+  before the MQTT subscription; on a cold start it waits for HA to start, after
+  subscribing. Either way nothing waits for live data or checks the stored
+  values' age.
+- The config flow's manufacturer step reads `member_id` from stored data
+  without subscribing to MQTT. On a fresh install there is no stored
+  `member_id`, so no manufacturer is preselected.
+- The manufacturer step's default is the detected manufacturer's
+  `friendly_name`, but the selector options use the `MANUFACTURERS` key. Where
+  they differ (ATAG, BRÖTGE, De Dietrich, Worcester Bosch) the detected
+  manufacturer is not preselected.
+- Calibration (overshoot protection) in the config flow never subscribes to
+  MQTT: it sends heating commands and waits for flame and boiler temperature
+  that never update, so it times out (or hangs, see below). On timeout the
+  boiler is left at heater ON with the calibration setpoint, because the reset
+  in `OvershootProtection.calculate` only runs on cancellation, and the
+  climate's previous HVAC mode is not restored (the config flow aborts before
+  restoring it).
+- `overshoot_protection.py` waits for the boiler temperature in a loop without
+  `await` when it is missing or 0.0, which blocks the HA event loop;
+  `asyncio.wait_for` cannot interrupt it.
+
 ## Setup
 - Platforms are set up concurrently. If `sensor` or `binary_sensor` runs before
   `climate` has registered itself, `sensor` adds no entities and `binary_sensor`

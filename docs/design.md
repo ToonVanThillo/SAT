@@ -54,35 +54,43 @@ setpoint keeps its direct write path.
 One channel per controllable quantity per backend.
 
 **Definition**
-- `encode(requested) -> wire value`: clamps, unit conversion and device quirks,
-  gated by manufacturer or configuration where they only apply to some boilers.
-- `write(wire value)`: the backend-specific send. A failed write raises inside
-  the channel layer; reconciliation catches it per channel and logs a warning.
-  The sent value is not updated, so the next cycle writes again. A failure
-  never stops the control loop or other channels.
-- `read(snapshot) -> reading | None`: reads the device setting back, with the
-  time it was received.
+- `encode(requested) -> value`: the value the device should hold: clamps and
+  device quirks, gated by manufacturer or configuration where they only apply
+  to some boilers.
+- `write(value)`: the backend-specific send, including the device's
+  representation (units, payload format, inverted flags).
+- `read(snapshot) -> reading | None`: reads the device setting back, in the
+  same terms as `encode`, with the time it was received.
+- An error in a channel's encode, write or read is caught per channel and
+  logged, with a traceback only for the first of consecutive failures of
+  reading, or of encoding and writing. A
+  failed encode or write leaves the sent value unchanged and gives
+  `OUT_OF_SYNC` (a write-only channel stays `WRITE_ONLY`). A failure never
+  stops the control loop or other channels.
 - A channel has a read, a write, or both. Without a read it is write-only;
   without a write it is read-only. Quantities a backend can neither read nor
   write have no channel.
-- Tolerance, and whether to write every cycle.
+- Tolerance, and whether to rewrite every cycle (for settings that revert on
+  the timescale of a cycle).
 
-**Tracked state:** target value, sent (wire) value and time, read-back value
+**Tracked state:** target value, sent value and time, read-back value
 and time, drift count, status.
 
 **Statuses:** `IDLE` (no target yet), `PENDING`, `IN_SYNC`, `OUT_OF_SYNC`,
 `DRIFTED`, `WRITE_ONLY`, `READ_ONLY`.
 
 **Verify** (read-write channels, every cycle, right after the snapshot)
-Compare the latest read-back received after the last send with the sent value:
+Compare the latest read-back received strictly after the last send with the
+sent value:
 - a match gives `IN_SYNC`;
 - a mismatch gives `DRIFTED` if the channel was `IN_SYNC`, else `OUT_OF_SYNC`;
 - without such a read-back the status is unchanged.
 
 **Write** (every cycle, after the decide phase)
-- Read-write: encode the target and write it if the wire value differs from
-  the last sent value, if the channel is `OUT_OF_SYNC` or `DRIFTED`, or if it
-  writes every cycle; the channel goes to `PENDING`.
+- Read-write: encode the target. A value that differs from the last sent value
+  is written and gives `PENDING`. The same value is rewritten, keeping the
+  status, if this cycle's verify found a mismatch or the channel rewrites every
+  cycle.
 - Write-only: write the target every cycle; it cannot be verified.
 - Read-only: a requested value is ignored and a warning is logged once.
 - Reading a write-only channel returns nothing and logs a warning once.
