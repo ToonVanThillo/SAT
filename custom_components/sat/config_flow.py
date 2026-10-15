@@ -700,6 +700,11 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
                 ])
             )
 
+        if self._config_entry.data.get(CONF_MODE) == MODE_MQTT_EMS:
+            schema[vol.Required(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, default=options[CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR])] = selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, max=100, step=1, unit_of_measurement="%")
+            )
+
         schema[vol.Required(CONF_SENSOR_MAX_VALUE_AGE, default=options[CONF_SENSOR_MAX_VALUE_AGE])] = selector.TimeSelector()
         schema[vol.Required(CONF_WINDOW_MINIMUM_OPEN_TIME, default=options[CONF_WINDOW_MINIMUM_OPEN_TIME])] = selector.TimeSelector()
 

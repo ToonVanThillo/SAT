@@ -11,7 +11,10 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.event import async_call_later
 
 from custom_components.sat.climate import SatClimate
-from custom_components.sat.const import CONF_FORCE_PULSE_WIDTH_MODULATION
+from custom_components.sat.const import (
+    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
+)
 from tests.conftest import advance
 from tests.const import ems_entry
 
@@ -58,10 +61,9 @@ async def test_cold_setpoint_sends_zero_and_stops_heater(entry, climate, boiler_
     await boiler_data(**IDLE | {"heatingactive": "on"})
 
     # EMS quirk: the absolute minimum setpoint of 10 is sent as 0
-    # current behaviour, known bug: the burnmaxpower floor of 31 applies to all EMS boilers, not only the Junkers Cerapur
     assert await run_loop(climate, mqtt_mock, published, target=15.0) == [
         message('{"cmd": "selflowtemp", "value": 0}'),
-        message('{"cmd": "burnmaxpower", "value": 31}'),
+        message('{"cmd": "burnmaxpower", "value": 0}'),
         message('{"cmd": "heatingoff", "value": "on"}'),
     ]
     assert climate.setpoint == 10
@@ -99,7 +101,23 @@ async def test_hot_water_keeps_modulation_at_maximum_with_pwm(entry, climate, bo
 
 
 @pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
-async def test_pwm_on_sends_minimum_setpoint_and_floor_modulation(entry, climate, boiler_data, mqtt_mock, published):
+async def test_pwm_on_sends_minimum_setpoint_and_zero_modulation_once(entry, climate, boiler_data, mqtt_mock, published):
+    await boiler_data(**IDLE)
+
+    assert await run_loop(climate, mqtt_mock, published) == [
+        message('{"cmd": "selflowtemp", "value": 20.0}'),
+        message('{"cmd": "burnmaxpower", "value": 0}'),
+    ]
+
+    # The read-back equals the requested 0, so only selflowtemp is sent again (on every loop by design, which loop_runs relies on)
+    await boiler_data(burnmaxpower=0)
+    mqtt_mock.async_publish.reset_mock()
+    await climate.async_control_heating_loop()
+    assert published() == [message('{"cmd": "selflowtemp", "value": 20.0}')]
+
+
+@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 31}))
+async def test_pwm_on_with_floor_option_resends_floor_modulation_every_loop(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
 
     assert await run_loop(climate, mqtt_mock, published) == [
@@ -107,8 +125,8 @@ async def test_pwm_on_sends_minimum_setpoint_and_floor_modulation(entry, climate
         message('{"cmd": "burnmaxpower", "value": 31}'),
     ]
 
-    # current behaviour, known bug: the floor of 31 never equals the requested 0, so it is re-sent on every loop
-    # (selflowtemp is sent on every loop by design, which loop_runs relies on)
+    # current behaviour, known bug: the read-back floor of 31 never equals the requested 0, so it is re-sent on every loop
+    await boiler_data(burnmaxpower=31)
     mqtt_mock.async_publish.reset_mock()
     await climate.async_control_heating_loop()
     assert published() == [

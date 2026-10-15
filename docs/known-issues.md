@@ -28,9 +28,10 @@ known bug".
   control cycle.
 
 ## Device communication
-- EMS-ESP raises the max relative modulation (`burnmaxpower`) to at least 31 for
-  every boiler, not only the Junkers Cerapur. The climate compares the read-back
-  31 with the requested 0 and resends every cycle. Plan step 2 addresses both.
+- With the EMS max relative modulation floor option set above the requested
+  value, SAT's EMS coordinator sends the floor as `burnmaxpower`. The climate
+  compares the read-back floor with the requested value and resends every
+  cycle. Plan step 2f addresses this.
 - OpenTherm over MQTT uses bare `float()`, so a non-numeric payload such as
   "unavailable" raises on access instead of giving None.
 - A failed MQTT publish is logged and swallowed, so the setter completes as if
@@ -42,7 +43,8 @@ known bug".
 ## Synchro sensors (replaced in plan step 3)
 - Control Setpoint Synchro compares the unclamped climate setpoint with the
   clamped value sent, so it reports a mismatch above the maximum setpoint.
-- Relative Modulation Synchro reports a mismatch on EMS because of the 31 floor.
+- Relative Modulation Synchro reports a mismatch on EMS when the max relative
+  modulation floor option raises the requested value.
 - Central Heating Synchro can never trigger in HEAT mode: it compares
   `hvac_action`, which is derived from `device_active`, with `device_active`.
 

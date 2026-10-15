@@ -5,7 +5,10 @@ import pytest
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
-from custom_components.sat.const import CONF_MANUFACTURER, CONF_MQTT_TOPIC
+from custom_components.sat.const import (
+    CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
+    CONF_MQTT_TOPIC,
+)
 from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
 
@@ -92,9 +95,8 @@ async def test_flags_and_member_id(ems):
     ("async_set_control_hot_water_setpoint", 50, '{"cmd": "dhw/seltemp", "value": 50}'),
     ("async_set_control_max_setpoint", 70, '{"cmd": "heatingtemp", "value": 70}'),
     ("async_set_control_max_relative_modulation", 60, '{"cmd": "burnmaxpower", "value": 60}'),
-    # current behaviour, known bug: the burnmaxpower floor of 31 applies to all EMS boilers, not only the Junkers Cerapur
-    ("async_set_control_max_relative_modulation", 0, '{"cmd": "burnmaxpower", "value": 31}'),
-    ("async_set_control_max_relative_modulation", 31, '{"cmd": "burnmaxpower", "value": 31}'),
+    # Without the floor option there is no floor
+    ("async_set_control_max_relative_modulation", 0, '{"cmd": "burnmaxpower", "value": 0}'),
 ])
 async def test_writes(ems, published, method, value, payload):
     await getattr(ems, method)(value)
@@ -102,13 +104,14 @@ async def test_writes(ems, published, method, value, payload):
     assert published() == [(f"{TOPIC}/boiler", payload, 1, False)]
 
 
-async def test_max_relative_modulation_floor_ignores_manufacturer(hass, mqtt_mock, published, no_publish_delay):
-    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: TOPIC, CONF_MANUFACTURER: "Immergas"})
+@pytest.mark.parametrize("value, sent", [(0, 31), (30, 31), (31, 31), (60, 60)])
+async def test_max_relative_modulation_is_raised_to_the_floor_option(hass, mqtt_mock, published, no_publish_delay, value, sent):
+    # A float floor, as the options flow stores it, is published as an integer
+    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: TOPIC}, {CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 31.0})
 
-    # current behaviour, known bug: the floor is not manufacturer specific
-    await coordinator.async_set_control_max_relative_modulation(0)
+    await coordinator.async_set_control_max_relative_modulation(value)
 
-    assert published() == [(f"{TOPIC}/boiler", '{"cmd": "burnmaxpower", "value": 31}', 1, False)]
+    assert published() == [(f"{TOPIC}/boiler", f'{{"cmd": "burnmaxpower", "value": {sent}}}', 1, False)]
 
 
 async def test_thermostat_setpoint_publishes_nothing(ems, published):

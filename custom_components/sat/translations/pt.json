@@ -227,13 +227,15 @@
           "sync_climates_with_mode": "Sincronizar climas com o modo",
           "overshoot_protection": "Proteção contra Overshoot (com PWM)",
           "sensor_max_value_age": "Idade máxima do valor do sensor de temperatura",
-          "window_minimum_open_time": "Tempo mínimo para a janela estar aberta"
+          "window_minimum_open_time": "Tempo mínimo para a janela estar aberta",
+          "maximum_relative_modulation_floor": "Mínimo da modulação relativa máxima"
         },
         "data_description": {
           "automatic_duty_cycle": "Ativar ou desativar ciclo de trabalho automático para Modulação por Largura de Pulso (PWM).",
           "overshoot_protection": "Ativar proteção contra overshoot com Modulação por Largura de Pulso (PWM) para evitar overshooting da temperatura da caldeira.",
           "sensor_max_value_age": "A idade máxima do valor do sensor de temperatura antes de ser considerado como estagnado.",
-          "window_minimum_open_time": "O tempo mínimo que uma janela deve estar aberta antes de o sistema reagir."
+          "window_minimum_open_time": "O tempo mínimo que uma janela deve estar aberta antes de o sistema reagir.",
+          "maximum_relative_modulation_floor": "A modulação relativa máxima mais baixa que a caldeira aceita, p. ex. 31 para a Junkers Cerapur. Valores inferiores são elevados a este."
         },
         "description": "Para afinação e personalização.",
         "title": "Configuração do Sistema"

@@ -141,10 +141,10 @@ class TestEmsCycle:
         await boiler_data(**IDLE)
         self.inject_after_snapshot(coordinator, hass, tapactivated="on")
 
-        # Without hot water at the start, PWM turns modulation down to the floor; hot water would keep it at 100
+        # Without hot water at the start, PWM turns modulation down to 0; hot water would keep it at 100
         assert await run_loop(climate, mqtt_mock, published) == [
             message('{"cmd": "selflowtemp", "value": 20.0}'),
-            message('{"cmd": "burnmaxpower", "value": 31}'),
+            message('{"cmd": "burnmaxpower", "value": 0}'),
         ]
         assert coordinator.hot_water_active
 

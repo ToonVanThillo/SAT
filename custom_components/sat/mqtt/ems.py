@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 
 from . import SatMqttCoordinator
+from ..const import CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS
 from ..coordinator import DeviceState
 from ..helpers import float_value
 
@@ -128,7 +129,8 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         await super().async_set_heater_state(state)
 
     async def async_set_control_max_relative_modulation(self, value: int) -> None:
-        await self._publish_command(f'{{"cmd": "burnmaxpower", "value": {max(value, 31)}}}')
+        floor = int(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR]))
+        await self._publish_command(f'{{"cmd": "burnmaxpower", "value": {max(value, floor)}}}')
 
         await super().async_set_control_max_relative_modulation(value)
 

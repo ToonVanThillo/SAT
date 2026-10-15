@@ -142,8 +142,8 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
    b. `DesiredState` and the channel engine, unit tested, not yet used.
    c. All writers submit a `DesiredState`; backends not yet migrated map it to
       their `async_set_*`.
-   d. EMS-ESP: max relative modulation floor of 31 only for the Junkers
-      Cerapur, via a config option.
+   d. EMS-ESP: configurable minimum for the max relative modulation (the
+      Junkers Cerapur needs 31).
    e. EMS-ESP: hot water active read from `tapwateractive`.
    f. EMS-ESP migrated to channels; a failed publish raises.
 3. Channel diagnostics; remove the synchro sensors.

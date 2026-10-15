@@ -16,6 +16,7 @@ from custom_components.sat.binary_sensor import (
 )
 from custom_components.sat.const import (
     CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
     CONF_MAXIMUM_SETPOINT,
 )
 from tests.conftest import advance
@@ -68,8 +69,8 @@ async def test_control_setpoint_synchro_stays_off_when_values_match(hass, entry,
     await advance(hass, freezer, 0)  # run the debounced loop before teardown
 
 
-@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
-async def test_relative_modulation_synchro_stays_on_for_ems(hass, entry, climate, coordinator, boiler_data, freezer):
+@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 31}))
+async def test_relative_modulation_synchro_stays_on_with_floor_option(hass, entry, climate, coordinator, boiler_data, freezer):
     sensor = SatRelativeModulationSynchroSensor(coordinator, entry, climate)
     await boiler_data(**IDLE)
     await climate.async_set_target_temperature(21.0)
@@ -77,7 +78,7 @@ async def test_relative_modulation_synchro_stays_on_for_ems(hass, entry, climate
     await climate.async_control_heating_loop()
     await boiler_data(burnmaxpower=31)
 
-    # current behaviour, known bug: the climate requests 0 while the EMS coordinator can only report its floor of 31
+    # current behaviour, known bug: the coordinator sends the floor 31 while the climate requests 0, and the boiler reads back 31
     assert climate.relative_modulation_value == 0
     assert coordinator.maximum_relative_modulation_value == 31
     assert is_on_after_delay(sensor, freezer) == (False, True)
