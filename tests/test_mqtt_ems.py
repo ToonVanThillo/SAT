@@ -1,4 +1,5 @@
 """Characterization tests for the EMS MQTT coordinator."""
+import json
 import logging
 
 import pytest
@@ -11,13 +12,12 @@ from custom_components.sat.const import (
 )
 from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
+from tests.const import EMS_BOILER_DATA
 
 TOPIC = "ems-esp"
-BOILER_DATA = (
-    '{"selflowtemp": 55, "curflowtemp": 48.5, "rettemp": 41.2, "curburnpow": 37, "burnmaxpower": 80,'
-    ' "burnminpower": 20, "nompower": 24, "heatingactive": "on", "burngas": "on", "tapactivated": "off",'
-    ' "dhw/seltemp": 52}'
-)
+BOILER_DATA = json.dumps(EMS_BOILER_DATA | {
+    "selflowtemp": 55, "curflowtemp": 48.5, "rettemp": 41.2, "curburnpow": 37, "burnmaxpower": 80, "burnminpower": 20, "heatingactive": "on", "burngas": "on",
+})
 
 
 async def feed(hass: HomeAssistant, payload: str) -> None:
@@ -35,7 +35,6 @@ async def test_reads_map_boiler_data(hass, ems):
     assert ems.maximum_relative_modulation_value == 80
     assert ems.minimum_relative_modulation_value == 20
     assert ems.boiler_capacity == 24
-    assert ems.hot_water_setpoint == 52
     assert ems.device_active is True
     assert ems.flame_active is True
     assert ems.hot_water_active is False
@@ -47,11 +46,17 @@ async def test_flags_off_and_missing(hass, ems):
     assert ems.hot_water_active is False
     assert ems.setpoint is None
 
-    await feed(hass, '{"heatingactive": "off", "burngas": "off", "tapactivated": "on"}')
+    await feed(hass, '{"heatingactive": "off", "burngas": "off", "tapwateractive": "on"}')
 
     assert ems.device_active is False
     assert ems.flame_active is False
     assert ems.hot_water_active is True
+
+
+async def test_tap_water_setting_is_not_hot_water_active(hass, ems):
+    await feed(hass, '{"tapwateractive": "off", "dhw": {"tapactivated": "on"}}')
+
+    assert ems.hot_water_active is False
 
 
 async def test_boiler_data_is_merged(hass, ems):
@@ -80,7 +85,7 @@ async def test_non_object_json_is_logged_by_handler(hass, ems, caplog):
 async def test_flags_and_member_id(ems):
     assert ems.device_type == "Energy Management System (via mqtt)"
     assert ems.supports_setpoint_management is True
-    assert ems.supports_hot_water_setpoint_management is True
+    assert ems.supports_hot_water_setpoint_management is False
     assert ems.supports_maximum_setpoint_management is True
     assert ems.supports_relative_modulation is True
     assert ems.supports_relative_modulation_management is True
@@ -92,7 +97,6 @@ async def test_flags_and_member_id(ems):
     ("async_set_control_setpoint", 45.5, '{"cmd": "selflowtemp", "value": 45.5}'),
     # EMS quirk: the absolute minimum setpoint of 10 is sent as 0
     ("async_set_control_setpoint", 10, '{"cmd": "selflowtemp", "value": 0}'),
-    ("async_set_control_hot_water_setpoint", 50, '{"cmd": "dhw/seltemp", "value": 50}'),
     ("async_set_control_max_setpoint", 70, '{"cmd": "heatingtemp", "value": 70}'),
     ("async_set_control_max_relative_modulation", 60, '{"cmd": "burnmaxpower", "value": 60}'),
     # Without the floor option there is no floor

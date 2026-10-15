@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+from typing import Any
+
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.template import DOMAIN as TEMPLATE_DOMAIN
 
@@ -28,6 +32,12 @@ DEFAULT_USER_DATA = {
     CONF_INSIDE_SENSOR_ENTITY_ID: "sensor.test_inside_sensor",
     CONF_OUTSIDE_SENSOR_ENTITY_ID: "sensor.test_outside_sensor",
 }
+
+# A real EMS-ESP `boiler_data` capture of an idle combi boiler
+EMS_BOILER_DATA: dict[str, Any] = json.loads((Path(__file__).parent / "fixtures" / "ems_boiler_data.json").read_text())
+
+# The capture with the values the tests build on: a warm boiler, a return temperature (the capture has none) and a low maximum modulation
+IDLE: dict[str, Any] = EMS_BOILER_DATA | {"selflowtemp": 40, "curflowtemp": 40.5, "rettemp": 35, "burnmaxpower": 31}
 
 
 def ems_entry(options: dict | None = None) -> tuple[str, list[tuple]]:

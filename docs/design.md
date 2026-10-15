@@ -20,8 +20,8 @@ Each cycle has three phases, in this order:
    which write what is needed.
 
 Every write goes through this path, including HVAC mode OFF and pushing the
-setpoint to the thermostat. Hot water control is out of scope; the hot water
-setpoint keeps its direct write path.
+setpoint to the thermostat. Hot water control is out of scope; where a backend
+supports the hot water setpoint, it keeps its direct write path.
 
 ## Snapshot
 - Built once per cycle by `coordinator.snapshot()`, right after the
@@ -144,7 +144,8 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
       their `async_set_*`.
    d. EMS-ESP: configurable minimum for the max relative modulation (the
       Junkers Cerapur needs 31).
-   e. EMS-ESP: hot water active read from `tapwateractive`.
+   e. EMS-ESP: hot water active read from `tapwateractive`; the hot water
+      setpoint is dropped.
    f. EMS-ESP migrated to channels; a failed publish raises.
 3. Channel diagnostics; remove the synchro sensors.
 4. Migrate the other backends.

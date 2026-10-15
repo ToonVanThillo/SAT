@@ -14,13 +14,12 @@ DATA_OFF = "off"
 
 DATA_BOILER_DATA = "boiler_data"
 DATA_FLAME_ACTIVE = "burngas"
-DATA_DHW_SETPOINT = "dhw/seltemp"
 DATA_CONTROL_SETPOINT = "selflowtemp"
 DATA_REL_MOD_LEVEL = "curburnpow"
 DATA_BOILER_TEMPERATURE = "curflowtemp"
 DATA_RETURN_TEMPERATURE = "rettemp"
 
-DATA_DHW_ENABLE = "tapactivated"
+DATA_TAP_WATER_ACTIVE = "tapwateractive"
 DATA_CENTRAL_HEATING = "heatingactive"
 DATA_BOILER_CAPACITY = "nompower"
 
@@ -42,10 +41,6 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         return True
 
     @property
-    def supports_hot_water_setpoint_management(self) -> bool:
-        return True
-
-    @property
     def supports_maximum_setpoint_management(self) -> bool:
         return True
 
@@ -63,15 +58,11 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
 
     @property
     def hot_water_active(self) -> bool:
-        return self.data.get(DATA_DHW_ENABLE) == DATA_ON
+        return self.data.get(DATA_TAP_WATER_ACTIVE) == DATA_ON
 
     @property
     def setpoint(self) -> Optional[float]:
         return float_value(self.data.get(DATA_CONTROL_SETPOINT))
-
-    @property
-    def hot_water_setpoint(self) -> Optional[float]:
-        return float_value(self.data.get(DATA_DHW_SETPOINT))
 
     @property
     def boiler_temperature(self) -> Optional[float]:
@@ -113,11 +104,6 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         await self._publish_command(f'{{"cmd": "selflowtemp", "value": {0 if value == 10 else value}}}')
 
         await super().async_set_control_setpoint(value)
-
-    async def async_set_control_hot_water_setpoint(self, value: float) -> None:
-        await self._publish_command(f'{{"cmd": "dhw/seltemp", "value": {value}}}')
-
-        await super().async_set_control_hot_water_setpoint(value)
 
     async def async_set_control_thermostat_setpoint(self, value: float) -> None:
         # Not supported (yet)

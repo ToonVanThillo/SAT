@@ -17,7 +17,8 @@ from custom_components.sat.const import (
 )
 from custom_components.sat.coordinator import DeviceState
 from tests.conftest import advance
-from tests.test_climate_loop import IDLE, message
+from tests.const import IDLE
+from tests.test_climate_loop import message
 from tests.test_climate_loop_ems import INSIDE, RADIATOR, with_data
 
 ROOM = "climate.room"
@@ -217,7 +218,7 @@ async def test_set_heater_state_rules(entry, climate, coordinator, boiler_data, 
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*with_data({}))
-@pytest.mark.parametrize(("boiler", "state"), [(IDLE, "PULSE_WIDTH_MODULATION_OFF"), (IDLE | {"tapactivated": "on"}, "HOT_WATER")])
+@pytest.mark.parametrize(("boiler", "state"), [(IDLE, "PULSE_WIDTH_MODULATION_OFF"), (IDLE | {"tapwateractive": "on"}, "HOT_WATER")])
 async def test_relative_modulation_attributes(entry, climate, boiler_data, boiler, state):
     await boiler_data(**boiler)
     attributes = climate.extra_state_attributes

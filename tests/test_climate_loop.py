@@ -16,12 +16,11 @@ from custom_components.sat.const import (
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
 )
 from tests.conftest import advance
-from tests.const import ems_entry
+from tests.const import IDLE, ems_entry
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
 
 BOILER = "ems-esp/boiler"
-IDLE = {"selflowtemp": 40, "curflowtemp": 40.5, "rettemp": 35, "curburnpow": 0, "burnmaxpower": 31, "heatingactive": "off", "burngas": "off", "tapactivated": "off"}
 
 
 def message(payload: str) -> tuple:
@@ -92,7 +91,7 @@ async def test_hvac_off_with_inactive_heater_publishes_nothing(entry, climate, b
 
 @pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
 async def test_hot_water_keeps_modulation_at_maximum_with_pwm(entry, climate, boiler_data, mqtt_mock, published):
-    await boiler_data(**IDLE | {"tapactivated": "on"})
+    await boiler_data(**IDLE | {"tapwateractive": "on"})
 
     assert await run_loop(climate, mqtt_mock, published) == [
         message('{"cmd": "selflowtemp", "value": 20.0}'),

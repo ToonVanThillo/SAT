@@ -26,8 +26,8 @@ from custom_components.sat.relative_modulation import (
     RelativeModulation,
     RelativeModulationState,
 )
-from tests.const import ems_entry
-from tests.test_climate_loop import IDLE, message, run_loop
+from tests.const import IDLE, ems_entry
+from tests.test_climate_loop import message, run_loop
 
 BOILER_STATE = BoilerState(
     is_active=False, is_inactive=True, status=BoilerStatus.IDLE, flame_active=False, hot_water_active=False,
@@ -55,7 +55,7 @@ async def test_snapshot_copies_the_coordinator_values_and_is_immutable(hass, ent
         snapshot.boiler = None  # type: ignore[misc]
 
     # Later device data does not change the existing snapshot
-    await boiler_data(**IDLE | {"heatingactive": "off", "tapactivated": "on", "selflowtemp": 50, "burnmaxpower": 60})
+    await boiler_data(**IDLE | {"heatingactive": "off", "tapwateractive": "on", "selflowtemp": 50, "burnmaxpower": 60})
     assert coordinator.boiler != snapshot.boiler
     assert snapshot.boiler.is_active
     assert not snapshot.boiler.hot_water_active
@@ -139,7 +139,7 @@ class TestEmsCycle:
     @pytest.mark.parametrize(*forced_pwm_entry())
     async def test_modulation_ignores_hot_water_arriving_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published):
         await boiler_data(**IDLE)
-        self.inject_after_snapshot(coordinator, hass, tapactivated="on")
+        self.inject_after_snapshot(coordinator, hass, tapwateractive="on")
 
         # Without hot water at the start, PWM turns modulation down to 0; hot water would keep it at 100
         assert await run_loop(climate, mqtt_mock, published) == [
@@ -199,7 +199,7 @@ async def test_presentation_reflects_changes_after_the_last_cycle(hass, entry, c
     assert climate.hvac_action == HVACAction.IDLE
     assert climate.extra_state_attributes["relative_modulation_state"] == RelativeModulationState.PULSE_WIDTH_MODULATION_OFF.name
 
-    await boiler_data(**IDLE | {"heatingactive": "on", "tapactivated": "on"})
+    await boiler_data(**IDLE | {"heatingactive": "on", "tapwateractive": "on"})
 
     assert climate.hvac_action == HVACAction.HEATING
     assert climate.extra_state_attributes["relative_modulation_state"] == RelativeModulationState.HOT_WATER.name

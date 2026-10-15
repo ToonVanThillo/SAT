@@ -20,11 +20,9 @@ from custom_components.sat.const import (
     CONF_MAXIMUM_SETPOINT,
 )
 from tests.conftest import advance
-from tests.const import ems_entry
+from tests.const import IDLE, ems_entry
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
-
-IDLE = {"selflowtemp": 40, "curflowtemp": 40.5, "rettemp": 35, "curburnpow": 0, "burnmaxpower": 100, "heatingactive": "off", "burngas": "off", "tapactivated": "off"}
 
 
 def is_on_after_delay(sensor: BinarySensorEntity, freezer: FrozenDateTimeFactory) -> tuple[bool, bool]:
@@ -72,7 +70,7 @@ async def test_control_setpoint_synchro_stays_off_when_values_match(hass, entry,
 @pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 31}))
 async def test_relative_modulation_synchro_stays_on_with_floor_option(hass, entry, climate, coordinator, boiler_data, freezer):
     sensor = SatRelativeModulationSynchroSensor(coordinator, entry, climate)
-    await boiler_data(**IDLE)
+    await boiler_data(**IDLE | {"burnmaxpower": 100})
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await climate.async_control_heating_loop()

@@ -32,6 +32,14 @@ known bug".
   value, SAT's EMS coordinator sends the floor as `burnmaxpower`. The climate
   compares the read-back floor with the requested value and resends every
   cycle. Plan step 2f addresses this.
+- With PWM, relative modulation's hot water state makes the climate send the
+  maximum relative modulation (default 100) as `burnmaxpower` at each tap water
+  draw, and the PWM value again afterwards. EMS-ESP limits hot water power with
+  `dhw.maxpower`, not `burnmaxpower`, so these writes have no use there. Plan
+  step 2f addresses this.
+- EMS-ESP on/off values are only recognised as "on"; with EMS-ESP's boolean
+  format set to true/false or 1/0, `hot_water_active`, `device_active` and
+  `flame_active` are always False.
 - OpenTherm over MQTT uses bare `float()`, so a non-numeric payload such as
   "unavailable" raises on access instead of giving None.
 - A failed MQTT publish is logged and swallowed, so the setter completes as if
@@ -52,7 +60,8 @@ known bug".
 - When HA is already running (reload or new entry), the first control loop runs
   before the MQTT subscription; on a cold start it waits for HA to start, after
   subscribing. Either way nothing waits for live data or checks the stored
-  values' age.
+  values' age. A stored EMS-ESP `tapwateractive: "on"` (HA stopped during a
+  draw) keeps hot water active until the first live message.
 - The config flow's manufacturer step reads `member_id` from stored data
   without subscribing to MQTT. On a fresh install there is no stored
   `member_id`, so no manufacturer is preselected.

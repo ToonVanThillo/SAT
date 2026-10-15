@@ -16,8 +16,8 @@ from custom_components.sat.const import (
     CONF_RADIATORS,
 )
 from tests.conftest import advance
-from tests.const import ems_entry
-from tests.test_climate_loop import IDLE, message, run_loop
+from tests.const import IDLE, ems_entry
+from tests.test_climate_loop import message, run_loop
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
 
@@ -149,8 +149,8 @@ async def test_modulation_is_written_only_when_it_differs(entry, climate, boiler
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_hot_water_without_pwm_keeps_modulation(entry, climate, boiler_data, mqtt_mock, published):
-    await boiler_data(**IDLE | {"heatingactive": "on", "tapactivated": "on"})
+async def test_modulation_stays_maximum_without_pwm(entry, climate, boiler_data, mqtt_mock, published):
+    await boiler_data(**IDLE | {"heatingactive": "on"})
 
     assert await run_loop(climate, mqtt_mock, published) == [
         message('{"cmd": "selflowtemp", "value": 35.0}'),

@@ -18,10 +18,11 @@ from custom_components.sat.const import (
 )
 from custom_components.sat.coordinator import DeviceState, SatDataUpdateCoordinator
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
+from custom_components.sat.mqtt.opentherm import SatOpenThermMqttCoordinator
 from custom_components.sat.number import SatHotWaterSetpointEntity
 from custom_components.sat.overshoot_protection import OvershootProtection
-from tests.const import ems_entry
-from tests.test_climate_loop import IDLE, run_loop
+from tests.const import IDLE, ems_entry
+from tests.test_climate_loop import run_loop
 from tests.test_climate_loop_ems import INSIDE, with_data
 
 FULL = DesiredState(
@@ -223,11 +224,12 @@ async def test_overshoot_cancel_publish_order(overshoot, ems, published):
 
 # Hot water
 
-async def test_hot_water_number_writes_directly(ems, published):
-    entity = SatHotWaterSetpointEntity(ems, MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "Test"}))
+async def test_hot_water_number_writes_directly(hass, mqtt_mock, no_publish_delay, published):
+    otgw = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"})
+    entity = SatHotWaterSetpointEntity(otgw, MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "Test"}))
 
-    with patch.object(ems, "async_submit", new=AsyncMock()) as submit:
+    with patch.object(otgw, "async_submit", new=AsyncMock()) as submit:
         await entity.async_set_native_value(52.0)
 
     submit.assert_not_awaited()
-    assert [c[1] for c in published()] == ['{"cmd": "dhw/seltemp", "value": 52.0}']
+    assert [c[1] for c in published()] == ["SW=52.0"]
