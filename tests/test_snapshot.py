@@ -102,19 +102,22 @@ def forced_pwm_entry(**data) -> tuple:
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry", "no_publish_error")
 class TestEmsCycle:
     @staticmethod
-    def inject_on_setpoint_publish(mqtt_mock, hass, **data) -> None:
-        """Make the first selflowtemp publish trigger a boiler_data message, as device data arriving mid-cycle."""
-        async def fire(_topic, payload, *_args, **_kwargs) -> None:
-            if "selflowtemp" in payload:
-                mqtt_mock.async_publish.side_effect = None
-                async_fire_mqtt_message(hass, "ems-esp/boiler_data", json.dumps(IDLE | data))
+    def inject_after_snapshot(coordinator, hass, **data) -> None:
+        """Make a boiler_data message arrive right after the next snapshot, before any decision, as device data arriving mid-cycle."""
+        take = coordinator.snapshot
 
-        mqtt_mock.async_publish.side_effect = fire
+        def take_then_inject() -> BoilerSnapshot:
+            del coordinator.snapshot
+            snapshot = take()
+            async_fire_mqtt_message(hass, "ems-esp/boiler_data", json.dumps(IDLE | data))
+            return snapshot
+
+        coordinator.snapshot = take_then_inject
 
     @pytest.mark.parametrize(*ems_entry())
     async def test_heater_decision_ignores_device_active_arriving_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published):
         await boiler_data(**IDLE)
-        self.inject_on_setpoint_publish(mqtt_mock, hass, heatingactive="on")
+        self.inject_after_snapshot(coordinator, hass, heatingactive="on")
 
         # The heater was inactive when the cycle started, so it is still started
         assert await run_loop(climate, mqtt_mock, published) == [
@@ -127,7 +130,7 @@ class TestEmsCycle:
     @pytest.mark.parametrize(*ems_entry())
     async def test_heater_stop_ignores_device_inactive_arriving_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published):
         await boiler_data(**IDLE | {"heatingactive": "on"})
-        self.inject_on_setpoint_publish(mqtt_mock, hass, heatingactive="off")
+        self.inject_after_snapshot(coordinator, hass, heatingactive="off")
 
         # Cold target: the heater was active when the cycle started, so it is still stopped
         assert (await run_loop(climate, mqtt_mock, published, target=15.0))[-1] == message('{"cmd": "heatingoff", "value": "on"}')
@@ -136,7 +139,7 @@ class TestEmsCycle:
     @pytest.mark.parametrize(*forced_pwm_entry())
     async def test_modulation_ignores_hot_water_arriving_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published):
         await boiler_data(**IDLE)
-        self.inject_on_setpoint_publish(mqtt_mock, hass, tapactivated="on")
+        self.inject_after_snapshot(coordinator, hass, tapactivated="on")
 
         # Without hot water at the start, PWM turns modulation down to the floor; hot water would keep it at 100
         assert await run_loop(climate, mqtt_mock, published) == [

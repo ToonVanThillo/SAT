@@ -3,6 +3,7 @@ import logging
 import time
 
 from .const import OVERSHOOT_PROTECTION_SETPOINT, MINIMUM_SETPOINT, DEADBAND, MAXIMUM_RELATIVE_MODULATION
+from .channels import DesiredState
 from .coordinator import DeviceState, SatDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,8 +43,7 @@ class OvershootProtection:
 
             return self._calculate_overshoot_value()
         except asyncio.CancelledError as exception:
-            await self._coordinator.async_set_heater_state(DeviceState.OFF)
-            await self._coordinator.async_set_control_setpoint(MINIMUM_SETPOINT)
+            await self._coordinator.async_submit(DesiredState(control_setpoint=MINIMUM_SETPOINT, heater_state=DeviceState.OFF))
 
             raise exception
 
@@ -101,9 +101,11 @@ class OvershootProtection:
 
     async def _trigger_heating_cycle(self, is_ready: bool) -> None:
         """Trigger a heating cycle with the coordinator."""
-        await self._coordinator.async_set_heater_state(DeviceState.ON)
-        await self._coordinator.async_set_control_setpoint(await self._get_setpoint(is_ready))
-        await self._coordinator.async_set_control_max_relative_modulation(MAXIMUM_RELATIVE_MODULATION)
+        await self._coordinator.async_submit(DesiredState(
+            control_setpoint=await self._get_setpoint(is_ready),
+            maximum_relative_modulation=MAXIMUM_RELATIVE_MODULATION,
+            heater_state=DeviceState.ON,
+        ))
 
         await asyncio.sleep(SLEEP_INTERVAL)
         await self._coordinator.async_control_heating_loop()
@@ -111,8 +113,3 @@ class OvershootProtection:
     async def _get_setpoint(self, is_ready: bool) -> float:
         """Get the setpoint for the heating cycle."""
         return self._setpoint if not is_ready or self._coordinator.relative_modulation_value > 0 else self._coordinator.boiler_temperature
-
-    async def _reset_heater_state(self) -> None:
-        """Reset the heater state to default settings."""
-        await self._coordinator.async_set_heater_state(DeviceState.OFF)
-        await self._coordinator.async_set_control_setpoint(MINIMUM_SETPOINT)

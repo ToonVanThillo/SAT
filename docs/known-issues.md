@@ -9,6 +9,10 @@ known bug".
   2); in the default config `pwm.reset()` undoes it in the same cycle.
 - `schedule_control_heating_loop(force=True)` only runs the loop immediately if
   a run is already pending; otherwise it waits the normal 10 s.
+- `schedule_control_heating_loop` is not a `@callback`, so the 30 s interval
+  runs it in an executor thread, from which it calls `async_call_later` and
+  writes `_control_heating_loop_unsub`, racing the event loop. In tests with a
+  frozen clock the scheduled loop can start at once, inside a running cycle.
 - `MAX_BOILER_TEMPERATURE_AGE` is 60 s in `const.py` (used by the coordinator)
   and 300 s in `pid.py` (unused).
 - `boiler_temperature_filtered` is not a filtered temperature but the mean

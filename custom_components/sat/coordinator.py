@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
+from .channels import DesiredState
 from .const import *
 from .flame import Flame, FlameState
 from .helpers import calculate_default_maximum_setpoint, seconds_since
@@ -453,7 +454,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def async_added_to_hass(self) -> None:
         """Perform setup when the integration is added to Home Assistant."""
-        await self.async_set_control_max_setpoint(self.maximum_setpoint)
+        await self.async_submit(DesiredState(maximum_setpoint=self.maximum_setpoint))
 
     async def async_will_remove_from_hass(self) -> None:
         """Run when an entity is removed from hass."""
@@ -516,6 +517,19 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             self._boiler_temperature_cold = boiler_temperature_cold
         elif self._boiler_temperature_cold is not None:
             self._boiler_temperature_cold = min(self.boiler_temperature, self._boiler_temperature_cold)
+
+    async def async_submit(self, desired: DesiredState) -> None:
+        """Apply every requested field of `desired` through the matching setter, in a fixed order; None fields are skipped."""
+        if desired.control_setpoint is not None:
+            await self.async_set_control_setpoint(desired.control_setpoint)
+        if desired.maximum_relative_modulation is not None:
+            await self.async_set_control_max_relative_modulation(desired.maximum_relative_modulation)
+        if desired.heater_state is not None:
+            await self.async_set_heater_state(desired.heater_state)
+        if desired.maximum_setpoint is not None:
+            await self.async_set_control_max_setpoint(desired.maximum_setpoint)
+        if desired.thermostat_setpoint is not None:
+            await self.async_set_control_thermostat_setpoint(desired.thermostat_setpoint)
 
     async def async_set_heater_state(self, state: DeviceState) -> None:
         """Set the state of the device heater."""

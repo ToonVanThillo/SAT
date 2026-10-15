@@ -1,4 +1,5 @@
 """Tests for ClimateInputs, the one-capture-per-cycle control loop, the error helpers and the heater state rules."""
+import asyncio
 from dataclasses import FrozenInstanceError
 from datetime import timedelta
 from unittest.mock import patch
@@ -46,18 +47,20 @@ def test_climate_inputs_is_frozen_and_keyword_only():
 @pytest.mark.usefixtures("loop_entry", "no_publish_error")
 class TestMidCycleChanges:
     @staticmethod
-    def on_setpoint_publish(mqtt_mock, change) -> None:
-        """Run the async `change` during the first setpoint publish, as an update arriving mid-cycle."""
-        async def fire(_topic, payload, *_args, **_kwargs) -> None:
-            if "selflowtemp" in payload:
-                mqtt_mock.async_publish.side_effect = None
-                await change()
+    def after_update_step(coordinator, change) -> None:
+        """Run the async `change` once, right after the coordinator update step of the next cycle: its inputs are captured, no decision is made yet."""
+        update = coordinator.async_control_heating_loop
 
-        mqtt_mock.async_publish.side_effect = fire
+        async def update_then_change(*args, **kwargs) -> None:
+            del coordinator.async_control_heating_loop
+            await update(*args, **kwargs)
+            await change()
+
+        coordinator.async_control_heating_loop = update_then_change
 
     @pytest.mark.parametrize(*with_data({CONF_RADIATORS: [RADIATOR]}))
     @pytest.mark.parametrize(("before", "during", "expected"), [("heating", "idle", [HEATER_ON]), ("idle", "heating", [])])
-    async def test_heater_decision_ignores_valves_changing_mid_cycle(self, hass, entry, climate, boiler_data, mqtt_mock, published, before, during, expected):
+    async def test_heater_decision_ignores_valves_changing_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, before, during, expected):
         await boiler_data(**IDLE)
         await climate.async_set_target_temperature(21.0)
         await climate.async_set_hvac_mode(HVACMode.HEAT)
@@ -67,51 +70,53 @@ class TestMidCycleChanges:
         async def change() -> None:
             hass.states.async_set(RADIATOR, "heat", radiator(during))
 
-        self.on_setpoint_publish(mqtt_mock, change)
+        self.after_update_step(coordinator, change)
         await climate.async_control_heating_loop()
 
         assert hass.states.get(RADIATOR).attributes["hvac_action"] == during
         assert [m for m in published() if "heatingoff" in m[1]] == expected
 
     @pytest.fixture
-    async def integral_cycle(self, hass, entry, climate, boiler_data, mqtt_mock, freezer):
-        """Return a coroutine function that runs one cycle during which `change` happens and returns the errors the cycle gave the integral; the loops debounced by the setup are run before it and its own rescheduling is suppressed, so no other loop runs inside it."""
+    async def integral_cycle(self, hass, entry, climate, coordinator, boiler_data, freezer):
+        """Return a coroutine function that runs one cycle during which `change` happens and returns the errors the cycle gave the integral; the loops debounced by the setup are run before it and its own rescheduling is suppressed."""
         await boiler_data(**IDLE)
         await climate.async_set_target_temperature(21.0)
         await climate.async_set_hvac_mode(HVACMode.HEAT)
 
-        errors: list[float] = []
         update_integral = climate.pid.update_integral
-
-        def record(error, heating_curve_value, force=False) -> None:
-            # The sensor handlers update the PID with force; only the loop's own update is recorded
-            if not force:
-                errors.append(error.value)
-            update_integral(error, heating_curve_value, force)
 
         async def run(change, setup=None) -> list[float]:
             if setup is not None:
                 await setup()
 
-            with patch.object(climate.pid, "update_integral", record):
-                # Run the loops debounced by the setup
-                await advance(hass, freezer, 10)
-                errors.clear()
+            # Run the loops debounced by the setup
+            await advance(hass, freezer, 10)
 
-                async def timed_change() -> None:
-                    await change()
-                    freezer.tick(timedelta(seconds=400))
+            task = asyncio.current_task()
+            errors: list[float] = []
+            changed = False
 
-                self.on_setpoint_publish(mqtt_mock, timed_change)
-                with patch.object(climate, "schedule_control_heating_loop"):
-                    await climate.async_control_heating_loop()
+            def record(error, heating_curve_value, force=False) -> None:
+                # Sensor handlers update the PID with force, and a loop started by the 30 s interval can run inside the cycle in its own task (see known issues); only the cycle's update is recorded
+                if not force and asyncio.current_task() is task:
+                    errors.append(error.value)
+                update_integral(error, heating_curve_value, force)
 
-                cycle_errors = list(errors)
-                # Drain what became due once the clock moved
-                await advance(hass, freezer, 10)
+            async def timed_change() -> None:
+                nonlocal changed
+                await change()
+                freezer.tick(timedelta(seconds=400))
+                changed = True
 
-            assert mqtt_mock.async_publish.side_effect is None  # the mid-cycle change happened
-            return cycle_errors
+            self.after_update_step(coordinator, timed_change)
+            with patch.object(climate.pid, "update_integral", record), patch.object(climate, "schedule_control_heating_loop"):
+                await climate.async_control_heating_loop()
+
+            # Drain what became due once the clock moved
+            await advance(hass, freezer, 10)
+
+            assert changed  # the mid-cycle change happened
+            return errors
 
         return run
 
