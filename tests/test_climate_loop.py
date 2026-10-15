@@ -1,11 +1,14 @@
 """Characterization tests for the heating loop, end-to-end from the climate entity to the EMS MQTT messages."""
+import threading
 from collections.abc import Callable
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.climate import HVACMode
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.helpers.event import async_call_later
 
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import CONF_FORCE_PULSE_WIDTH_MODULATION
@@ -183,3 +186,17 @@ async def test_schedule_without_force_keeps_the_first_run(hass, entry, heating, 
     # Nor did it add a second run
     await advance(hass, freezer, 5)
     assert loop_runs(published) == 1
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_interval_schedules_the_run_on_the_event_loop(hass: HomeAssistant, heating: SatClimate, freezer: FrozenDateTimeFactory) -> None:
+    threads: list[int] = []
+
+    def spy(*args: Any, **kwargs: Any) -> CALLBACK_TYPE:
+        threads.append(threading.get_ident())
+        return async_call_later(*args, **kwargs)
+
+    with patch("custom_components.sat.climate.async_call_later", spy):
+        await advance(hass, freezer, 30)
+
+    assert threads == [hass.loop_thread_id]

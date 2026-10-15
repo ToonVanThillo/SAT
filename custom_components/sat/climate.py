@@ -29,7 +29,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE, STATE_UNKNOWN, ATTR_ENTITY_ID, STATE_ON, STATE_OFF, EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import HomeAssistant, ServiceCall, Event, CoreState, EventStateChangedData, HassJob
+from homeassistant.core import HomeAssistant, ServiceCall, Event, CoreState, EventStateChangedData, HassJob, callback
 from homeassistant.helpers import entity_registry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval, async_call_later
@@ -926,6 +926,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         self._sensors.append(entity_id)
 
+    @callback
     def schedule_control_heating_loop(self, _time: Optional[datetime] = None, force: bool = False, ) -> None:
         """Schedule a debounced execution of the heating control loop."""
         # Force immediate execution

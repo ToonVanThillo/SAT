@@ -1,5 +1,4 @@
 """Tests for ClimateInputs, the one-capture-per-cycle control loop, the error helpers and the heater state rules."""
-import asyncio
 from dataclasses import FrozenInstanceError
 from datetime import timedelta
 from unittest.mock import patch
@@ -92,13 +91,12 @@ class TestMidCycleChanges:
             # Run the loops debounced by the setup
             await advance(hass, freezer, 10)
 
-            task = asyncio.current_task()
             errors: list[float] = []
             changed = False
 
             def record(error, heating_curve_value, force=False) -> None:
-                # Sensor handlers update the PID with force, and a loop started by the 30 s interval can run inside the cycle in its own task (see known issues); only the cycle's update is recorded
-                if not force and asyncio.current_task() is task:
+                # Sensor handlers update the PID with force; only the cycle's update is recorded
+                if not force:
                     errors.append(error.value)
                 update_integral(error, heating_curve_value, force)
 
