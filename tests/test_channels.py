@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.sat.channels import (
+    WAITING_CYCLES_BEFORE_WARNING,
     ChannelDefinition,
     Channels,
     ChannelStatus,
@@ -54,6 +55,16 @@ def live(value, at):
     return Reading(value=value, received_at=at)
 
 
+PRIOR = live(object(), T0 - timedelta(minutes=1))
+
+
+def primed(*definitions):
+    """Channels that have verified a live read-back matching no target, so the first write goes ahead."""
+    channels = Channels(definitions)
+    channels.verify(snap(**{d.quantity.value: PRIOR for d in definitions}))
+    return channels
+
+
 def channel_records(caplog):
     """Records from the channels logger."""
     return [r for r in caplog.records if r.name == "custom_components.sat.channels"]
@@ -78,7 +89,7 @@ async def test_initial_status():
 
 async def test_full_cycle(freezer):
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
 
     await channels.async_write(DesiredState())
     assert channels.states[CS].status == ChannelStatus.IDLE
@@ -107,7 +118,7 @@ async def test_full_cycle(freezer):
 
 async def test_out_of_sync_on_first_mismatch_and_rewritten_each_cycle(freezer):
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     desired = DesiredState(control_setpoint=50.0)
     await channels.async_write(desired)
 
@@ -124,7 +135,7 @@ async def test_out_of_sync_on_first_mismatch_and_rewritten_each_cycle(freezer):
 
 async def test_stale_and_restored_readings_ignored():
     definition, _ = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
 
     channels.verify(snap(control_setpoint=live(40.0, T0)))  # not strictly after send
@@ -139,7 +150,7 @@ async def test_stale_and_restored_readings_ignored():
 @pytest.mark.parametrize(("read_back", "status"), [(50.5, ChannelStatus.IN_SYNC), (50.6, ChannelStatus.OUT_OF_SYNC)])
 async def test_tolerance_boundary(read_back, status):
     definition, _ = rw(tolerance=0.5)
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
 
     channels.verify(snap(control_setpoint=live(read_back, T0 + timedelta(seconds=1))))
@@ -148,7 +159,7 @@ async def test_tolerance_boundary(read_back, status):
 
 async def test_non_numeric_compared_by_equality():
     definition, _ = rw(Quantity.HEATER_STATE, tolerance=5)
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(heater_state="on"))
 
     channels.verify(snap(heater_state=live("off", T0 + timedelta(seconds=1))))
@@ -159,7 +170,7 @@ async def test_non_numeric_compared_by_equality():
 
 async def test_compares_against_encoded_value():
     definition, fake = rw(encode=lambda v: min(v, 60.0))
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=75.0))
     assert fake.calls == [60.0]
 
@@ -170,7 +181,7 @@ async def test_compares_against_encoded_value():
 
 async def test_no_rewrite_without_fresh_mismatch(freezer):
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     desired = DesiredState(control_setpoint=50.0)
     await channels.async_write(desired)
 
@@ -188,7 +199,7 @@ async def test_no_rewrite_without_fresh_mismatch(freezer):
 
 async def test_unchanged_encoded_value_not_written():
     definition, fake = rw(encode=lambda v: min(v, 60.0))
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=75.0))
     await channels.async_write(DesiredState(control_setpoint=80.0))
 
@@ -207,7 +218,7 @@ async def test_reading_on_idle_channel_recorded():
 
 async def test_none_keeps_target():
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
     await channels.async_write(DesiredState())
 
@@ -217,7 +228,7 @@ async def test_none_keeps_target():
 
 async def test_changed_target_is_written(freezer):
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
     channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
     await channels.async_write(DesiredState(control_setpoint=55.0))
@@ -227,7 +238,7 @@ async def test_changed_target_is_written(freezer):
 
 async def test_same_desired_twice_writes_once():
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     desired = DesiredState(control_setpoint=50.0)
     await channels.async_write(desired)
     channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
@@ -239,7 +250,7 @@ async def test_same_desired_twice_writes_once():
 
 async def test_write_every_cycle_stays_in_sync(freezer):
     definition, fake = rw(write_every_cycle=True)
-    channels = Channels([definition])
+    channels = primed(definition)
     desired = DesiredState(control_setpoint=50.0)
     await channels.async_write(desired)
 
@@ -255,7 +266,7 @@ async def test_write_every_cycle_stays_in_sync(freezer):
 
 async def test_write_failure_isolated_and_retried(caplog, freezer):
     (a, fa), (b, fb) = rw(CS), rw(MS)
-    channels = Channels([a, b])
+    channels = primed(a, b)
     desired = DesiredState(control_setpoint=50.0, maximum_setpoint=70.0)
     fa.fail = True
     with caplog.at_level(logging.WARNING):
@@ -280,7 +291,7 @@ def fail(_):
 
 async def test_encode_failure_isolated(caplog):
     (a, fa), (b, fb) = rw(CS, encode=fail), rw(MS)
-    channels = Channels([a, b])
+    channels = primed(a, b)
     with caplog.at_level(logging.WARNING):
         await channels.async_write(DesiredState(control_setpoint=50.0, maximum_setpoint=70.0))
 
@@ -292,11 +303,19 @@ async def test_encode_failure_isolated(caplog):
 
 
 async def test_read_failure_isolated(caplog):
-    a = ChannelDefinition(quantity=CS, write=Fake().write, read=fail)
+    failing = False
+
+    def read(s):
+        if failing:
+            raise RuntimeError("boom")
+        return s.readings.get(CS)
+
+    a = ChannelDefinition(quantity=CS, write=Fake().write, read=read)
     b, _ = rw(MS)
-    channels = Channels([a, b])
+    channels = primed(a, b)
     await channels.async_write(DesiredState(control_setpoint=50.0, maximum_setpoint=70.0))
 
+    failing = True
     with caplog.at_level(logging.WARNING):
         channels.verify(snap(maximum_setpoint=live(70.0, T0 + timedelta(seconds=1))))
         assert channels.read(CS, snap()) is None
@@ -308,7 +327,7 @@ async def test_read_failure_isolated(caplog):
 
 async def test_failed_rewrite_keeps_previous_sent():
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
     fake.fail = True
     await channels.async_write(DesiredState(control_setpoint=55.0))
@@ -356,7 +375,7 @@ async def test_read_only_ignores_request_and_warns_once(caplog):
 async def test_writes_in_definition_order_and_states_order():
     order = []
     defs = [rw(q, Fake(order, q))[0] for q in (TS, CS, MS)]
-    channels = Channels(defs)
+    channels = primed(*defs)
     await channels.async_write(DesiredState(control_setpoint=1.0, maximum_setpoint=2.0, thermostat_setpoint=3.0))
 
     assert order == [TS, CS, MS]
@@ -394,7 +413,7 @@ async def test_write_only_failure_stays_write_only(encode_fails):
 
 async def test_failed_rewrite_of_same_value_gives_out_of_sync_and_is_retried(freezer):
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     desired = DesiredState(control_setpoint=50.0)
     await channels.async_write(desired)
     channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
@@ -420,7 +439,7 @@ async def test_failed_rewrite_of_same_value_gives_out_of_sync_and_is_retried(fre
 
 async def test_drifted_alone_does_not_write(freezer):
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     desired = DesiredState(control_setpoint=50.0)
     await channels.async_write(desired)
     channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
@@ -434,7 +453,7 @@ async def test_drifted_alone_does_not_write(freezer):
 
 async def test_verify_matching_stale_readback_again_stays_in_sync(freezer):
     definition, _ = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
     matching = snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1)))
 
@@ -445,7 +464,7 @@ async def test_verify_matching_stale_readback_again_stays_in_sync(freezer):
 
 async def test_new_value_after_mismatch_gives_pending():
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
     channels.verify(snap(control_setpoint=live(40.0, T0 + timedelta(seconds=1))))
     await channels.async_write(DesiredState(control_setpoint=55.0))
@@ -456,7 +475,7 @@ async def test_new_value_after_mismatch_gives_pending():
 
 async def test_write_every_cycle_keeps_out_of_sync_status():
     definition, fake = rw(write_every_cycle=True)
-    channels = Channels([definition])
+    channels = primed(definition)
     desired = DesiredState(control_setpoint=50.0)
     await channels.async_write(desired)
     channels.verify(snap(control_setpoint=live(40.0, T0 + timedelta(seconds=1))))
@@ -468,7 +487,7 @@ async def test_write_every_cycle_keeps_out_of_sync_status():
 
 async def test_encode_failure_after_send_keeps_sent_and_gives_out_of_sync(freezer):
     definition, fake = rw(encode=lambda v: fail(v) if v > 60 else v)
-    channels = Channels([definition])
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
     channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
     freezer.move_to(T0 + timedelta(seconds=5))
@@ -481,7 +500,7 @@ async def test_encode_failure_after_send_keeps_sent_and_gives_out_of_sync(freeze
 
 async def test_second_mismatch_while_drifted_gives_out_of_sync(freezer):
     definition, _ = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     desired = DesiredState(control_setpoint=50.0)
     await channels.async_write(desired)
     channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
@@ -495,7 +514,7 @@ async def test_second_mismatch_while_drifted_gives_out_of_sync(freezer):
 
 async def test_write_failure_traceback_only_first_of_consecutive(caplog):
     definition, fake = rw()
-    channels = Channels([definition])
+    channels = primed(definition)
     fake.fail = True
     with caplog.at_level(logging.WARNING):
         await channels.async_write(DesiredState(control_setpoint=50.0))
@@ -533,7 +552,7 @@ async def test_read_failure_traceback_only_first_of_consecutive(caplog):
 
 async def test_failure_runs_are_per_channel(caplog):
     (a, fa), (b, fb) = rw(CS), rw(MS)
-    channels = Channels([a, b])
+    channels = primed(a, b)
     desired = DesiredState(control_setpoint=50.0, maximum_setpoint=70.0)
     fa.fail = True
     with caplog.at_level(logging.WARNING):
@@ -556,15 +575,16 @@ async def test_read_failures_are_per_channel(caplog):
 
 
 async def test_read_and_write_runs_are_independent(caplog):
-    reading_fails = True
+    reading_fails = False
 
-    def read(_):
+    def read(s):
         if reading_fails:
             raise RuntimeError("boom")
+        return s.readings.get(CS)
 
     fake = Fake()
-    channels = Channels([ChannelDefinition(quantity=CS, write=fake.write, read=read)])
-    fake.fail = True
+    channels = primed(ChannelDefinition(quantity=CS, write=fake.write, read=read))
+    reading_fails = fake.fail = True
     with caplog.at_level(logging.WARNING):
         channels.verify(snap())  # read run starts
         await channels.async_write(DesiredState(control_setpoint=50.0))  # write run starts: traceback
@@ -613,8 +633,8 @@ async def test_encode_success_without_write_ends_failure_run(caplog, freezer):
             raise ValueError("bad encode")
         return value
 
-    fake = Fake()
-    channels = Channels([ChannelDefinition(quantity=CS, write=fake.write, read=lambda s: None, encode=encode)])
+    definition, fake = rw(encode=encode)
+    channels = primed(definition)
     await channels.async_write(DesiredState(control_setpoint=50.0))
     freezer.move_to(T0 + timedelta(seconds=5))
     with caplog.at_level(logging.WARNING):
@@ -650,17 +670,151 @@ async def test_write_only_failure_run_ends_on_success(caplog):
 async def test_read_failure_leaves_state_unchanged(caplog):
     failing = False
 
-    def read(_):
+    def read(s):
         if failing:
             raise RuntimeError("boom")
-        return live(50.0, T0 + timedelta(seconds=1))
+        return s.readings.get(CS)
 
-    channels = Channels([ChannelDefinition(quantity=CS, write=Fake().write, read=read)])
+    channels = primed(ChannelDefinition(quantity=CS, write=Fake().write, read=read))
     await channels.async_write(DesiredState(control_setpoint=50.0))
-    channels.verify(snap())
+    channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
     before = channels.states[CS]
     failing = True
     channels.verify(snap())
 
     assert channels.states[CS] == before
     assert before.status == ChannelStatus.IN_SYNC
+
+
+@pytest.mark.parametrize("snapshot", [None, snap(), snap(control_setpoint=Reading(value=50.0, received_at=None))])
+@pytest.mark.parametrize("write_every_cycle", [False, True])
+async def test_no_write_before_live_read_back(snapshot, write_every_cycle):
+    definition, fake = rw(write_every_cycle=write_every_cycle)
+    channels = Channels([definition])
+    for _ in range(2):
+        if snapshot is not None:
+            channels.verify(snapshot)
+        await channels.async_write(DesiredState(control_setpoint=50.0))
+
+    state = channels.states[CS]
+    assert fake.calls == []
+    assert (state.status, state.target, state.sent, state.sent_at) == (ChannelStatus.IDLE, 50.0, None, None)
+
+
+async def test_matching_first_live_read_back_is_adopted(freezer):
+    definition, fake = rw(encode=lambda v: min(v, 60.0), tolerance=0.5)
+    channels = Channels([definition])
+    at = T0 - timedelta(seconds=1)
+    channels.verify(snap(control_setpoint=live(60.3, at)))
+    await channels.async_write(DesiredState(control_setpoint=75.0))
+
+    state = channels.states[CS]
+    assert fake.calls == []
+    assert (state.status, state.target, state.sent, state.sent_at) == (ChannelStatus.IN_SYNC, 75.0, 60.0, at)
+
+    # The adopting read-back again, then a later mismatch: the existing rules apply.
+    freezer.move_to(T0 + timedelta(seconds=10))
+    channels.verify(snap(control_setpoint=live(60.3, at)))
+    await channels.async_write(DesiredState(control_setpoint=75.0))
+    assert (fake.calls, channels.states[CS].status) == ([], ChannelStatus.IN_SYNC)
+
+    channels.verify(snap(control_setpoint=live(40.0, T0 + timedelta(seconds=5))))
+    assert (channels.states[CS].status, channels.states[CS].drift_count) == (ChannelStatus.DRIFTED, 1)
+    await channels.async_write(DesiredState(control_setpoint=75.0))
+    assert fake.calls == [60.0]
+    assert (channels.states[CS].status, channels.states[CS].sent_at) == (ChannelStatus.DRIFTED, T0 + timedelta(seconds=10))
+
+
+async def test_differing_first_live_read_back_is_written():
+    definition, fake = rw()
+    channels = Channels([definition])
+    channels.verify(snap(control_setpoint=live(40.0, T0 - timedelta(seconds=1))))
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+
+    state = channels.states[CS]
+    assert fake.calls == [50.0]
+    assert (state.status, state.sent, state.sent_at) == (ChannelStatus.PENDING, 50.0, T0)
+
+
+async def test_write_every_cycle_waits_for_live_read_back_then_writes_every_cycle(freezer):
+    definition, fake = rw(write_every_cycle=True)
+    channels = Channels([definition])
+    desired = DesiredState(control_setpoint=50.0)
+    channels.verify(snap(control_setpoint=Reading(value=40.0, received_at=None)))
+    await channels.async_write(desired)
+    assert fake.calls == []
+
+    matching = snap(control_setpoint=live(50.0, T0 - timedelta(seconds=1)))
+    channels.verify(matching)
+    await channels.async_write(desired)
+    assert (fake.calls, channels.states[CS].status) == ([], ChannelStatus.IN_SYNC)
+
+    for n in (1, 2):
+        freezer.move_to(T0 + timedelta(seconds=10 * n))
+        channels.verify(matching)
+        await channels.async_write(desired)
+        assert channels.states[CS].status == ChannelStatus.IN_SYNC
+
+    assert fake.calls == [50.0, 50.0]
+
+
+async def test_adoption_stores_encoded_value_so_next_cycle_does_not_write(freezer):
+    definition, fake = rw(encode=lambda v: round(v), tolerance=0.5)
+    channels = Channels([definition])
+    channels.verify(snap(control_setpoint=live(50.4, T0 - timedelta(seconds=1))))
+    for n in range(3):
+        await channels.async_write(DesiredState(control_setpoint=50.0))
+        freezer.move_to(T0 + timedelta(seconds=10 * (n + 1)))
+
+    assert fake.calls == []
+    assert channels.states[CS].sent == 50
+
+
+async def test_data_between_adopting_read_back_and_next_verify_counts(freezer):
+    definition, _ = rw()
+    channels = Channels([definition])
+    channels.verify(snap(control_setpoint=live(50.0, T0 - timedelta(seconds=2))))
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    assert channels.states[CS].status == ChannelStatus.IN_SYNC
+
+    freezer.move_to(T0 + timedelta(seconds=5))
+    channels.verify(snap(control_setpoint=live(40.0, T0 - timedelta(seconds=1))))  # after adoption, before now
+    assert (channels.states[CS].status, channels.states[CS].drift_count) == (ChannelStatus.DRIFTED, 1)
+
+
+async def test_failed_first_write_then_matching_live_read_back_is_adopted(freezer):
+    definition, fake = rw()
+    channels = Channels([definition])
+    desired = DesiredState(control_setpoint=50.0)
+    channels.verify(snap(control_setpoint=live(40.0, T0 - timedelta(seconds=1))))
+    fake.fail = True
+    await channels.async_write(desired)
+    assert channels.states[CS].sent_at is None
+
+    fake.fail = False
+    freezer.move_to(T0 + timedelta(seconds=10))
+    at = T0 + timedelta(seconds=5)
+    channels.verify(snap(control_setpoint=live(50.0, at)))
+    assert channels.states[CS].sent_at is None  # verify alone does not adopt
+    await channels.async_write(desired)
+
+    state = channels.states[CS]
+    assert fake.calls == []
+    assert (state.status, state.sent, state.sent_at) == (ChannelStatus.IN_SYNC, 50.0, at)
+
+
+async def test_waiting_for_live_read_back_warns_once(caplog):
+    waiting, ready = rw(CS)[0], rw(MS)[0]
+    channels = Channels([waiting, ready, ChannelDefinition(quantity=TS, write=Fake().write)])
+    channels.verify(snap(maximum_setpoint=PRIOR))
+    desired = DesiredState(control_setpoint=50.0, maximum_setpoint=70.0, thermostat_setpoint=20.0)
+    with caplog.at_level(logging.WARNING):
+        for _ in range(WAITING_CYCLES_BEFORE_WARNING):
+            await channels.async_write(desired)
+        assert logged(caplog) == []
+
+        for _ in range(3):
+            await channels.async_write(desired)
+
+    assert logged(caplog) == [WARNING_WITHOUT_TRACEBACK]
+    assert "control_setpoint" in channel_records(caplog)[0].getMessage()

@@ -76,7 +76,7 @@ One channel per controllable quantity per backend.
 **Tracked state:** target value, sent value and time, read-back value
 and time, drift count, status.
 
-**Statuses:** `IDLE` (no target yet), `PENDING`, `IN_SYNC`, `OUT_OF_SYNC`,
+**Statuses:** `IDLE` (nothing sent yet), `PENDING`, `IN_SYNC`, `OUT_OF_SYNC`,
 `DRIFTED`, `WRITE_ONLY`, `READ_ONLY`.
 
 **Verify** (read-write channels, every cycle, right after the snapshot)
@@ -91,6 +91,10 @@ sent value:
   is written and gives `PENDING`. The same value is rewritten, keeping the
   status, if this cycle's verify found a mismatch or the channel rewrites every
   cycle.
+- A read-write channel writes only once its read-back is live (received, not
+  restored); while it waits, a warning is logged once. If the latest live
+  read-back matches the encoded target (within tolerance) when the first write
+  is due, it is taken as sent: the channel is `IN_SYNC` without writing.
 - Write-only: write the target every cycle; it cannot be verified.
 - Read-only: a requested value is ignored and a warning is logged once.
 - Reading a write-only channel returns nothing and logs a warning once.
@@ -119,7 +123,7 @@ short transients such as `PENDING` don't show:
   value that keeps drifting and being rewritten stays visible.
 - `OUT_OF_SYNC`: the latest value did not read back as sent. It stays until a
   write is confirmed.
-- `WRITE_ONLY`, `READ_ONLY`, `IDLE` (no target yet).
+- `WRITE_ONLY`, `READ_ONLY`, `IDLE` (nothing sent yet).
 
 Attributes: the internal status, target, sent and read-back values with
 timestamps, and the drift count. These entities replace the Control
@@ -151,8 +155,9 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
       setpoint is dropped.
    f. The climate requests the full desired state; backends not yet migrated
       keep their write-if-different checks in the base async_submit.
-   g. EMS-ESP migrated to channels; a failed publish raises.
-   h. EMS-ESP: no max relative modulation writes for hot water.
+   g. In HVAC mode OFF the cycle still runs and requests heater OFF.
+   h. EMS-ESP migrated to channels; a failed publish raises.
+   i. EMS-ESP: no max relative modulation writes for hot water.
 3. Channel diagnostics; remove the synchro sensors.
 4. Migrate the other backends.
 5. Update the PID and heating curve inside the control cycle from the captured

@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Held-back first-write cycles tolerated before warning; after a restart the first live read-back takes a cycle or two.
+WAITING_CYCLES_BEFORE_WARNING = 3
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DesiredState:
@@ -76,7 +79,7 @@ class ChannelDefinition:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ChannelState:
-    """Tracked state of one channel; `sent` is the encoded value of the last successful write."""
+    """Tracked state of one channel; `sent` is the encoded value of the last successful write or adopted read-back."""
     status: ChannelStatus
     target: Any = None
     sent: Any = None
@@ -95,6 +98,7 @@ class _Channel:
         self._write_failing = False
         self._warned_read_only = False
         self._warned_write_only = False
+        self._held_back = 0
 
     @property
     def name(self) -> str:
@@ -158,10 +162,19 @@ class _Channel:
             return
 
         write_only = self.definition.read is None
+        # Before the first send, wait for a live read-back (recorded by verify); a matching one is taken as sent.
+        first_send = not write_only and self.state.sent_at is None
+        if first_send and self.state.read_back_at is None:
+            self._held_back += 1
+            if self._held_back == WAITING_CYCLES_BEFORE_WARNING + 1:
+                _LOGGER.warning("Channel %s is waiting for a live read-back before its first write", self.name)
+            return
+
         try:
             value = self.definition.encode(self.state.target)
+            adopt = first_send and self._matches(self.state.read_back, value)
             changed = value != self.state.sent
-            needs_write = write_only or changed or rewrite or self.definition.write_every_cycle
+            needs_write = not adopt and (write_only or changed or rewrite or self.definition.write_every_cycle)
             if needs_write:
                 await self.definition.write(value)
         except Exception as err:  # noqa: BLE001
@@ -172,6 +185,11 @@ class _Channel:
             return
 
         self._write_failing = False
+        if adopt:
+            # Dated at the read-back, so only read-backs received after it verify the adopted value.
+            self.state = replace(self.state, status=ChannelStatus.IN_SYNC, sent=value, sent_at=self.state.read_back_at)
+            return
+
         if not needs_write:
             return
 
