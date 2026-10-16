@@ -105,6 +105,8 @@ setting reads back as sent). Whether the boiler acts on it is out of scope.
 ## Coordinator responsibilities
 - Store raw device data, build snapshots, own the channel set.
 - `async_submit(desired: DesiredState)` runs reconciliation.
+- `verify(snapshot)` runs right after the cycle's snapshot; backends with channels
+  verify the previous cycle's writes, others do nothing.
 - Backends supply channel definitions. Backends not yet migrated keep their
   current `async_set_*` path.
 
@@ -131,8 +133,9 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
   public properties, entity states, logs), not private attributes, so they
   survive the refactor.
 - Channel logic is unit tested separately from the backends.
-- Each step is either a refactor (all tests pass unchanged) or a behaviour
-  change (the task names the tests it changes), never both.
+- Each step is either a refactor (observable behaviour unchanged; the task
+  names any test of an internal contract it changes) or a behaviour change
+  (the task names the tests it changes), never both.
 
 ## Plan
 1. Snapshot and climate inputs; the climate loop reads only from them.
@@ -146,7 +149,10 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
       Junkers Cerapur needs 31).
    e. EMS-ESP: hot water active read from `tapwateractive`; the hot water
       setpoint is dropped.
-   f. EMS-ESP migrated to channels; a failed publish raises.
+   f. The climate requests the full desired state; backends not yet migrated
+      keep their write-if-different checks in the base async_submit.
+   g. EMS-ESP migrated to channels; a failed publish raises.
+   h. EMS-ESP: no max relative modulation writes for hot water.
 3. Channel diagnostics; remove the synchro sensors.
 4. Migrate the other backends.
 5. Update the PID and heating curve inside the control cycle from the captured

@@ -1,4 +1,4 @@
-"""Tests for ClimateInputs, the one-capture-per-cycle control loop, the error helpers and the heater state rules."""
+"""Tests for ClimateInputs, the one-capture-per-cycle control loop and the error helpers."""
 from dataclasses import FrozenInstanceError
 from datetime import timedelta
 from unittest.mock import patch
@@ -15,7 +15,6 @@ from custom_components.sat.const import (
     CONF_THERMAL_COMFORT,
     HEATING_MODE_ECO,
 )
-from custom_components.sat.coordinator import DeviceState
 from tests.conftest import advance
 from tests.const import IDLE
 from tests.test_climate_loop import message
@@ -24,7 +23,6 @@ from tests.test_climate_loop_ems import INSIDE, RADIATOR, with_data
 ROOM = "climate.room"
 HUMIDITY = "sensor.test_humidity"
 HEATER_ON = message('{"cmd": "heatingoff", "value": "off"}')
-HEATER_OFF = message('{"cmd": "heatingoff", "value": "on"}')
 
 
 def radiator(hvac_action: str) -> dict:
@@ -190,28 +188,6 @@ async def test_eco_mode_max_error_ignores_the_areas(hass, entry, climate):
 
     assert (climate.get_max_error(1.0).entity_id, climate.get_max_error(1.0).value) == (climate.entity_id, 1.0)
     assert (climate.max_error.entity_id, climate.max_error.value) == (climate.entity_id, 0.1)
-
-
-# Heater state
-
-@pytest.mark.parametrize(*with_data({}))
-@pytest.mark.parametrize(("state", "active", "args", "expected"), [
-    (DeviceState.ON, False, {"valves_open": True}, [HEATER_ON]),
-    (DeviceState.ON, False, {"valves_open": False}, []),
-    (DeviceState.ON, False, {}, []),
-    (DeviceState.ON, True, {"valves_open": True}, []),
-    (DeviceState.OFF, True, {}, [HEATER_OFF]),
-    (DeviceState.OFF, True, {"valves_open": True}, [HEATER_OFF]),
-    (DeviceState.OFF, False, {"valves_open": True}, []),
-])
-@pytest.mark.usefixtures("loop_entry")
-async def test_set_heater_state_rules(entry, climate, coordinator, boiler_data, mqtt_mock, published, state, active, args, expected):
-    await boiler_data(**IDLE | {"heatingactive": "on" if active else "off"})
-    mqtt_mock.async_publish.reset_mock()
-
-    await climate.async_set_heater_state(state, coordinator.snapshot(), **args)
-
-    assert published() == expected
 
 
 # Presentation

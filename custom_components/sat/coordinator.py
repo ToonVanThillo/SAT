@@ -139,6 +139,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         self._boiler_temperature_tracker: BoilerTemperatureTracker = BoilerTemperatureTracker()
 
         self._flame: Flame = Flame()
+        self._snapshot: BoilerSnapshot | None = None
         self._device_on_since: Optional[float] = None
         self._listeners_unsub: Optional[Callable[[], None]] = None
 
@@ -461,14 +462,19 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         pass
 
     def snapshot(self) -> BoilerSnapshot:
-        """Read the device and derived values once; take it right after the update step of the cycle."""
-        return BoilerSnapshot(
+        """Read the device and derived values once; take it right after the update step of the cycle. The last one is kept for `async_submit`."""
+        self._snapshot = BoilerSnapshot(
             boiler=self.boiler,
             flame=self.flame,
             maximum_relative_modulation_value=self.maximum_relative_modulation_value,
             manufacturer=self.manufacturer,
             readings=self.data.readings(),
         )
+
+        return self._snapshot
+
+    def verify(self, snapshot: BoilerSnapshot) -> None:
+        """Verify the previous cycle's writes against `snapshot`; backends without channels have nothing to verify."""
 
     async def async_control_heating_loop(self, climate: Optional[SatClimate] = None, pwm_state: Optional[PWMState] = None, _time=None) -> None:
         """Control the heating loop for the device."""
@@ -519,12 +525,17 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             self._boiler_temperature_cold = min(self.boiler_temperature, self._boiler_temperature_cold)
 
     async def async_submit(self, desired: DesiredState) -> None:
-        """Apply every requested field of `desired` through the matching setter, in a fixed order; None fields are skipped."""
+        """Apply every requested field of `desired` through the matching setter, in a fixed order; None fields are skipped.
+
+        The max relative modulation and heater state are skipped when the last snapshot shows them already applied; without a snapshot they are always written.
+        """
+        snapshot = self._snapshot
+
         if desired.control_setpoint is not None:
             await self.async_set_control_setpoint(desired.control_setpoint)
-        if desired.maximum_relative_modulation is not None:
+        if desired.maximum_relative_modulation is not None and (snapshot is None or snapshot.maximum_relative_modulation_value != desired.maximum_relative_modulation):
             await self.async_set_control_max_relative_modulation(desired.maximum_relative_modulation)
-        if desired.heater_state is not None:
+        if desired.heater_state is not None and (snapshot is None or snapshot.boiler.is_active != (desired.heater_state == DeviceState.ON)):
             await self.async_set_heater_state(desired.heater_state)
         if desired.maximum_setpoint is not None:
             await self.async_set_control_max_setpoint(desired.maximum_setpoint)

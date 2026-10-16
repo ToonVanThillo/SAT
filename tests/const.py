@@ -20,6 +20,7 @@ from custom_components.sat.const import (
     HEATING_SYSTEM_RADIATORS,
     MODE_FAKE,
     MODE_MQTT_EMS,
+    MODE_MQTT_OPENTHERM,
 )
 
 DEFAULT_USER_DATA = {
@@ -69,3 +70,10 @@ def ems_entry(options: dict | None = None) -> tuple[str, list[tuple]]:
             },
         )],
     )
+
+
+def otgw_entry(options: dict | None = None) -> tuple[str, list[tuple]]:
+    """Return the `ems_entry` parametrization switched to the OpenTherm MQTT backend (device `gw1`, topic `otgw`)."""
+    names, [(domains, data, entry_options, config)] = ems_entry(options)
+
+    return names, [(domains, data | {CONF_MODE: MODE_MQTT_OPENTHERM, CONF_DEVICE: "gw1", CONF_MQTT_TOPIC: "otgw"}, entry_options, config)]

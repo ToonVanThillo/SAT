@@ -2,17 +2,22 @@
 import asyncio
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.climate import HVACMode
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_mqtt_message,
+)
 
 from custom_components.sat.channels import DesiredState
 from custom_components.sat.const import (
+    COLD_SETPOINT,
     CONF_MQTT_TOPIC,
     CONF_NAME,
     CONF_PUSH_SETPOINT_TO_THERMOSTAT,
+    CONF_RADIATORS,
     DOMAIN,
     MINIMUM_SETPOINT,
 )
@@ -21,9 +26,9 @@ from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
 from custom_components.sat.mqtt.opentherm import SatOpenThermMqttCoordinator
 from custom_components.sat.number import SatHotWaterSetpointEntity
 from custom_components.sat.overshoot_protection import OvershootProtection
-from tests.const import IDLE, ems_entry
-from tests.test_climate_loop import run_loop
-from tests.test_climate_loop_ems import INSIDE, with_data
+from tests.const import IDLE, ems_entry, otgw_entry
+from tests.test_climate_loop import message, run_loop
+from tests.test_climate_loop_ems import INSIDE, RADIATOR, with_data
 
 FULL = DesiredState(
     control_setpoint=40.0,
@@ -102,6 +107,21 @@ async def test_ems_empty_submit_publishes_nothing(ems, published):
     assert published() == []
 
 
+@pytest.mark.parametrize(("state", "active", "expected"), [
+    (DeviceState.ON, False, [message('{"cmd": "heatingoff", "value": "off"}')]),
+    (DeviceState.ON, True, []),
+    (DeviceState.OFF, True, [message('{"cmd": "heatingoff", "value": "on"}')]),
+    (DeviceState.OFF, False, []),
+])
+async def test_submit_heater_state_rules(ems, boiler_data, published, state, active, expected):
+    await boiler_data(**IDLE | {"heatingactive": "on" if active else "off"})
+    ems.snapshot()
+
+    await ems.async_submit(DesiredState(heater_state=state))
+
+    assert published() == expected
+
+
 # Startup
 
 async def test_startup_submits_only_maximum_setpoint(hass, mqtt_mock, no_publish_delay):
@@ -128,13 +148,13 @@ async def test_cycle_submits_once(entry, climate, boiler_data, mqtt_mock, publis
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_cycle_submits_only_the_setpoint_when_nothing_else_changes(entry, climate, boiler_data, mqtt_mock, published, spy):
+async def test_cycle_submits_the_full_state_when_nothing_changes(entry, climate, boiler_data, mqtt_mock, published, spy):
     await boiler_data(**IDLE | {"heatingactive": "on", "burnmaxpower": 100})
     submit = spy(climate._coordinator)
 
     await run_loop(climate, mqtt_mock, published)
 
-    submit.assert_awaited_once_with(DesiredState(control_setpoint=35.0))
+    submit.assert_awaited_once_with(DesiredState(control_setpoint=35.0, maximum_relative_modulation=100, heater_state=DeviceState.ON))
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -151,25 +171,27 @@ async def test_missing_temperature_submits_nothing(hass, entry, climate, boiler_
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_hvac_off_loop_submits_nothing(entry, climate, boiler_data, mqtt_mock, published, spy):
+async def test_hvac_off_loop_submits_nothing(entry, climate, boiler_data, spy):
     await boiler_data(**IDLE)
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
     submit = spy(climate._coordinator)
 
-    await run_loop(climate, mqtt_mock, published, mode=HVACMode.OFF)
+    await climate.async_control_heating_loop()
 
     submit.assert_not_awaited()
 
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-@pytest.mark.parametrize(("active", "expected"), [("on", [DesiredState(heater_state=DeviceState.OFF)]), ("off", [])])
-async def test_hvac_off_submits_heater_off_only_if_active(entry, climate, boiler_data, active, expected, spy):
+@pytest.mark.parametrize("active", ["on", "off"])
+async def test_hvac_off_submits_heater_off(entry, climate, boiler_data, active, spy):
     await boiler_data(**IDLE | {"heatingactive": active})
     submit = spy(climate._coordinator)
 
     await climate.async_set_hvac_mode(HVACMode.OFF)
 
-    assert [c.args[0] for c in submit.await_args_list] == expected
+    assert [c.args[0] for c in submit.await_args_list] == [DesiredState(heater_state=DeviceState.OFF)]
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -233,3 +255,94 @@ async def test_hot_water_number_writes_directly(hass, mqtt_mock, no_publish_dela
 
     submit.assert_not_awaited()
     assert [c[1] for c in published()] == ["SW=52.0"]
+
+
+# Decide phase and verify
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*ems_entry())
+async def test_cycle_verifies_once_between_snapshot_and_submit(entry, climate, boiler_data):
+    await boiler_data(**IDLE)
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    coordinator = climate._coordinator
+    order: list[str] = []
+
+    def record(name: str) -> Callable[..., object]:
+        """Return a side effect that records `name`; returning DEFAULT lets the wrapped method run."""
+        return lambda *_: order.append(name) or DEFAULT
+
+    with patch.object(coordinator, "snapshot", wraps=coordinator.snapshot, side_effect=record("snapshot")), \
+            patch.object(coordinator, "verify", wraps=coordinator.verify, side_effect=record("verify")) as verify, \
+            patch.object(coordinator, "async_submit", wraps=coordinator.async_submit, side_effect=record("async_submit")):
+        await climate.async_control_heating_loop()
+
+    assert order == ["snapshot", "verify", "async_submit"]
+    verify.assert_called_once_with(coordinator._snapshot)
+
+
+async def test_submit_without_snapshot_writes_unconditionally(ems, published):
+    await ems.async_submit(DesiredState(maximum_relative_modulation=100, heater_state=DeviceState.OFF))
+    await ems.async_submit(DesiredState(maximum_relative_modulation=100, heater_state=DeviceState.OFF))
+
+    assert [c[1] for c in published()] == [
+        '{"cmd": "burnmaxpower", "value": 100}', '{"cmd": "heatingoff", "value": "on"}',
+    ] * 2
+
+
+@pytest.mark.parametrize(("current", "requested", "expected"), [(31, 100, True), (100, 100, False), (100, 50, True)])
+async def test_submit_modulation_only_when_it_differs_from_the_snapshot(ems, boiler_data, published, current, requested, expected):
+    await boiler_data(**IDLE | {"burnmaxpower": current})
+    ems.snapshot()
+
+    await ems.async_submit(DesiredState(maximum_relative_modulation=requested))
+
+    assert published() == ([message(f'{{"cmd": "burnmaxpower", "value": {requested}}}')] if expected else [])
+
+
+async def test_submit_uses_the_snapshot_not_later_data(ems, boiler_data, published):
+    await boiler_data(**IDLE | {"heatingactive": "off", "burnmaxpower": 100})
+    ems.snapshot()
+    await boiler_data(**IDLE | {"heatingactive": "on", "burnmaxpower": 50})
+
+    await ems.async_submit(DesiredState(maximum_relative_modulation=50, heater_state=DeviceState.ON))
+
+    assert [c[1] for c in published()] == ['{"cmd": "burnmaxpower", "value": 50}', '{"cmd": "heatingoff", "value": "off"}']
+
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*with_data({CONF_RADIATORS: [RADIATOR]}))
+@pytest.mark.parametrize(("setpoint", "hvac_action", "expected"), [
+    (COLD_SETPOINT, "heating", DeviceState.OFF),
+    (COLD_SETPOINT - 5, "idle", DeviceState.OFF),
+    (COLD_SETPOINT + 0.1, "heating", DeviceState.ON),
+    # Current behaviour, known bug: closing all valves doesn't stop an active boiler
+    (50.0, "idle", None),
+])
+async def test_cycle_heater_decision_table(hass, entry, climate, boiler_data, mqtt_mock, published, spy, setpoint, hvac_action, expected):
+    await boiler_data(**IDLE)
+    hass.states.async_set(RADIATOR, "heat", {"hvac_action": hvac_action, "hvac_modes": ["heat", "off"]})
+    submit = spy(climate._coordinator)
+
+    with patch.object(climate, "_calculate_control_setpoint", return_value=setpoint):
+        await run_loop(climate, mqtt_mock, published)
+
+    assert submit.await_args_list[-1].args[0].heater_state == expected
+
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*otgw_entry())
+async def test_opentherm_second_cycle_repeats_nothing_already_applied(hass, entry, climate, mqtt_mock, published):
+    for key, payload in {"centralheating": "ON", "MaxRelModLevelSetting": "100.0", "Tboiler": "40.5", "Tret": "35.0", "TSet": "35.0"}.items():
+        async_fire_mqtt_message(hass, f"otgw/value/gw1/{key}", payload)
+    await hass.async_block_till_done()
+
+    first = await run_loop(climate, mqtt_mock, published)
+    mqtt_mock.async_publish.reset_mock()
+    await climate.async_control_heating_loop()
+    second = published()
+
+    payloads = [c[1] for c in first]
+    assert not [p for p in payloads if p.startswith(("CH=", "MM="))]
+    assert any(p.startswith("CS=") for p in payloads)
+    assert [c[1] for c in second] == payloads

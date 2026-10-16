@@ -14,6 +14,16 @@ known bug".
 - `boiler_temperature_filtered` is not a filtered temperature but the mean
   absolute change between samples of the last 60 s. It is passed to the PIDs,
   which store it but never use it.
+- Closing all valves doesn't stop an active boiler; valves only gate turning
+  the heater on.
+- For EMS-ESP and OpenTherm over MQTT, the heater ON check compares with
+  whether the boiler is heating (`device_active`), not with its heating-enabled
+  setting, so ON is resent every cycle while the boiler is enabled but idle and
+  a valve is open. Migrating these backends to channels (plan steps 2g and 4)
+  addresses this.
+- The heating loop doesn't re-check the HVAC mode after its awaits, so a cycle
+  that is running when HVAC is set to OFF can still submit its desired state
+  afterwards.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with
@@ -29,14 +39,14 @@ known bug".
 
 ## Device communication
 - With the EMS max relative modulation floor option set above the requested
-  value, SAT's EMS coordinator sends the floor as `burnmaxpower`. The climate
-  compares the read-back floor with the requested value and resends every
-  cycle. Plan step 2f addresses this.
+  value, SAT's EMS coordinator sends the floor as `burnmaxpower`. The base
+  coordinator's `async_submit` compares the read-back floor with the requested
+  value and resends every cycle. Plan step 2g addresses this.
 - With PWM, relative modulation's hot water state makes the climate send the
   maximum relative modulation (default 100) as `burnmaxpower` at each tap water
   draw, and the PWM value again afterwards. EMS-ESP limits hot water power with
   `dhw.maxpower`, not `burnmaxpower`, so these writes have no use there. Plan
-  step 2f addresses this.
+  step 2h addresses this.
 - EMS-ESP on/off values are only recognised as "on"; with EMS-ESP's boolean
   format set to true/false or 1/0, `hot_water_active`, `device_active` and
   `flame_active` are always False.

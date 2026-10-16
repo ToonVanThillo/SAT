@@ -9,13 +9,10 @@ from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
 from custom_components.sat.boiler import BoilerState
 from custom_components.sat.const import (
-    CONF_DEVICE,
     CONF_FORCE_PULSE_WIDTH_MODULATION,
     CONF_MODE,
-    CONF_MQTT_TOPIC,
     MINIMUM_SETPOINT,
     MODE_FAKE,
-    MODE_MQTT_OPENTHERM,
     BoilerStatus,
 )
 from custom_components.sat.coordinator import BoilerSnapshot
@@ -26,7 +23,7 @@ from custom_components.sat.relative_modulation import (
     RelativeModulation,
     RelativeModulationState,
 )
-from tests.const import IDLE, ems_entry
+from tests.const import IDLE, ems_entry, otgw_entry
 from tests.test_climate_loop import message, run_loop
 
 BOILER_STATE = BoilerState(
@@ -171,7 +168,7 @@ async def test_fake_steps_after_the_setpoint_write_use_the_setpoint_from_before(
     assert written == [100]
 
 
-@pytest.mark.parametrize(*forced_pwm_entry(**{CONF_MODE: MODE_MQTT_OPENTHERM, CONF_DEVICE: "gw1", CONF_MQTT_TOPIC: "otgw"}))
+@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry")
 async def test_manufacturer_resolved_by_the_update_step_applies_in_the_same_cycle(hass, entry, climate, mqtt_mock, published):
     for key, value in {"slave_memberid_code": "4", "TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF"}.items():
