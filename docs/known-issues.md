@@ -16,26 +16,40 @@ known bug".
   which store it but never use it.
 - Closing all valves doesn't stop an active boiler; valves only gate turning
   the heater on.
-- For EMS-ESP and OpenTherm over MQTT, the heater ON check compares with
+- For EMS-ESP and OpenTherm over MQTT, the heater check compares with
   whether the boiler is heating (`device_active`), not with its heating-enabled
-  setting, so ON is resent every cycle while the boiler is enabled but idle and
-  a valve is open. Migrating these backends to channels (plan steps 2h and 4)
-  addresses this.
+  setting. ON is resent every cycle while the boiler is enabled but idle and a
+  valve is open. In HVAC OFF, OFF is resent every cycle while the boiler is
+  heating, but never sent while it is enabled but idle. Migrating these
+  backends to channels (plan steps 2h and 4) addresses this.
 - The heating loop doesn't re-check the HVAC mode after its awaits, so a cycle
-  that is running when HVAC is set to OFF can still submit its desired state
-  afterwards.
+  that is running when the HVAC mode changes can still submit the previous
+  mode's desired state afterwards; the next cycle corrects it.
+- In HVAC OFF the boiler keeps reporting the last setpoint written in HEAT.
+  While the boiler temperature is within `BOILER_DEADBAND` (2 °C) of it, the
+  status is AT_SETPOINT, which flame health (`_HEATING_STATUSES` in `flame.py`)
+  counts as heat demand. With the flame off for longer than `STUCK_OFF_SECONDS`
+  (300 s), flame health reports STUCK_OFF although nothing is wrong.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with
   `sync_climates_with_mode`) that has no state or doesn't list the requested
   mode; the remaining climates, the state write and the loop scheduling are
   skipped. A climate without `hvac_modes` raises.
-- `valves_open` raises when a radiator or room is on, reports no `hvac_action`,
-  has a current temperature, and has a missing or non-numeric target
-  temperature. This aborts the control cycle.
-- `current_outside_temperature` raises on a sensor with a non-numeric state, or
-  a weather entity without a numeric `temperature` attribute. This aborts the
-  control cycle.
+- Unreadable climate inputs have no diagnostic entity. A non-numeric inside,
+  humidity or outside sensor (or weather `temperature` attribute) is treated as
+  unavailable and only reported by a log warning, once per unreadable period of
+  that entity; the next outside entity is used if one is readable. A radiator or
+  room with a non-numeric target or current temperature is skipped by
+  `valves_open` without a log.
+- With thermal comfort, `current_temperature` is None when the humidity sensor
+  is unreadable, unavailable or not configured (the config flow allows thermal
+  comfort without one), so HEAT stops after the snapshot phase although the
+  inside temperature is readable. Only a non-numeric humidity value is logged.
+- Outside the control cycle, room target temperatures are still converted with
+  a bare `float()` (the `_async_climate_changed` state listener and
+  `_async_update_rooms_from_climates` at startup), so a room with a non-numeric
+  target raises there.
 
 ## Device communication
 - With the EMS max relative modulation floor option set above the requested
@@ -53,7 +67,12 @@ known bug".
 - OpenTherm over MQTT uses bare `float()`, so a non-numeric payload such as
   "unavailable" raises on access instead of giving None.
 - A failed MQTT publish is logged and swallowed, so the setter completes as if
-  it succeeded. Plan step 2 addresses this.
+  it succeeded. Plan step 2h addresses this for EMS-ESP; step 4 for the other
+  MQTT backends.
+- The simulator overrides the coordinator update step without calling the
+  base, so `_device_on_since` is never set and its target stays at the minimum
+  (10 °C, or the minimum setpoint); the simulator never heats towards the
+  setpoint.
 - Device data that changes more often than every 5 s never notifies listeners,
   because each update restarts the debounce. See the open question on cycle
   triggering in the design doc.
@@ -71,7 +90,9 @@ known bug".
   before the MQTT subscription; on a cold start it waits for HA to start, after
   subscribing. Either way nothing waits for live data or checks the stored
   values' age. A stored EMS-ESP `tapwateractive: "on"` (HA stopped during a
-  draw) keeps hot water active until the first live message.
+  draw) keeps hot water active until the first live message. In HVAC OFF the
+  first loop can send heater OFF based on stored values; from plan step 2h,
+  channel writes wait for a live read-back.
 - The config flow's manufacturer step reads `member_id` from stored data
   without subscribing to MQTT. On a fresh install there is no stored
   `member_id`, so no manufacturer is preselected.
@@ -85,7 +106,11 @@ known bug".
   boiler is left at heater ON with the calibration setpoint, because the reset
   in `OvershootProtection.calculate` only runs on cancellation, and the
   climate's previous HVAC mode is not restored (the config flow aborts before
-  restoring it).
+  restoring it). Calibration is also reported to have problems in general.
+- Calibration in the config flow sets the SAT climate to OFF and drives the
+  boiler through its own coordinator; the climate's OFF cycle keeps running and
+  switches the heater off whenever it sees the boiler active, interrupting the
+  calibration.
 - `overshoot_protection.py` waits for the boiler temperature in a loop without
   `await` when it is missing or 0.0, which blocks the HA event loop;
   `asyncio.wait_for` cannot interrupt it.

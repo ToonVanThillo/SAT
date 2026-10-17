@@ -103,6 +103,22 @@ async def test_loop_publishes_nothing_without_a_temperature(hass, entry, climate
     assert await run_loop(climate, mqtt_mock, published) == []
 
 
+@pytest.mark.parametrize(*ems_entry())
+@pytest.mark.parametrize("sensor", [INSIDE, OUTSIDE])
+async def test_loop_publishes_nothing_with_a_non_numeric_temperature(hass, entry, climate, boiler_data, mqtt_mock, published, sensor):
+    await boiler_data(**IDLE | {"heatingactive": "on"})
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await hass.async_block_till_done()
+    hass.states.async_set(sensor, "abc")
+    await hass.async_block_till_done()
+    mqtt_mock.async_publish.reset_mock()
+
+    await climate.async_control_heating_loop()
+
+    assert published() == []
+
+
 # Heater state
 
 @pytest.mark.parametrize(*with_data({CONF_RADIATORS: [RADIATOR]}))
@@ -161,16 +177,17 @@ async def test_modulation_stays_maximum_without_pwm(entry, climate, boiler_data,
 # HVAC mode OFF
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_no_setpoint_after_hvac_off_until_heat_again(hass, entry, climate, boiler_data, mqtt_mock, published, freezer):
+async def test_only_heater_off_after_hvac_off_until_heat_again(hass, entry, climate, boiler_data, mqtt_mock, published, freezer):
     await boiler_data(**IDLE | {"heatingactive": "on"})
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.OFF)
     mqtt_mock.async_publish.reset_mock()
 
-    # Neither the scheduled nor a direct loop writes anything
+    # The scheduled and direct loops only stop the heater, which the snapshot still shows active
     await advance(hass, freezer, 40)
     await climate.async_control_heating_loop()
-    assert published() == []
+    assert set(published()) == {message('{"cmd": "heatingoff", "value": "on"}')}
+    mqtt_mock.async_publish.reset_mock()
 
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await climate.async_control_heating_loop()

@@ -159,19 +159,27 @@ async def test_cycle_submits_the_full_state_when_nothing_changes(entry, climate,
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_missing_temperature_submits_nothing(hass, entry, climate, boiler_data, mqtt_mock, published, spy):
+async def test_missing_temperature_submits_nothing(hass, entry, climate, boiler_data):
     await boiler_data(**IDLE)
     hass.states.async_set(INSIDE, "unavailable")
-    submit = spy(climate._coordinator)
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    coordinator = climate._coordinator
 
-    await run_loop(climate, mqtt_mock, published)
+    # Only the snapshot phase runs
+    with patch.object(coordinator, "async_control_heating_loop", wraps=coordinator.async_control_heating_loop) as update, \
+            patch.object(coordinator, "verify", wraps=coordinator.verify) as verify, \
+            patch.object(coordinator, "async_submit", wraps=coordinator.async_submit) as submit:
+        await climate.async_control_heating_loop()
 
+    update.assert_awaited_once()
+    verify.assert_called_once_with(coordinator._snapshot)
     submit.assert_not_awaited()
 
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_hvac_off_loop_submits_nothing(entry, climate, boiler_data, spy):
+async def test_hvac_off_loop_submits_heater_off(entry, climate, boiler_data, spy):
     await boiler_data(**IDLE)
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.OFF)
@@ -179,19 +187,7 @@ async def test_hvac_off_loop_submits_nothing(entry, climate, boiler_data, spy):
 
     await climate.async_control_heating_loop()
 
-    submit.assert_not_awaited()
-
-
-@pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*ems_entry())
-@pytest.mark.parametrize("active", ["on", "off"])
-async def test_hvac_off_submits_heater_off(entry, climate, boiler_data, active, spy):
-    await boiler_data(**IDLE | {"heatingactive": active})
-    submit = spy(climate._coordinator)
-
-    await climate.async_set_hvac_mode(HVACMode.OFF)
-
-    assert [c.args[0] for c in submit.await_args_list] == [DesiredState(heater_state=DeviceState.OFF)]
+    submit.assert_awaited_once_with(DesiredState(heater_state=DeviceState.OFF))
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -259,6 +255,15 @@ async def test_hot_water_number_writes_directly(hass, mqtt_mock, no_publish_dela
 
 # Decide phase and verify
 
+def record(order: list[str], name: str) -> Callable[..., object]:
+    """Return a side effect that appends `name` to `order`; returning DEFAULT lets the wrapped method run."""
+    def side_effect(*_: object, **__: object) -> object:
+        order.append(name)
+        return DEFAULT
+
+    return side_effect
+
+
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
 async def test_cycle_verifies_once_between_snapshot_and_submit(entry, climate, boiler_data):
@@ -268,17 +273,34 @@ async def test_cycle_verifies_once_between_snapshot_and_submit(entry, climate, b
     coordinator = climate._coordinator
     order: list[str] = []
 
-    def record(name: str) -> Callable[..., object]:
-        """Return a side effect that records `name`; returning DEFAULT lets the wrapped method run."""
-        return lambda *_: order.append(name) or DEFAULT
-
-    with patch.object(coordinator, "snapshot", wraps=coordinator.snapshot, side_effect=record("snapshot")), \
-            patch.object(coordinator, "verify", wraps=coordinator.verify, side_effect=record("verify")) as verify, \
-            patch.object(coordinator, "async_submit", wraps=coordinator.async_submit, side_effect=record("async_submit")):
+    with patch.object(coordinator, "snapshot", wraps=coordinator.snapshot, side_effect=record(order, "snapshot")), \
+            patch.object(coordinator, "verify", wraps=coordinator.verify, side_effect=record(order, "verify")) as verify, \
+            patch.object(coordinator, "async_submit", wraps=coordinator.async_submit, side_effect=record(order, "async_submit")):
         await climate.async_control_heating_loop()
 
     assert order == ["snapshot", "verify", "async_submit"]
     verify.assert_called_once_with(coordinator._snapshot)
+
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*ems_entry())
+async def test_hvac_off_cycle_requests_heater_off_without_temperatures(hass, entry, climate, boiler_data):
+    await boiler_data(**IDLE)
+    hass.states.async_set(INSIDE, "unavailable")
+    await climate.async_set_hvac_mode(HVACMode.OFF)
+    coordinator = climate._coordinator
+    order: list[str] = []
+
+    # The snapshot phase is the same as in HEAT; missing temperatures do not stop it
+    with patch.object(coordinator, "async_control_heating_loop", wraps=coordinator.async_control_heating_loop, side_effect=record(order, "update")), \
+            patch.object(coordinator, "snapshot", wraps=coordinator.snapshot, side_effect=record(order, "snapshot")), \
+            patch.object(coordinator, "verify", wraps=coordinator.verify, side_effect=record(order, "verify")) as verify, \
+            patch.object(coordinator, "async_submit", wraps=coordinator.async_submit, side_effect=record(order, "async_submit")) as submit:
+        await climate.async_control_heating_loop()
+
+    assert order == ["update", "snapshot", "verify", "async_submit"]
+    verify.assert_called_once_with(coordinator._snapshot)
+    submit.assert_awaited_once_with(DesiredState(heater_state=DeviceState.OFF))
 
 
 async def test_submit_without_snapshot_writes_unconditionally(ems, published):

@@ -19,6 +19,9 @@ Each cycle has three phases, in this order:
 3. **Reconcile**: the coordinator hands the `DesiredState` to its channels,
    which write what is needed.
 
+In HVAC mode OFF the decide phase only requests heater OFF. In HEAT with a
+missing or unreadable temperature, only the snapshot phase runs.
+
 Every write goes through this path, including HVAC mode OFF and pushing the
 setpoint to the thermostat. Hot water control is out of scope; where a backend
 supports the hot water setpoint, it keeps its direct write path.
@@ -92,9 +95,10 @@ sent value:
   status, if this cycle's verify found a mismatch or the channel rewrites every
   cycle.
 - A read-write channel writes only once its read-back is live (received, not
-  restored); while it waits, a warning is logged once. If the latest live
-  read-back matches the encoded target (within tolerance) when the first write
-  is due, it is taken as sent: the channel is `IN_SYNC` without writing.
+  restored); if it waits for more than three cycles, a warning is logged once.
+  If the latest live read-back matches the encoded target (within tolerance)
+  when the first write is due, it is taken as sent: the channel is `IN_SYNC`
+  without writing.
 - Write-only: write the target every cycle; it cannot be verified.
 - Read-only: a requested value is ignored and a warning is logged once.
 - Reading a write-only channel returns nothing and logs a warning once.

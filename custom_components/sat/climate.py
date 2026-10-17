@@ -43,7 +43,7 @@ from .const import PWMStatus
 from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
 from .entity import SatEntity
 from .errors import Error
-from .helpers import convert_time_str_to_seconds, is_state_stale, state_age_seconds
+from .helpers import convert_time_str_to_seconds, float_value, is_state_stale, state_age_seconds
 from .manufacturers.geminox import Geminox
 from .pwm import PWMState
 from .relative_modulation import RelativeModulation, RelativeModulationState
@@ -102,12 +102,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.inside_sensor_entity_id = config_entry.data.get(CONF_INSIDE_SENSOR_ENTITY_ID)
         self.humidity_sensor_entity_id = config_entry.data.get(CONF_HUMIDITY_SENSOR_ENTITY_ID)
 
-        # Get outside sensor entity IDs
-        self.outside_sensor_entities = config_entry.data.get(CONF_OUTSIDE_SENSOR_ENTITY_ID)
-
-        # If outside sensor entity IDs is a string, make it a list
-        if isinstance(self.outside_sensor_entities, str):
-            self.outside_sensor_entities = [self.outside_sensor_entities]
+        # Get outside sensor entity IDs; a single one may be stored as a string
+        outside_sensor_entities = config_entry.data.get(CONF_OUTSIDE_SENSOR_ENTITY_ID) or []
+        self.outside_sensor_entities: list[str] = [outside_sensor_entities] if isinstance(outside_sensor_entities, str) else list(outside_sensor_entities)
 
         # Create config options dictionary with defaults
         config_options = OPTIONS_DEFAULTS.copy()
@@ -125,6 +122,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self._setpoint = None
         self._calculated_setpoint = None
         self._last_boiler_temperature = None
+        self._unreadable_entities: set[str] = set()
 
         self._hvac_mode = None
         self._target_temperature = None
@@ -465,19 +463,25 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return round(target_temperature - current_temperature, 2)
 
     @property
-    def current_outside_temperature(self):
-        """Return the current outside temperature"""
+    def current_outside_temperature(self) -> float | None:
+        """Return the temperature of the first readable outside entity (sensors first), or None if none is readable."""
         self.outside_sensor_entities.sort(key=lambda x: "sensor" not in x)
         for entity_id in self.outside_sensor_entities:
             state = self.hass.states.get(entity_id)
             if state is None or state.state in [STATE_UNKNOWN, STATE_UNAVAILABLE]:
                 continue
 
+            value: float | str | None
             if sensor.DOMAIN in entity_id:
-                return float(state.state)
+                value = state.state
+            elif weather.DOMAIN in entity_id:
+                value = state.attributes.get("temperature")
+            else:
+                continue
 
-            if weather.DOMAIN in entity_id:
-                return float(state.attributes.get("temperature"))
+            # A non-numeric value is skipped like an unavailable one
+            if (temperature := self._numeric_value(entity_id, value)) is not None:
+                return temperature
 
         return None
 
@@ -559,11 +563,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             # If the thermostat does not support hvac action, we can assume the valves are
             # open if the current temperature is not at the target temperature
             if state.attributes.get("hvac_action") is None:
-                target_temperature = state.attributes.get("temperature")
-                current_temperature = state.attributes.get("current_temperature")
+                target_temperature = float_value(state.attributes.get("temperature"))
+                current_temperature = float_value(state.attributes.get("current_temperature"))
 
-                # If there is a current temperature, and it is not at the target temperature, we can assume the valves are open
-                if current_temperature is not None and float(target_temperature) >= float(current_temperature) + float(self._climate_valve_offset):
+                # Skip a climate with a missing or non-numeric temperature; otherwise the valves are open below the target
+                if target_temperature is not None and current_temperature is not None and target_temperature >= current_temperature + self._climate_valve_offset:
                     return True
 
         # If none of the thermostats have open valves, return False
@@ -952,18 +956,19 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             valves_open=self.valves_open,
         )
 
-        # If the current, target or outside temperature is not available, do nothing
-        if inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
-            return
-
-        # No need to do anything if we are not on
-        if self.hvac_mode != HVACMode.HEAT:
-            return
-
         # Control the heating through the coordinator
         await self._coordinator.async_control_heating_loop(climate=self, pwm_state=self.pwm.state)
         snapshot = self._coordinator.snapshot()
         self._coordinator.verify(snapshot)
+
+        # In HVAC mode OFF the decide phase only requests heater OFF
+        if self.hvac_mode != HVACMode.HEAT:
+            await self._coordinator.async_submit(DesiredState(heater_state=DeviceState.OFF))
+            return
+
+        # Stop if the current, target or outside temperature is not available
+        if inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
+            return
 
         if self._calculated_setpoint is None:
             # Default to the calculated setpoint
@@ -1044,9 +1049,12 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self._hvac_mode = HVACMode.HEAT
         elif hvac_mode == HVACMode.OFF:
             self._hvac_mode = HVACMode.OFF
-            # The coordinator compares the request with this fresh snapshot
-            self._coordinator.snapshot()
-            await self._coordinator.async_submit(DesiredState(heater_state=DeviceState.OFF))
+
+            # Cancel a pending scheduled run; this cycle replaces it and clears the handle
+            if self._control_heating_loop_unsub is not None:
+                self._control_heating_loop_unsub()
+
+            await self.async_control_heating_loop()
         else:
             # If an unsupported mode is passed, log an error message
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
@@ -1150,8 +1158,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         data = {"title": title, "message": message}
         await self.hass.services.async_call(notify.DOMAIN, service, data)
 
-    def _get_entity_state_float(self, entity_id: str) -> Optional[float]:
-        """Return state if available and valid."""
+    def _get_entity_state_float(self, entity_id: str | None) -> float | None:
+        """Return the entity's state as a float, or None if it is missing, stale, unavailable or not numeric."""
         if entity_id is None:
             return None
 
@@ -1167,4 +1175,15 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if entity.state in [STATE_UNKNOWN, STATE_UNAVAILABLE]:
             return None
 
-        return float(entity.state)
+        return self._numeric_value(entity_id, entity.state)
+
+    def _numeric_value(self, entity_id: str, value: float | str | None) -> float | None:
+        """Return `value` as a float, or None if it is not a finite number; warn once per unreadable period of `entity_id`."""
+        if (number := float_value(value)) is None:
+            if entity_id not in self._unreadable_entities:
+                _LOGGER.warning("%s is not numeric (%r); treating it as unavailable", entity_id, value)
+                self._unreadable_entities.add(entity_id)
+            return None
+
+        self._unreadable_entities.discard(entity_id)
+        return number

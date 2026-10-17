@@ -69,14 +69,18 @@ async def test_cold_setpoint_sends_zero_and_stops_heater(entry, climate, boiler_
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_hvac_off_publishes_nothing_in_the_loop(entry, climate, boiler_data, mqtt_mock, published):
+async def test_hvac_off_stops_an_active_heater_every_cycle(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE | {"heatingactive": "on"})
 
-    # Switching off stops the heater once, the loop itself does nothing afterwards
+    # Switching off stops the heater right away
     await climate.async_set_hvac_mode(HVACMode.OFF)
     assert published()[-1] == message('{"cmd": "heatingoff", "value": "on"}')
 
-    assert await run_loop(climate, mqtt_mock, published, mode=HVACMode.OFF) == []
+    # Each cycle repeats it while the snapshot shows the heater active
+    assert await run_loop(climate, mqtt_mock, published, mode=HVACMode.OFF) == [message('{"cmd": "heatingoff", "value": "on"}')]
+    mqtt_mock.async_publish.reset_mock()
+    await climate.async_control_heating_loop()
+    assert published() == [message('{"cmd": "heatingoff", "value": "on"}')]
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -85,6 +89,7 @@ async def test_hvac_off_with_inactive_heater_publishes_nothing(entry, climate, b
     mqtt_mock.async_publish.reset_mock()
 
     await climate.async_set_hvac_mode(HVACMode.OFF)
+    await climate.async_control_heating_loop()
 
     assert published() == []
 
