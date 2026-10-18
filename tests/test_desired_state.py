@@ -303,7 +303,7 @@ async def test_cycle_verifies_once_between_snapshot_and_submit(entry, climate, c
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_hvac_off_cycle_requests_heater_off_without_temperatures(hass, entry, climate, coordinator, boiler_data):
+async def test_hvac_off_cycle_runs_all_phases_without_temperatures(hass, entry, climate, coordinator, boiler_data):
     await boiler_data(**IDLE)
     hass.states.async_set(INSIDE, "unavailable")
     await climate.async_set_hvac_mode(HVACMode.OFF)

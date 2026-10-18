@@ -441,6 +441,14 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         return True
 
     @property
+    def relative_modulation_limits_hot_water(self) -> bool:
+        """Returns whether the maximum relative modulation also limits the hot water power.
+
+        If it doesn't, the relative modulation ignores hot water, so a tap draw doesn't change the requested value.
+        """
+        return True
+
+    @property
     def supports_maximum_setpoint_management(self):
         """Returns whether the device supports setting a maximum setpoint.
 

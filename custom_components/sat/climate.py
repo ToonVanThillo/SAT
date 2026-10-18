@@ -182,7 +182,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.areas = Areas(config_entry.data, config_options)
 
         # Create Relative Modulation controller
-        self.relative_modulation = RelativeModulation(self._heating_system)
+        self.relative_modulation = RelativeModulation(self._heating_system, coordinator.relative_modulation_limits_hot_water)
 
         # Create a Heating Curve controller with given configuration options
         self.heating_curve = create_heating_curve_controller(config_entry.data, config_options)

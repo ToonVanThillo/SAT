@@ -34,8 +34,8 @@ supports the hot water setpoint, it keeps its direct write path.
   device values (`readings`, by device key), so backends need no changes.
 - It holds the device and derived values the control logic reads (boiler state
   including device status, flame state) and the manufacturer, each read once per
-  cycle. Capabilities (`supports_*`) and configured setpoint limits stay on the
-  coordinator; they don't change within a cycle. Presentation (entity state and
+  cycle. Capabilities (such as `supports_*`) and configured setpoint limits stay
+  on the coordinator; they don't change within a cycle. Presentation (entity state and
   attributes) keeps reading the coordinator live.
 - A cycle does not see device data that arrives while it runs, including the
   device echoing the cycle's own writes; the next cycle does.
@@ -166,6 +166,8 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
    g. In HVAC mode OFF the cycle still runs and requests heater OFF.
    h. EMS-ESP migrated to channels; a failed publish raises.
    i. EMS-ESP: no max relative modulation writes for hot water.
+   j. EMS-ESP: the max relative modulation option and its minimum allow values
+      above 100, up to the range EMS-ESP accepts for `burnmaxpower`.
 3. Channel diagnostics; remove the synchro sensors.
 4. Migrate the other backends.
 5. Update the PID and heating curve inside the control cycle from the captured

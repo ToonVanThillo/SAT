@@ -16,9 +16,10 @@ class RelativeModulationState(str, Enum):
 
 
 class RelativeModulation:
-    def __init__(self, heating_system: str):
-        """Initialize instance variables"""
+    def __init__(self, heating_system: str, limits_hot_water: bool):
+        """Initialize instance variables; `limits_hot_water` is the coordinator's `relative_modulation_limits_hot_water`"""
         self._heating_system: str = heating_system
+        self._limits_hot_water: bool = limits_hot_water
         self._pulse_width_modulation_enabled: bool = False
 
         _LOGGER.debug("Relative Modulation initialized for heating system: %s", heating_system)
@@ -29,7 +30,7 @@ class RelativeModulation:
 
     def state(self, boiler: BoilerState) -> RelativeModulationState:
         """Determine the current state of relative modulation based on the given boiler state and internal data"""
-        if boiler.hot_water_active:
+        if boiler.hot_water_active and self._limits_hot_water:
             return RelativeModulationState.HOT_WATER
 
         if boiler.setpoint is None or boiler.setpoint <= MINIMUM_SETPOINT:

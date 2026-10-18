@@ -103,13 +103,14 @@ async def test_hvac_off_with_disabled_heater_publishes_nothing(entry, climate, b
 
 
 @pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
-async def test_hot_water_keeps_modulation_at_maximum_with_pwm(entry, climate, boiler_data, mqtt_mock, published):
+async def test_hot_water_does_not_raise_pwm_modulation(entry, climate, boiler_data, mqtt_mock, published):
     # heatingoff "on" hides a heater OFF write: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF (known bug, see docs/known-issues.md)
     await boiler_data(**IDLE | {"tapwateractive": "on", "heatingoff": "on"})
 
+    # burnmaxpower does not limit hot water power on EMS-ESP, so hot water does not raise it to the maximum
     assert await run_loop(climate, mqtt_mock, published) == [
         message('{"cmd": "selflowtemp", "value": 20}'),
-        message('{"cmd": "burnmaxpower", "value": 100}'),
+        message('{"cmd": "burnmaxpower", "value": 0}'),
     ]
 
 
@@ -229,3 +230,18 @@ async def test_interval_schedules_the_run_on_the_event_loop(hass: HomeAssistant,
         await advance(hass, freezer, 30)
 
     assert threads == [hass.loop_thread_id]
+
+
+@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+async def test_tap_draw_with_pwm_publishes_no_burnmaxpower(entry, climate, boiler_data, mqtt_mock, published, freezer):
+    await boiler_data(**IDLE | {"burnmaxpower": 0, "heatingoff": "on"})
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+
+    # Before, at the start of, during and at the end of a tap draw, the read-back equals the PWM value
+    for tap in ("off", "on", "on", "off"):
+        freezer.tick(1)
+        await boiler_data(**IDLE | {"burnmaxpower": 0, "heatingoff": "on", "tapwateractive": tap})
+        mqtt_mock.async_publish.reset_mock()
+        await climate.async_control_heating_loop()
+        assert not any("burnmaxpower" in call[1] for call in published())

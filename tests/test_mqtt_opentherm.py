@@ -4,7 +4,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
-from custom_components.sat.const import CONF_MANUFACTURER, CONF_MQTT_TOPIC
+from custom_components.sat.const import (
+    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_MANUFACTURER,
+    CONF_MQTT_TOPIC,
+)
 from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.mqtt.opentherm import SatOpenThermMqttCoordinator
 from tests.const import otgw_entry
@@ -145,3 +149,15 @@ async def test_publish_failure_in_the_loop_is_swallowed(entry, climate, mqtt_moc
     assert any(c[1].startswith("CS=") for c in sent)
     assert "Failed to publish MQTT command" in caplog.text
     assert "Failed to write" not in caplog.text
+
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+async def test_hot_water_keeps_modulation_at_maximum_with_pwm(hass, entry, climate, mqtt_mock, published):
+    for key, payload in {"TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF", "domestichotwater": "ON"}.items():
+        await feed(hass, key, payload)
+
+    # Forced PWM without hot water would turn modulation down to 0
+    commands = [c[1] for c in await run_loop(climate, mqtt_mock, published) if c[0] == COMMAND_TOPIC]
+    assert "MM=100" in commands
+    assert "MM=0" not in commands

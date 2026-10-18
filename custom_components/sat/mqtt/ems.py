@@ -103,6 +103,11 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         return True
 
     @property
+    def relative_modulation_limits_hot_water(self) -> bool:
+        # EMS-ESP limits hot water power with `dhw.maxpower`, not `burnmaxpower`.
+        return False
+
+    @property
     def device_active(self) -> bool:
         return self.data.get(DATA_CENTRAL_HEATING) == DATA_ON
 

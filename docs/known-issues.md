@@ -36,6 +36,12 @@ known bug".
   (see the open question in the design doc).
 - With PWM, a minimum setpoint ≤ `COLD_SETPOINT` (28.2 °C) makes the ON phase
   request heater OFF.
+- With PWM, the OFF phase requests `MINIMUM_SETPOINT`; the next cycle reads it
+  back as ≤ 10, so relative modulation is COLD and requests the configured
+  maximum. The first ON-phase cycle still decides from that read-back and keeps
+  the maximum; the next requests 0 (or the floor) again. The max relative
+  modulation is written twice per PWM cycle, and the boiler starts each ON
+  phase at the maximum. Observed on EMS-ESP.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with
@@ -58,11 +64,6 @@ known bug".
   target raises there.
 
 ## Device communication
-- With PWM, relative modulation's hot water state makes the climate send the
-  maximum relative modulation (default 100) as `burnmaxpower` at each tap water
-  draw, and the PWM value again afterwards. EMS-ESP limits hot water power with
-  `dhw.maxpower`, not `burnmaxpower`, so these writes have no use there. Plan
-  step 2i addresses this.
 - EMS-ESP on/off values are only recognised as "on"/"off"; with EMS-ESP's
   boolean format set to true/false or 1/0, `hot_water_active`, `device_active`
   and `flame_active` are always False, and the heater channel never gets a
@@ -119,6 +120,9 @@ known bug".
   boiler through its own coordinator; on OpenTherm over MQTT the climate's OFF
   cycle keeps running and switches the heater off whenever it sees the boiler
   active, interrupting the calibration.
+- Calibration requests a fixed max relative modulation of 100
+  (`MAXIMUM_RELATIVE_MODULATION`, used by `overshoot_protection.py`), regardless of
+  the configured maximum relative modulation.
 - `overshoot_protection.py` waits for the boiler temperature in a loop without
   `await` when it is missing or 0.0, which blocks the HA event loop;
   `asyncio.wait_for` cannot interrupt it.

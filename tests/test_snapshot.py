@@ -63,20 +63,21 @@ async def test_snapshot_copies_the_coordinator_values_and_is_immutable(hass, ent
 
 # RelativeModulation
 
-@pytest.mark.parametrize(("hot_water", "setpoint", "pwm", "expected"), [
-    (True, 40.0, True, RelativeModulationState.HOT_WATER),
-    (True, None, False, RelativeModulationState.HOT_WATER),
-    (True, MINIMUM_SETPOINT, True, RelativeModulationState.HOT_WATER),
-    (False, None, True, RelativeModulationState.COLD),
-    (False, MINIMUM_SETPOINT, False, RelativeModulationState.COLD),
-    (False, MINIMUM_SETPOINT - 1, True, RelativeModulationState.COLD),
-    (False, MINIMUM_SETPOINT + 0.1, True, RelativeModulationState.OFF),
-    (False, 40.0, True, RelativeModulationState.OFF),
-    (False, MINIMUM_SETPOINT + 0.1, False, RelativeModulationState.PULSE_WIDTH_MODULATION_OFF),
-    (False, 40.0, False, RelativeModulationState.PULSE_WIDTH_MODULATION_OFF),
+@pytest.mark.parametrize(("hot_water", "setpoint", "pwm", "limits_hot_water", "expected"), [
+    (True, 40.0, True, True, RelativeModulationState.HOT_WATER),
+    (True, None, False, True, RelativeModulationState.HOT_WATER),
+    (True, MINIMUM_SETPOINT, True, True, RelativeModulationState.HOT_WATER),
+    (True, 40.0, True, False, RelativeModulationState.OFF),
+    (False, None, True, True, RelativeModulationState.COLD),
+    (False, MINIMUM_SETPOINT, False, True, RelativeModulationState.COLD),
+    (False, MINIMUM_SETPOINT - 1, True, True, RelativeModulationState.COLD),
+    (False, MINIMUM_SETPOINT + 0.1, True, True, RelativeModulationState.OFF),
+    (False, 40.0, True, True, RelativeModulationState.OFF),
+    (False, MINIMUM_SETPOINT + 0.1, False, True, RelativeModulationState.PULSE_WIDTH_MODULATION_OFF),
+    (False, 40.0, False, True, RelativeModulationState.PULSE_WIDTH_MODULATION_OFF),
 ])
-async def test_relative_modulation_state_follows_the_given_boiler(hot_water, setpoint, pwm, expected):
-    relative_modulation = RelativeModulation("radiators")
+async def test_relative_modulation_state_follows_the_given_boiler(hot_water, setpoint, pwm, limits_hot_water, expected):
+    relative_modulation = RelativeModulation("radiators", limits_hot_water)
     await relative_modulation.update(pwm)
     boiler = replace(BOILER_STATE, hot_water_active=hot_water, setpoint=setpoint)
 
@@ -85,7 +86,7 @@ async def test_relative_modulation_state_follows_the_given_boiler(hot_water, set
 
 
 async def test_relative_modulation_defaults_to_pwm_disabled():
-    assert RelativeModulation("radiators").state(BOILER_STATE) == RelativeModulationState.PULSE_WIDTH_MODULATION_OFF
+    assert RelativeModulation("radiators", True).state(BOILER_STATE) == RelativeModulationState.PULSE_WIDTH_MODULATION_OFF
 
 
 # Control cycle
@@ -96,25 +97,26 @@ def forced_pwm_entry(**data) -> tuple:
     return names, [(domains, entry_data | data, options, config)]
 
 
+def inject_after_snapshot(coordinator, hass, topic: str, payload: str) -> None:
+    """Make an MQTT message arrive right after the next snapshot, before any decision, as device data arriving mid-cycle."""
+    take = coordinator.snapshot
+
+    def take_then_inject() -> BoilerSnapshot:
+        del coordinator.snapshot
+        snapshot = take()
+        async_fire_mqtt_message(hass, topic, payload)
+        return snapshot
+
+    coordinator.snapshot = take_then_inject
+
+
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry", "no_publish_error")
 class TestEmsCycle:
-    @staticmethod
-    def inject_after_snapshot(coordinator, hass, **data) -> None:
-        """Make a boiler_data message arrive right after the next snapshot, before any decision, as device data arriving mid-cycle."""
-        take = coordinator.snapshot
-
-        def take_then_inject() -> BoilerSnapshot:
-            del coordinator.snapshot
-            snapshot = take()
-            async_fire_mqtt_message(hass, "ems-esp/boiler_data", json.dumps(IDLE | data))
-            return snapshot
-
-        coordinator.snapshot = take_then_inject
 
     @pytest.mark.parametrize(*ems_entry())
     async def test_heater_decision_ignores_heating_enabled_arriving_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published):
         await boiler_data(**IDLE | {"heatingoff": "on"})
-        self.inject_after_snapshot(coordinator, hass, heatingoff="off")
+        inject_after_snapshot(coordinator, hass, "ems-esp/boiler_data", json.dumps(IDLE | {"heatingoff": "off"}))
 
         # Heating was disabled when the cycle started, so the heater is still started
         assert await run_loop(climate, mqtt_mock, published) == [
@@ -127,24 +129,11 @@ class TestEmsCycle:
     @pytest.mark.parametrize(*ems_entry())
     async def test_heater_stop_ignores_heating_disabled_arriving_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published):
         await boiler_data(**IDLE | {"heatingoff": "off"})
-        self.inject_after_snapshot(coordinator, hass, heatingoff="on")
+        inject_after_snapshot(coordinator, hass, "ems-esp/boiler_data", json.dumps(IDLE | {"heatingoff": "on"}))
 
         # Cold target: heating was enabled when the cycle started, so the heater is still stopped
         assert (await run_loop(climate, mqtt_mock, published, target=15.0))[-1] == message('{"cmd": "heatingoff", "value": "on"}')
         assert coordinator.data["heatingoff"] == "on"
-
-    @pytest.mark.parametrize(*forced_pwm_entry())
-    async def test_modulation_ignores_hot_water_arriving_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published):
-        # heatingoff "on" hides a heater OFF write: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF (known bug, see docs/known-issues.md)
-        await boiler_data(**IDLE | {"heatingoff": "on"})
-        self.inject_after_snapshot(coordinator, hass, tapwateractive="on", heatingoff="on")
-
-        # Without hot water at the start, PWM turns modulation down to 0; hot water would keep it at 100
-        assert await run_loop(climate, mqtt_mock, published) == [
-            message('{"cmd": "selflowtemp", "value": 20}'),
-            message('{"cmd": "burnmaxpower", "value": 0}'),
-        ]
-        assert coordinator.hot_water_active
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -185,6 +174,21 @@ async def test_manufacturer_resolved_by_the_update_step_applies_in_the_same_cycl
     assert ("otgw/set/gw1/command", "MM=0", 1, False) not in published()
 
 
+@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry", "no_publish_error")
+async def test_modulation_ignores_hot_water_arriving_mid_cycle(hass, entry, climate, coordinator, mqtt_mock, published):
+    for key, value in {"TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF", "domestichotwater": "OFF"}.items():
+        async_fire_mqtt_message(hass, f"otgw/value/gw1/{key}", value)
+    await hass.async_block_till_done()
+    inject_after_snapshot(coordinator, hass, "otgw/value/gw1/domestichotwater", "ON")
+
+    # Without hot water at the start, PWM turns modulation down to 0; hot water would keep it at 100
+    commands = [c[1] for c in await run_loop(climate, mqtt_mock, published) if c[0] == "otgw/set/gw1/command"]
+    assert "MM=0" in commands
+    assert "MM=100" not in commands
+    assert coordinator.hot_water_active
+
+
 # Presentation stays live
 
 @pytest.mark.parametrize(*ems_entry())
@@ -197,7 +201,7 @@ async def test_presentation_reflects_changes_after_the_last_cycle(hass, entry, c
     assert climate.hvac_action == HVACAction.IDLE
     assert climate.extra_state_attributes["relative_modulation_state"] == RelativeModulationState.PULSE_WIDTH_MODULATION_OFF.name
 
-    await boiler_data(**IDLE | {"heatingactive": "on", "tapwateractive": "on"})
+    await boiler_data(**IDLE | {"heatingactive": "on", "selflowtemp": 0})
 
     assert climate.hvac_action == HVACAction.HEATING
-    assert climate.extra_state_attributes["relative_modulation_state"] == RelativeModulationState.HOT_WATER.name
+    assert climate.extra_state_attributes["relative_modulation_state"] == RelativeModulationState.COLD.name
