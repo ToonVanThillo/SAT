@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.sat.channels import (
+    RELEASE,
     WAITING_CYCLES_BEFORE_WARNING,
     ChannelDefinition,
     Channels,
+    ChannelState,
     ChannelStatus,
     DesiredState,
     Quantity,
@@ -71,8 +73,8 @@ def channel_records(caplog):
 
 
 def logged(caplog):
-    """(level, has traceback) of each record from the channels logger."""
-    return [(r.levelno, r.exc_info is not None) for r in channel_records(caplog)]
+    """(level, has traceback) of each warning or error from the channels logger."""
+    return [(r.levelno, r.exc_info is not None) for r in channel_records(caplog) if r.levelno >= logging.WARNING]
 
 
 ERROR_WITH_TRACEBACK = (logging.ERROR, True)
@@ -818,3 +820,65 @@ async def test_waiting_for_live_read_back_warns_once(caplog):
 
     assert logged(caplog) == [WARNING_WITHOUT_TRACEBACK]
     assert "control_setpoint" in channel_records(caplog)[0].getMessage()
+
+
+@pytest.mark.parametrize(("read_back", "calls", "status"), [(0.0, [50.0, 50.0], ChannelStatus.PENDING), (50.0, [50.0], ChannelStatus.IN_SYNC)])
+async def test_release_stops_writing_and_verifying_until_requested_again(freezer, read_back, calls, status):
+    definition, fake = rw(write_every_cycle=True)
+    channels = primed(definition)
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    await channels.async_write(DesiredState(control_setpoint=RELEASE))
+
+    # A read-back after the release is recorded but not compared, and nothing is written
+    freezer.move_to(T0 + timedelta(seconds=10))
+    channels.verify(snap(control_setpoint=live(read_back, T0 + timedelta(seconds=5))))
+    await channels.async_write(DesiredState())
+
+    state = channels.states[CS]
+    assert fake.calls == [50.0]
+    assert (state.status, state.target, state.sent, state.sent_at, state.read_back, state.drift_count) == (ChannelStatus.IDLE, None, None, None, read_back, 0)
+
+    # Requested again, it is a first write: adopted if the latest live read-back matches, else written
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    assert fake.calls == calls
+    assert channels.states[CS].status == status
+
+
+async def test_release_keeps_the_drift_count_and_never_flags_drift_while_released(freezer):
+    definition, _ = rw()
+    channels = primed(definition)
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
+    channels.verify(snap(control_setpoint=live(40.0, T0 + timedelta(seconds=2))))
+    assert (channels.states[CS].status, channels.states[CS].drift_count) == (ChannelStatus.DRIFTED, 1)
+
+    await channels.async_write(DesiredState(control_setpoint=RELEASE))
+    for second, value in enumerate([40.0, 50.0, 10.0], start=3):
+        channels.verify(snap(control_setpoint=live(value, T0 + timedelta(seconds=second))))
+        await channels.async_write(DesiredState(control_setpoint=RELEASE))
+
+    state = channels.states[CS]
+    assert (state.status, state.drift_count, state.read_back) == (ChannelStatus.IDLE, 1, 10.0)
+
+
+async def test_release_of_a_read_only_channel_neither_warns_nor_writes(caplog):
+    channels = Channels([ChannelDefinition(quantity=CS, read=lambda s: s.readings.get(CS))])
+
+    await channels.async_write(DesiredState(control_setpoint=RELEASE))
+
+    assert channel_records(caplog) == []
+    assert channels.states[CS] == ChannelState(status=ChannelStatus.READ_ONLY)
+
+
+async def test_value_requested_after_release_waits_for_a_live_read_back(freezer):
+    definition, fake = rw()
+    channels = primed(definition)
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    await channels.async_write(DesiredState(control_setpoint=RELEASE))
+
+    # A restored read-back (no receive time) matching the value does not count
+    freezer.move_to(T0 + timedelta(seconds=10))
+    channels.verify(snap(control_setpoint=Reading(value=50.0, received_at=None)))
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    assert fake.calls == [50.0]
+    assert channels.states[CS].status == ChannelStatus.IDLE

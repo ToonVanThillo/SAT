@@ -178,7 +178,7 @@ class TestMidCycleChanges:
     @pytest.mark.parametrize(*with_data({CONF_RADIATORS: [RADIATOR]}))
     @pytest.mark.parametrize(("before", "during", "expected"), [("heating", "idle", [HEATER_ON]), ("idle", "heating", [])])
     async def test_heater_decision_ignores_valves_changing_mid_cycle(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, before, during, expected):
-        await boiler_data(**IDLE)
+        await boiler_data(**IDLE | {"heatingoff": "on"})
         await climate.async_set_target_temperature(21.0)
         await climate.async_set_hvac_mode(HVACMode.HEAT)
         hass.states.async_set(RADIATOR, "heat", radiator(before))

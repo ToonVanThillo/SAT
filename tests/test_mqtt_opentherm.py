@@ -1,11 +1,14 @@
 """Characterization tests for the OpenTherm gateway MQTT coordinator."""
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
 from custom_components.sat.const import CONF_MANUFACTURER, CONF_MQTT_TOPIC
 from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.mqtt.opentherm import SatOpenThermMqttCoordinator
+from tests.const import otgw_entry
+from tests.test_climate_loop import run_loop
 
 TOPIC = "otgw"
 COMMAND_TOPIC = "otgw/set/gw1/command"
@@ -22,15 +25,6 @@ def build(hass: HomeAssistant, manufacturer: str | None = None) -> SatOpenThermM
 async def feed(hass: HomeAssistant, key: str, payload: str) -> None:
     async_fire_mqtt_message(hass, f"{TOPIC}/value/gw1/{key}", payload)
     await hass.async_block_till_done()
-
-
-@pytest.fixture
-async def otgw(hass: HomeAssistant, mqtt_mock, no_publish_delay) -> SatOpenThermMqttCoordinator:
-    coordinator = build(hass)
-    await coordinator.async_added_to_hass()
-    mqtt_mock.async_publish.reset_mock()
-
-    return coordinator
 
 
 async def test_reads_one_topic_per_key(hass, otgw):
@@ -139,3 +133,15 @@ async def test_max_relative_modulation_immergas(hass, mqtt_mock, published, no_p
     await build(hass, "Immergas").async_set_control_max_relative_modulation(value)
 
     assert published() == [(COMMAND_TOPIC, f"TP=11:12={tp}", 1, False), (COMMAND_TOPIC, f"MM={value}", 1, False)]
+
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*otgw_entry())
+async def test_publish_failure_in_the_loop_is_swallowed(entry, climate, mqtt_mock, published, caplog):
+    mqtt_mock.async_publish.side_effect = HomeAssistantError("broker down")
+
+    sent = await run_loop(climate, mqtt_mock, published)
+
+    assert any(c[1].startswith("CS=") for c in sent)
+    assert "Failed to publish MQTT command" in caplog.text
+    assert "Failed to write" not in caplog.text

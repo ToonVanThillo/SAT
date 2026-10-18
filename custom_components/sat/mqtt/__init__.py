@@ -99,8 +99,15 @@ class SatMqttCoordinator(SatDataUpdateCoordinator):
         """Process and store the payload of a received MQTT message."""
         self.async_set_updated_data({key: value})
 
-    async def _publish_command(self, payload: str, wait_time: float = 1.0):
-        """Publish a command to the MQTT topic."""
+    async def _publish_command(self, payload: str, wait_time: float = 1.0) -> None:
+        """Publish a command to the MQTT topic; a failure is logged and swallowed."""
+        try:
+            await self._async_publish(payload, wait_time)
+        except Exception as error:
+            _LOGGER.error("Failed to publish MQTT command. Error: %s", error)
+
+    async def _async_publish(self, payload: str, wait_time: float = 1.0) -> None:
+        """Publish a command to the MQTT topic and give the device `wait_time` seconds to process it; raises if publishing fails. Publishes nothing in simulation."""
         topic = self._get_topic_for_publishing()
 
         _LOGGER.debug("Publishing MQTT command: payload='%s', topic='%s', simulation='%s'", payload, topic, self._simulation)
@@ -108,10 +115,7 @@ class SatMqttCoordinator(SatDataUpdateCoordinator):
         if self._simulation:
             return
 
-        try:
-            await mqtt.async_publish(hass=self.hass, topic=topic, payload=payload, qos=1)
+        await mqtt.async_publish(hass=self.hass, topic=topic, payload=payload, qos=1)
 
-            # Add a small delay to allow processing of the message
-            await asyncio.sleep(wait_time)
-        except Exception as error:
-            _LOGGER.error("Failed to publish MQTT command. Error: %s", error)
+        # Add a small delay to allow processing of the message
+        await asyncio.sleep(wait_time)

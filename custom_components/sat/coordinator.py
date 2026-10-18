@@ -15,7 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
-from .channels import DesiredState
+from .channels import RELEASE, DesiredState
 from .const import *
 from .flame import Flame, FlameState
 from .helpers import calculate_default_maximum_setpoint, seconds_since
@@ -525,13 +525,13 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             self._boiler_temperature_cold = min(self.boiler_temperature, self._boiler_temperature_cold)
 
     async def async_submit(self, desired: DesiredState) -> None:
-        """Apply every requested field of `desired` through the matching setter, in a fixed order; None fields are skipped.
+        """Apply every requested field of `desired` through the matching setter, in a fixed order; None and RELEASE fields are skipped.
 
         The max relative modulation and heater state are skipped when the last snapshot shows them already applied; without a snapshot they are always written.
         """
         snapshot = self._snapshot
 
-        if desired.control_setpoint is not None:
+        if desired.control_setpoint is not None and desired.control_setpoint is not RELEASE:
             await self.async_set_control_setpoint(desired.control_setpoint)
         if desired.maximum_relative_modulation is not None and (snapshot is None or snapshot.maximum_relative_modulation_value != desired.maximum_relative_modulation):
             await self.async_set_control_max_relative_modulation(desired.maximum_relative_modulation)

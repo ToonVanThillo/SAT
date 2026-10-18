@@ -19,8 +19,9 @@ Each cycle has three phases, in this order:
 3. **Reconcile**: the coordinator hands the `DesiredState` to its channels,
    which write what is needed.
 
-In HVAC mode OFF the decide phase only requests heater OFF. In HEAT with a
-missing or unreadable temperature, only the snapshot phase runs.
+In HVAC mode OFF the decide phase requests heater OFF and releases the control
+setpoint. In HEAT with a missing or unreadable temperature, only the snapshot
+phase runs.
 
 Every write goes through this path, including HVAC mode OFF and pushing the
 setpoint to the thermostat. Hot water control is out of scope; where a backend
@@ -50,7 +51,10 @@ supports the hot water setpoint, it keeps its direct write path.
   setpoint, heater on/off, max relative modulation, max setpoint, thermostat
   setpoint.
 - A requested value becomes the channel's target and stays the target until a
-  different value is requested. `None` means "keep the current target".
+  different value is requested. `None` means "keep the current target";
+  `RELEASE` means "no target".
+- A released channel stops writing and comparing read-backs until a value is
+  requested again, which it handles as a first write. Its status is `IDLE`.
 - Submitting the same desired state twice therefore has no extra effect.
 
 ## Channels
@@ -79,7 +83,7 @@ One channel per controllable quantity per backend.
 **Tracked state:** target value, sent value and time, read-back value
 and time, drift count, status.
 
-**Statuses:** `IDLE` (nothing sent yet), `PENDING`, `IN_SYNC`, `OUT_OF_SYNC`,
+**Statuses:** `IDLE` (no target or nothing sent yet), `PENDING`, `IN_SYNC`, `OUT_OF_SYNC`,
 `DRIFTED`, `WRITE_ONLY`, `READ_ONLY`.
 
 **Verify** (read-write channels, every cycle, right after the snapshot)
@@ -127,7 +131,7 @@ short transients such as `PENDING` don't show:
   value that keeps drifting and being rewritten stays visible.
 - `OUT_OF_SYNC`: the latest value did not read back as sent. It stays until a
   write is confirmed.
-- `WRITE_ONLY`, `READ_ONLY`, `IDLE` (nothing sent yet).
+- `WRITE_ONLY`, `READ_ONLY`, `IDLE` (no target or nothing sent yet).
 
 Attributes: the internal status, target, sent and read-back values with
 timestamps, and the drift count. These entities replace the Control
@@ -179,3 +183,7 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
 - Serial (pyotgw) values are timestamped per status section, not per field;
   channels for serial need per-field times.
 - Whether areas should capture their inputs once per cycle.
+- Whether measurements (e.g. `curflowtemp`) need a freshness check or
+  diagnostic based on their receive time.
+- MQTT backends record the send time after the 1 s wait that follows a
+  publish, so a read-back within that second is ignored.

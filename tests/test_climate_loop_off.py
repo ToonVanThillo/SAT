@@ -1,4 +1,4 @@
-"""Tests for the heating loop in HVAC mode OFF: only a heater OFF request, and the normal cycle again after HEAT."""
+"""Tests for the heating loop in HVAC mode OFF: heater OFF with the control setpoint released, and the normal cycle again after HEAT."""
 
 from unittest.mock import patch
 
@@ -7,7 +7,6 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.climate import HVACMode
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
-from custom_components.sat.channels import DesiredState
 from custom_components.sat.const import (
     CONF_MAXIMUM_SETPOINT,
     CONF_MINIMUM_SETPOINT,
@@ -17,7 +16,6 @@ from custom_components.sat.const import (
     CONF_SIMULATED_WARMING_UP,
     MODE_SIMULATOR,
 )
-from custom_components.sat.coordinator import DeviceState
 from tests.conftest import advance
 from tests.const import IDLE, ems_entry, otgw_entry
 from tests.test_climate_loop import message, run_loop
@@ -29,9 +27,9 @@ HEATER_OFF = message('{"cmd": "heatingoff", "value": "on"}')
 
 
 @pytest.mark.parametrize(*ems_entry())
-@pytest.mark.parametrize("active", ["on", "off"])
-async def test_off_never_publishes_setpoint_or_modulation(entry, climate, boiler_data, mqtt_mock, published, active):
-    await boiler_data(**IDLE | {"heatingactive": active})
+@pytest.mark.parametrize("heating_off", ["on", "off"])
+async def test_off_never_publishes_setpoint_or_modulation(entry, climate, boiler_data, mqtt_mock, published, heating_off):
+    await boiler_data(**IDLE | {"heatingoff": heating_off})
     await run_loop(climate, mqtt_mock, published, mode=HVACMode.OFF)
 
     for _ in range(4):
@@ -47,10 +45,31 @@ async def test_first_heat_cycle_after_off_publishes_the_normal_sequence(entry, c
     await climate.async_control_heating_loop()
 
     assert await run_loop(climate, mqtt_mock, published, mode=HVACMode.HEAT) == [
-        message('{"cmd": "selflowtemp", "value": 35.0}'),
+        message('{"cmd": "selflowtemp", "value": 35}'),
         message('{"cmd": "burnmaxpower", "value": 100}'),
         message('{"cmd": "heatingoff", "value": "off"}'),
     ]
+
+
+@pytest.mark.parametrize(*ems_entry())
+@pytest.mark.parametrize(("selflowtemp", "expected"), [(0, [message('{"cmd": "selflowtemp", "value": 35}')]), (35, [])])
+async def test_off_releases_the_setpoint_until_heat_again(entry, climate, boiler_data, mqtt_mock, published, freezer, selflowtemp, expected):
+    await boiler_data(**IDLE)
+    assert message('{"cmd": "selflowtemp", "value": 35}') in await run_loop(climate, mqtt_mock, published)
+
+    # Under heatingoff EMS-ESP drives selflowtemp to 0 itself; the OFF cycles leave it alone
+    mqtt_mock.async_publish.reset_mock()
+    await climate.async_set_hvac_mode(HVACMode.OFF)
+    for _ in range(3):
+        freezer.tick(1)
+        await boiler_data(selflowtemp=0, heatingoff="on")
+        await climate.async_control_heating_loop()
+    assert published() == [HEATER_OFF]
+
+    # Back in HEAT the setpoint is a first write: adopted if the live read-back matches, else written
+    freezer.tick(1)
+    await boiler_data(selflowtemp=selflowtemp)
+    assert [call for call in await run_loop(climate, mqtt_mock, published) if "selflowtemp" in call[1]] == expected
 
 
 @pytest.mark.parametrize(*otgw_entry())
@@ -67,9 +86,8 @@ async def test_opentherm_off_requests_heater_off_only_when_active(hass, entry, c
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_switching_off_runs_one_full_cycle(hass, entry, climate, boiler_data):
-    await boiler_data(**IDLE | {"heatingactive": "on"})
-    coordinator = climate._coordinator
+async def test_switching_off_runs_one_full_cycle(hass, entry, climate, coordinator, boiler_data):
+    await boiler_data(**IDLE)
 
     with patch.object(coordinator, "async_control_heating_loop", wraps=coordinator.async_control_heating_loop) as update, \
             patch.object(coordinator, "snapshot", wraps=coordinator.snapshot) as snapshot, \
@@ -80,12 +98,11 @@ async def test_switching_off_runs_one_full_cycle(hass, entry, climate, boiler_da
     update.assert_awaited_once()
     snapshot.assert_called_once()
     verify.assert_called_once_with(coordinator._snapshot)
-    submit.assert_awaited_once_with(DesiredState(heater_state=DeviceState.OFF))
+    submit.assert_awaited_once()
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_off_cycles_keep_the_coordinator_state_updating(hass, entry, climate, boiler_data, freezer: FrozenDateTimeFactory):
-    coordinator = climate._coordinator
+async def test_off_cycles_keep_the_coordinator_state_updating(hass, entry, climate, coordinator, boiler_data, freezer: FrozenDateTimeFactory):
     await climate.async_set_hvac_mode(HVACMode.OFF)
 
     # Each cycle appends the boiler temperature to the history that feeds the derivative; `heater_on_since` follows `heatingactive`
@@ -106,9 +123,8 @@ async def test_off_cycles_keep_the_coordinator_state_updating(hass, entry, clima
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_switching_off_cancels_a_scheduled_run(hass, entry, climate, freezer: FrozenDateTimeFactory):
+async def test_switching_off_cancels_a_scheduled_run(hass, entry, climate, coordinator, freezer: FrozenDateTimeFactory):
     climate.schedule_control_heating_loop()
-    coordinator = climate._coordinator
 
     with patch.object(coordinator, "async_control_heating_loop", wraps=coordinator.async_control_heating_loop) as update:
         await climate.async_set_hvac_mode(HVACMode.OFF)
@@ -121,7 +137,7 @@ async def test_switching_off_cancels_a_scheduled_run(hass, entry, climate, freez
 @pytest.mark.parametrize(*ems_entry())
 @pytest.mark.parametrize("sensor", [INSIDE, OUTSIDE])
 async def test_switching_off_with_a_non_numeric_temperature_stops_the_heater(hass, entry, climate, boiler_data, mqtt_mock, published, sensor):
-    await boiler_data(**IDLE | {"heatingactive": "on"})
+    await boiler_data(**IDLE | {"heatingoff": "off"})
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     hass.states.async_set(sensor, "abc")
@@ -137,13 +153,13 @@ async def test_switching_off_with_a_non_numeric_temperature_stops_the_heater(has
     CONF_MODE: MODE_SIMULATOR, CONF_MINIMUM_SETPOINT: 40, CONF_MAXIMUM_SETPOINT: 75,
     CONF_SIMULATED_HEATING: 5, CONF_SIMULATED_COOLING: 5, CONF_SIMULATED_WARMING_UP: "00:00:15",
 }))
-async def test_simulator_boiler_moves_toward_its_target_in_off(hass, entry, climate):
+async def test_simulator_boiler_moves_toward_its_target_in_off(hass, entry, climate, coordinator):
     await climate.async_set_hvac_mode(HVACMode.OFF)
-    temperatures = [climate._coordinator.boiler_temperature]
+    temperatures = [coordinator.boiler_temperature]
 
     for _ in range(5):
         await climate.async_control_heating_loop()
-        temperatures.append(climate._coordinator.boiler_temperature)
+        temperatures.append(coordinator.boiler_temperature)
 
     # Current behaviour, known bug (simulator update step, see known-issues): from 10 °C, the startup and switch-off cycles heat by 5 °C each, up to the target: the minimum setpoint, as the setpoint stays below it
     assert temperatures == [20, 25, 30, 35, 40, 40]

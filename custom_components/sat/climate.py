@@ -37,7 +37,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .area import Areas, SENSOR_TEMPERATURE_ID
 from .boiler import BoilerState
-from .channels import DesiredState
+from .channels import RELEASE, DesiredState
 from .const import *
 from .const import PWMStatus
 from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
@@ -961,9 +961,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         snapshot = self._coordinator.snapshot()
         self._coordinator.verify(snapshot)
 
-        # In HVAC mode OFF the decide phase only requests heater OFF
+        # In HVAC mode OFF the decide phase requests heater OFF and releases the control setpoint
         if self.hvac_mode != HVACMode.HEAT:
-            await self._coordinator.async_submit(DesiredState(heater_state=DeviceState.OFF))
+            await self._coordinator.async_submit(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))
             return
 
         # Stop if the current, target or outside temperature is not available

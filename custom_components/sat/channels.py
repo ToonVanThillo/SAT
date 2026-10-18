@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 from numbers import Real
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.util import dt as dt_util
 
@@ -21,10 +21,19 @@ _LOGGER = logging.getLogger(__name__)
 WAITING_CYCLES_BEFORE_WARNING = 3
 
 
+class Release(Enum):
+    """Type of the `RELEASE` sentinel."""
+    RELEASE = "release"
+
+
+# Requested instead of a value: the channel drops its target and stops writing and comparing read-backs.
+RELEASE: Final = Release.RELEASE
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DesiredState:
-    """What the control logic wants this cycle; None keeps the channel's current target."""
-    control_setpoint: float | None = None
+    """What the control logic wants this cycle; None keeps the channel's current target, RELEASE drops it."""
+    control_setpoint: float | Release | None = None
     heater_state: DeviceState | None = None
     maximum_relative_modulation: int | None = None
     maximum_setpoint: float | None = None
@@ -149,12 +158,17 @@ class _Channel:
 
     async def async_write(self, requested: Any) -> None:
         if self.definition.write is None:
-            if requested is not None and not self._warned_read_only:
+            if requested not in (None, RELEASE) and not self._warned_read_only:
                 _LOGGER.warning("Channel %s is read-only; ignoring requested value %s", self.name, requested)
                 self._warned_read_only = True
             return
 
         rewrite, self._mismatch = self._mismatch, False
+        if requested is RELEASE:
+            # Without a sent value verify only records read-backs, so the next request is a first write against the latest one.
+            self.state = replace(self.state, status=ChannelStatus.IDLE, target=None, sent=None, sent_at=None)
+            return
+
         if requested is not None:
             self.state = replace(self.state, target=requested)
 
@@ -193,6 +207,7 @@ class _Channel:
         if not needs_write:
             return
 
+        _LOGGER.debug("Wrote %s to channel %s", value, self.name)
         if write_only:
             status = ChannelStatus.WRITE_ONLY
         elif changed:

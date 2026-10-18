@@ -44,7 +44,7 @@ async def test_control_setpoint_synchro_turns_on_above_maximum_setpoint(hass, en
     await climate.async_control_heating_loop()
 
     # The clamped value is sent correctly, and the boiler reports it back
-    assert ("ems-esp/boiler", '{"cmd": "selflowtemp", "value": 30.0}', 1, False) in published()
+    assert ("ems-esp/boiler", '{"cmd": "selflowtemp", "value": 30}', 1, False) in published()
     await boiler_data(selflowtemp=30)
 
     # current behaviour, known bug: the unclamped climate setpoint is compared with the coordinator setpoint

@@ -19,8 +19,9 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import CLIMATE, CONF_MQTT_TOPIC, COORDINATOR, DOMAIN
-from custom_components.sat.fake import SatFakeCoordinator
+from custom_components.sat.coordinator import SatDataUpdateCoordinator
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
+from custom_components.sat.mqtt.opentherm import SatOpenThermMqttCoordinator
 from tests.const import DEFAULT_USER_DATA
 
 
@@ -56,7 +57,7 @@ async def climate(hass, entry: MockConfigEntry) -> SatClimate:
 
 
 @pytest.fixture
-async def coordinator(hass, entry: MockConfigEntry) -> SatFakeCoordinator:
+async def coordinator(hass, entry: MockConfigEntry) -> SatDataUpdateCoordinator:
     return hass.data[DOMAIN][entry.entry_id][COORDINATOR]
 
 
@@ -100,6 +101,16 @@ async def ems(hass: HomeAssistant, mqtt_mock, no_publish_delay) -> SatEmsMqttCoo
 
 
 @pytest.fixture
+async def otgw(hass: HomeAssistant, mqtt_mock, no_publish_delay) -> SatOpenThermMqttCoordinator:
+    """Return a started OpenTherm MQTT coordinator on topic `otgw` (device `gw1`), with the startup publishes cleared."""
+    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"})
+    await coordinator.async_added_to_hass()
+    mqtt_mock.async_publish.reset_mock()
+
+    return coordinator
+
+
+@pytest.fixture
 def boiler_data(hass: HomeAssistant) -> Callable[..., Awaitable[None]]:
     """Return a coroutine function that publishes an EMS `boiler_data` payload on topic `ems-esp`."""
     async def publish(**data) -> None:
@@ -117,7 +128,7 @@ async def loop_entry(mqtt_mock, no_publish_delay, freezer: FrozenDateTimeFactory
 
 @pytest.fixture
 def no_publish_error(caplog: LogCaptureFixture) -> Iterator[None]:
-    """Opt-in: fail the test if an MQTT publish failed during its call phase."""
+    """Opt-in: fail the test if an MQTT publish or a channel write failed during its call phase."""
     yield
     # After the yield only teardown logs are in caplog.text, so inspect the call phase
-    assert not [r for r in caplog.get_records("call") if "Failed to publish MQTT command" in r.getMessage()]
+    assert not [r for r in caplog.get_records("call") if r.getMessage().startswith(("Failed to publish MQTT command", "Failed to write"))]

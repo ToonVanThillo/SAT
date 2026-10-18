@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
+from collections.abc import Callable, Mapping
+from typing import Any, Optional
 
-from . import SatMqttCoordinator
+from homeassistant.core import HomeAssistant
+
+from ..channels import ChannelDefinition, Channels, DesiredState, Quantity
 from ..const import CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS
-from ..coordinator import DeviceState
+from ..coordinator import BoilerSnapshot, DeviceState, Reading
 from ..helpers import float_value
+from . import SatMqttCoordinator
 
 DATA_ON = "on"
 DATA_OFF = "off"
@@ -25,12 +29,62 @@ DATA_BOILER_CAPACITY = "nompower"
 
 DATA_REL_MIN_MOD_LEVEL = "burnminpower"
 DATA_MAX_REL_MOD_LEVEL_SETTING = "burnmaxpower"
+DATA_HEATING_OFF = "heatingoff"
+DATA_MAX_SETPOINT = "heatingtemp"
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
+def _reading(snapshot: BoilerSnapshot, key: str, convert: Callable[[Any], Any]) -> Reading | None:
+    """Read `key` from the snapshot converted to SAT terms, keeping its receive time; None if missing or not convertible."""
+    if (reading := snapshot.readings.get(key)) is None or (value := convert(reading.value)) is None:
+        return None
+
+    return Reading(value=value, received_at=reading.received_at)
+
+
+def _encode_control_setpoint(value: float) -> int:
+    # EMS-ESP takes whole degrees; 10 (the minimum setpoint) is sent as 0.
+    setpoint = round(value)
+    return 0 if setpoint == 10 else setpoint
+
+
 class SatEmsMqttCoordinator(SatMqttCoordinator):
     """Class to manage to fetch data from the OTGW Gateway using MQTT."""
+
+    def __init__(self, hass: HomeAssistant, device_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> None:
+        super().__init__(hass, device_id, config_data, options)
+
+        floor = int(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR]))
+        heater_states = {DATA_OFF: DeviceState.ON, DATA_ON: DeviceState.OFF}
+
+        self._channels: Channels = Channels([
+            # EMS-ESP falls back to the panel value about a minute after the last write.
+            ChannelDefinition(
+                quantity=Quantity.CONTROL_SETPOINT,
+                read=lambda snapshot: _reading(snapshot, DATA_CONTROL_SETPOINT, float_value),
+                encode=_encode_control_setpoint,
+                write=lambda value: self._async_write_command(DATA_CONTROL_SETPOINT, value),
+                write_every_cycle=True,
+            ),
+            ChannelDefinition(
+                quantity=Quantity.MAXIMUM_RELATIVE_MODULATION,
+                read=lambda snapshot: _reading(snapshot, DATA_MAX_REL_MOD_LEVEL_SETTING, float_value),
+                encode=lambda value: max(round(value), floor),
+                write=lambda value: self._async_write_command(DATA_MAX_REL_MOD_LEVEL_SETTING, value),
+            ),
+            ChannelDefinition(
+                quantity=Quantity.HEATER_STATE,
+                read=lambda snapshot: _reading(snapshot, DATA_HEATING_OFF, heater_states.get),
+                write=lambda state: self._async_write_command(DATA_HEATING_OFF, DATA_OFF if state == DeviceState.ON else DATA_ON),
+            ),
+            ChannelDefinition(
+                quantity=Quantity.MAXIMUM_SETPOINT,
+                read=lambda snapshot: _reading(snapshot, DATA_MAX_SETPOINT, float_value),
+                encode=round,
+                write=lambda value: self._async_write_command(DATA_MAX_SETPOINT, value),
+            ),
+        ])
 
     @property
     def device_type(self) -> str:
@@ -100,30 +154,16 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
     def get_tracked_entities(self) -> list[str]:
         return [DATA_BOILER_DATA]
 
-    async def async_set_control_setpoint(self, value: float) -> None:
-        await self._publish_command(f'{{"cmd": "selflowtemp", "value": {0 if value == 10 else value}}}')
+    def verify(self, snapshot: BoilerSnapshot) -> None:
+        self._channels.verify(snapshot)
 
-        await super().async_set_control_setpoint(value)
+    async def async_submit(self, desired: DesiredState) -> None:
+        """Reconcile `desired` through the EMS-ESP channels; the thermostat setpoint has no channel and is ignored."""
+        await self._channels.async_write(desired)
 
-    async def async_set_control_thermostat_setpoint(self, value: float) -> None:
-        # Not supported (yet)
-        await super().async_set_control_thermostat_setpoint(value)
-
-    async def async_set_heater_state(self, state: DeviceState) -> None:
-        await self._publish_command(f'{{"cmd": "heatingoff", "value": "{DATA_OFF if state == DeviceState.ON else DATA_ON}"}}')
-
-        await super().async_set_heater_state(state)
-
-    async def async_set_control_max_relative_modulation(self, value: int) -> None:
-        floor = int(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR]))
-        await self._publish_command(f'{{"cmd": "burnmaxpower", "value": {max(value, floor)}}}')
-
-        await super().async_set_control_max_relative_modulation(value)
-
-    async def async_set_control_max_setpoint(self, value: float) -> None:
-        await self._publish_command(f'{{"cmd": "heatingtemp", "value": {value}}}')
-
-        await super().async_set_control_max_setpoint(value)
+    async def _async_write_command(self, command: str, value: Any) -> None:
+        """Publish an EMS-ESP boiler command; raises if publishing fails."""
+        await self._async_publish(json.dumps({"cmd": command, "value": value}))
 
     def _get_topic_for_subscription(self, key: str) -> str:
         return f"{self._topic}/{key}"

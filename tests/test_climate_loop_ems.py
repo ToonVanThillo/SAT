@@ -44,13 +44,14 @@ async def cycle(hass: HomeAssistant, climate: SatClimate, boiler_data, freezer: 
 
 @pytest.mark.parametrize(*ems_entry({CONF_MAXIMUM_SETPOINT: 30}))
 async def test_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boiler_data, mqtt_mock, published):
-    await boiler_data(**IDLE)
+    await boiler_data(**IDLE | {"heatingoff": "on"})
 
     # The climate keeps the unclamped setpoint, only the written value is clamped
     assert await run_loop(climate, mqtt_mock, published) == [
-        message('{"cmd": "selflowtemp", "value": 30.0}'),
+        message('{"cmd": "selflowtemp", "value": 30}'),
         message('{"cmd": "burnmaxpower", "value": 100}'),
         message('{"cmd": "heatingoff", "value": "off"}'),
+        message('{"cmd": "heatingtemp", "value": 30}'),
     ]
     assert climate.setpoint == 35.0
 
@@ -59,26 +60,22 @@ async def test_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boile
 async def test_pwm_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
 
-    assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 15.0}')
+    assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 15}')
 
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_outside_temperature_changes_the_setpoint(hass, entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
-    assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 35.0}')
+    assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 35}')
 
     hass.states.async_set(OUTSIDE, "-5.0")
     await hass.async_block_till_done()
     mqtt_mock.async_publish.reset_mock()
 
-    # The setpoint is low-pass filtered (alpha 0.2) from the previous 35.0
+    # The setpoint is low-pass filtered (alpha 0.2) from the previous 35.0 to 37.2; the unchanged modulation is not sent again
     await climate.async_control_heating_loop()
 
-    assert published() == [
-        message('{"cmd": "selflowtemp", "value": 37.2}'),
-        message('{"cmd": "burnmaxpower", "value": 100}'),
-        message('{"cmd": "heatingoff", "value": "off"}'),
-    ]
+    assert published() == [message('{"cmd": "selflowtemp", "value": 37}')]
     assert hass.states.get(climate.entity_id).attributes["outside_temperature"] == -5.0
 
 
@@ -106,7 +103,7 @@ async def test_loop_publishes_nothing_without_a_temperature(hass, entry, climate
 @pytest.mark.parametrize(*ems_entry())
 @pytest.mark.parametrize("sensor", [INSIDE, OUTSIDE])
 async def test_loop_publishes_nothing_with_a_non_numeric_temperature(hass, entry, climate, boiler_data, mqtt_mock, published, sensor):
-    await boiler_data(**IDLE | {"heatingactive": "on"})
+    await boiler_data(**IDLE)
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await hass.async_block_till_done()
@@ -124,7 +121,7 @@ async def test_loop_publishes_nothing_with_a_non_numeric_temperature(hass, entry
 @pytest.mark.parametrize(*with_data({CONF_RADIATORS: [RADIATOR]}))
 @pytest.mark.parametrize(("hvac_action", "expected"), [("idle", []), ("heating", [message('{"cmd": "heatingoff", "value": "off"}')])])
 async def test_heater_start_depends_on_open_valves(hass, entry, climate, boiler_data, mqtt_mock, published, hvac_action, expected):
-    await boiler_data(**IDLE)
+    await boiler_data(**IDLE | {"heatingoff": "on"})
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     hass.states.async_set(RADIATOR, "heat", {"hvac_action": hvac_action, "hvac_modes": ["heat", "off"]})
@@ -137,17 +134,18 @@ async def test_heater_start_depends_on_open_valves(hass, entry, climate, boiler_
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_heater_state_follows_the_setpoint_on_consecutive_loops(entry, climate, boiler_data, mqtt_mock, published):
-    await boiler_data(**IDLE)
-    await run_loop(climate, mqtt_mock, published)
+async def test_heater_state_follows_the_setpoint_on_consecutive_loops(entry, climate, boiler_data, mqtt_mock, published, freezer):
+    await boiler_data(**IDLE | {"heatingoff": "on"})
+    assert message('{"cmd": "heatingoff", "value": "off"}') in await run_loop(climate, mqtt_mock, published)
 
-    # Heater is now reported active: no further start
-    await boiler_data(**IDLE | {"heatingactive": "on"})
+    # Heating now reads back as enabled: no further start
+    freezer.tick(1)
+    await boiler_data(heatingoff="off")
     mqtt_mock.async_publish.reset_mock()
     await climate.async_control_heating_loop()
     assert [call for call in published() if "heatingoff" in call[1]] == []
 
-    # Cold target: the active heater is stopped
+    # Cold target: the enabled heater is stopped
     await climate.async_set_target_temperature(15.0)
     mqtt_mock.async_publish.reset_mock()
     await climate.async_control_heating_loop()
@@ -159,17 +157,17 @@ async def test_heater_state_follows_the_setpoint_on_consecutive_loops(entry, cli
 @pytest.mark.parametrize(*ems_entry({CONF_MAXIMUM_RELATIVE_MODULATION: 80}))
 @pytest.mark.parametrize(("device", "expected"), [(80, []), (100, [message('{"cmd": "burnmaxpower", "value": 80}')])])
 async def test_modulation_is_written_only_when_it_differs(entry, climate, boiler_data, mqtt_mock, published, device, expected):
-    await boiler_data(**IDLE | {"heatingactive": "on", "burnmaxpower": device})
+    await boiler_data(**IDLE | {"burnmaxpower": device})
 
     assert (await run_loop(climate, mqtt_mock, published))[1:] == expected
 
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_modulation_stays_maximum_without_pwm(entry, climate, boiler_data, mqtt_mock, published):
-    await boiler_data(**IDLE | {"heatingactive": "on"})
+    await boiler_data(**IDLE | {"heatingoff": "off"})
 
     assert await run_loop(climate, mqtt_mock, published) == [
-        message('{"cmd": "selflowtemp", "value": 35.0}'),
+        message('{"cmd": "selflowtemp", "value": 35}'),
         message('{"cmd": "burnmaxpower", "value": 100}'),
     ]
 
@@ -178,20 +176,20 @@ async def test_modulation_stays_maximum_without_pwm(entry, climate, boiler_data,
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_only_heater_off_after_hvac_off_until_heat_again(hass, entry, climate, boiler_data, mqtt_mock, published, freezer):
-    await boiler_data(**IDLE | {"heatingactive": "on"})
+    await boiler_data(**IDLE | {"heatingoff": "off"})
     await climate.async_set_target_temperature(21.0)
-    await climate.async_set_hvac_mode(HVACMode.OFF)
     mqtt_mock.async_publish.reset_mock()
+    await climate.async_set_hvac_mode(HVACMode.OFF)
 
-    # The scheduled and direct loops only stop the heater, which the snapshot still shows active
+    # The OFF cycle, the scheduled ones and a direct one only stop the heater, once
     await advance(hass, freezer, 40)
     await climate.async_control_heating_loop()
-    assert set(published()) == {message('{"cmd": "heatingoff", "value": "on"}')}
+    assert published() == [message('{"cmd": "heatingoff", "value": "on"}')]
     mqtt_mock.async_publish.reset_mock()
 
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await climate.async_control_heating_loop()
-    assert published()[0] == message('{"cmd": "selflowtemp", "value": 35.0}')
+    assert published()[0] == message('{"cmd": "selflowtemp", "value": 35}')
 
 
 # Overshoot handling
