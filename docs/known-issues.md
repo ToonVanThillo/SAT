@@ -79,6 +79,10 @@ known bug".
 - Device data that changes more often than every 5 s never notifies listeners,
   because each update restarts the debounce. See the open question on cycle
   triggering in the design doc.
+- On EMS-ESP, a configured maximum relative modulation or floor above the
+  boiler's own `burnmaxpower` maximum is never confirmed: the boiler reads
+  back its own value, so the configured value is resent after every new
+  read-back and the channel stays `OUT_OF_SYNC`.
 
 ## Synchro sensors (replaced in plan step 3)
 - Control Setpoint Synchro compares the unclamped climate setpoint with the

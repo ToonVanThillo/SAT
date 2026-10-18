@@ -171,7 +171,7 @@
           "climate_valve_offset": "Offset to adjust the opening degree of the climate valve.",
           "dynamic_minimum_setpoint": "Activates the dynamic setpoint adjustment based on the boiler's return temperature, which also helps identify if any valves are closed.",
           "maximum_consumption": "The maximum gas consumption when the boiler is active.",
-          "maximum_relative_modulation": "Representing the highest modulation level for an efficient heating system.",
+          "maximum_relative_modulation": "Representing the highest modulation level for an efficient heating system. On EMS-ESP, values above 100 are allowed up to the boiler's own `burnmaxpower` maximum (e.g. 134 for the Junkers Cerapur).",
           "minimum_consumption": "The minimum gas consumption when the boiler is active.",
           "sample_time": "The minimum time interval between updates to the PID controller.",
           "target_temperature_step": "Adjust the target temperature step for fine-tuning comfort levels.",

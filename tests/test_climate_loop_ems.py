@@ -12,6 +12,7 @@ from custom_components.sat.const import (
     CONF_FORCE_PULSE_WIDTH_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MAXIMUM_RELATIVE_MODULATION,
+    CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
     CONF_MAXIMUM_SETPOINT,
     CONF_RADIATORS,
 )
@@ -154,12 +155,21 @@ async def test_heater_state_follows_the_setpoint_on_consecutive_loops(entry, cli
 
 # Max relative modulation
 
-@pytest.mark.parametrize(*ems_entry({CONF_MAXIMUM_RELATIVE_MODULATION: 80}))
-@pytest.mark.parametrize(("device", "expected"), [(80, []), (100, [message('{"cmd": "burnmaxpower", "value": 80}')])])
-async def test_modulation_is_written_only_when_it_differs(entry, climate, boiler_data, mqtt_mock, published, device, expected):
-    await boiler_data(**IDLE | {"burnmaxpower": device})
+@pytest.mark.parametrize(ems_entry()[0], [row for maximum in (80, 134) for row in ems_entry({CONF_MAXIMUM_RELATIVE_MODULATION: maximum})[1]])
+@pytest.mark.parametrize("matches", [True, False])
+async def test_modulation_is_written_only_when_it_differs(entry, options, climate, boiler_data, mqtt_mock, published, matches):
+    maximum = options[CONF_MAXIMUM_RELATIVE_MODULATION]
+    await boiler_data(**IDLE | {"burnmaxpower": maximum if matches else 100})
 
+    expected = [] if matches else [message(f'{{"cmd": "burnmaxpower", "value": {maximum}}}')]
     assert (await run_loop(climate, mqtt_mock, published))[1:] == expected
+
+
+@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION: 134, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 120}))
+async def test_modulation_floor_above_100_is_written_with_pwm(entry, climate, boiler_data, mqtt_mock, published):
+    await boiler_data(**IDLE | {"burnmaxpower": 100})
+
+    assert message('{"cmd": "burnmaxpower", "value": 120}') in await run_loop(climate, mqtt_mock, published)
 
 
 @pytest.mark.parametrize(*ems_entry())
