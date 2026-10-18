@@ -172,6 +172,8 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
 4. Migrate the other backends.
 5. Update the PID and heating curve inside the control cycle from the captured
    inputs, instead of on sensor events.
+6. Relative modulation keeps the current max relative modulation while the
+   boiler setpoint is at the minimum (COLD), instead of requesting the maximum.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
