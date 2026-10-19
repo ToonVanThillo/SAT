@@ -9,8 +9,6 @@ known bug".
   2); in the default config `pwm.reset()` undoes it in the same cycle.
 - `schedule_control_heating_loop(force=True)` only runs the loop immediately if
   a run is already pending; otherwise it waits the normal 10 s.
-- `MAX_BOILER_TEMPERATURE_AGE` is 60 s in `const.py` (used by the coordinator)
-  and 300 s in `pid.py` (unused).
 - `boiler_temperature_filtered` is not a filtered temperature but the mean
   absolute change between samples of the last 60 s. It is passed to the PIDs,
   which store it but never use it.

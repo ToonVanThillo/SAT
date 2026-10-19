@@ -10,8 +10,6 @@ from .helpers import seconds_since
 
 _LOGGER = logging.getLogger(__name__)
 
-MAX_BOILER_TEMPERATURE_AGE = 300
-
 
 class PID:
     """A proportional-integral-derivative (PID) controller."""
