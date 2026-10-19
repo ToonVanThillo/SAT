@@ -135,3 +135,12 @@ known bug".
 - Platforms are set up concurrently. If `sensor` or `binary_sensor` runs before
   `climate` has registered itself, `sensor` adds no entities and `binary_sensor`
   raises; nothing retries. Tests set up the base components first.
+- The manifest registers `ems-esp/#` for MQTT discovery. HA never drops this
+  subscription and only skips a message whose payload equals the previous one
+  on the same topic, so every changed message on any EMS-ESP topic starts a
+  discovery config flow, also when the entry exists. This includes SAT's own
+  commands on `ems-esp/boiler`. `async_step_mqtt` logs two debug lines and
+  aborts with `already_configured`. That is at least one flow every 10 s
+  (`boiler_data`). With more than 10 distinct topics, these aborts also keep
+  changing the entry's list of its last 10 discovery topics, and HA saves the
+  config entries again.
