@@ -139,8 +139,13 @@ known bug".
   subscription and only skips a message whose payload equals the previous one
   on the same topic, so every changed message on any EMS-ESP topic starts a
   discovery config flow, also when the entry exists. This includes SAT's own
-  commands on `ems-esp/boiler`. `async_step_mqtt` logs two debug lines and
-  aborts with `already_configured`. That is at least one flow every 10 s
+  commands on `ems-esp/boiler`. `async_step_mqtt` aborts these with
+  `already_configured` without logging. That is at least one flow every 10 s
   (`boiler_data`). With more than 10 distinct topics, these aborts also keep
   changing the entry's list of its last 10 discovery topics, and HA saves the
   config entries again.
+- The manifest's OpenTherm discovery filter `OTGW/value/+` matches one level
+  after `value/`, but the gateway's values are on `OTGW/value/<device>/<key>`,
+  so OpenTherm over MQTT is never discovered. If the filter matched those
+  topics, `async_step_mqtt` would use `<device>/<key>` as the unique ID,
+  because it takes everything after `OTGW/value/`.
