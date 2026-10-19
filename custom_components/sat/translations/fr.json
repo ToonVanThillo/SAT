@@ -153,6 +153,7 @@
           "force_pulse_width_modulation": "Forcer la Modulation de Largeur d'Impulsion",
           "maximum_consumption": "Consommation Maximale",
           "maximum_relative_modulation": "Modulation Relative Maximale",
+          "maximum_relative_modulation_floor": "Plancher de la modulation relative maximale",
           "minimum_consumption": "Consommation Minimale",
           "sample_time": "Temps d'Échantillonnage",
           "simulation": "Simulation",
@@ -164,6 +165,7 @@
           "dynamic_minimum_setpoint": "Active l'ajustement dynamique du point de consigne minimal en fonction de la température de retour de la chaudière, ce qui aide également à identifier si des vannes sont fermées.",
           "maximum_consumption": "La consommation maximale de gaz lorsque la chaudière est active.",
           "maximum_relative_modulation": "Représentant le niveau de modulation le plus élevé pour un système de chauffage efficace.",
+          "maximum_relative_modulation_floor": "La modulation relative maximale la plus basse acceptée par la chaudière, par ex. 31 pour la Junkers Cerapur. Les valeurs inférieures sont relevées à ce niveau.",
           "minimum_consumption": "La consommation minimale de gaz lorsque la chaudière est active.",
           "sample_time": "L'intervalle de temps minimum entre les mises à jour du régulateur PID.",
           "target_temperature_step": "Ajuster le pas de température cible pour un réglage fin des niveaux de confort.",
@@ -227,15 +229,13 @@
           "sync_climates_with_mode": "Synchroniser les climats avec le mode",
           "overshoot_protection": "Protection contre le dépassement (avec PWM)",
           "sensor_max_value_age": "Âge maximal de la valeur du capteur de température",
-          "window_minimum_open_time": "Temps minimum d'ouverture de la fenêtre",
-          "maximum_relative_modulation_floor": "Plancher de la modulation relative maximale"
+          "window_minimum_open_time": "Temps minimum d'ouverture de la fenêtre"
         },
         "data_description": {
           "automatic_duty_cycle": "Activer ou désactiver le cycle de fonctionnement automatique pour la Modulation de Largeur d'Impulsion (PWM).",
           "overshoot_protection": "Activer la protection contre le dépassement avec la Modulation de Largeur d'Impulsion (PWM) pour prévenir les dépassements de température de la chaudière.",
           "sensor_max_value_age": "L'âge maximum de la valeur du capteur de température avant de la considérer comme stagnante.",
-          "window_minimum_open_time": "Le temps minimum qu'une fenêtre doit être ouverte avant que le système ne réagisse.",
-          "maximum_relative_modulation_floor": "La modulation relative maximale la plus basse acceptée par la chaudière, par ex. 31 pour la Junkers Cerapur. Les valeurs inférieures sont relevées à ce niveau."
+          "window_minimum_open_time": "Le temps minimum qu'une fenêtre doit être ouverte avant que le système ne réagisse."
         },
         "description": "Pour un réglage fin et une personnalisation.",
         "title": "Configuration du Système"

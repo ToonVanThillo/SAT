@@ -161,6 +161,7 @@
           "force_pulse_width_modulation": "Vynútená modulácia šírky impulzu",
           "maximum_consumption": "Maximálna spotreba",
           "maximum_relative_modulation": "Maximálna relatívna modulácia",
+          "maximum_relative_modulation_floor": "Spodná hranica maximálnej relatívnej modulácie",
           "minimum_consumption": "Minimálna spotreba",
           "sample_time": "Čas vzorky",
           "simulation": "Simulácia",
@@ -172,6 +173,7 @@
           "dynamic_minimum_setpoint": "Aktivuje dynamické nastavenie požadovanej hodnoty na základe teploty spiatočky kotla, čo tiež pomáha identifikovať, či sú nejaké ventily zatvorené.",
           "maximum_consumption": "Maximálna spotreba plynu, keď je kotol aktívny.",
           "maximum_relative_modulation": "Predstavuje najvyššiu úroveň modulácie pre efektívny vykurovací systém.",
+          "maximum_relative_modulation_floor": "Najnižšia maximálna relatívna modulácia, ktorú kotol akceptuje, napr. 31 pre Junkers Cerapur. Nižšie hodnoty sa na ňu zvýšia.",
           "minimum_consumption": "Minimálna spotreba plynu, keď je kotol aktívny.",
           "sample_time": "Minimálny časový interval medzi aktualizáciami PID regulátora.",
           "target_temperature_step": "Upravte krok cieľovej teploty pre jemné doladenie úrovní komfortu.",
@@ -237,16 +239,14 @@
           "sync_climates_with_mode": "Synchronizujte klímu s režimom",
           "overshoot_protection": "Ochrana proti prekročeniu (s PWM)",
           "sensor_max_value_age": "Vek maximálnej hodnoty snímača teploty",
-          "window_minimum_open_time": "Minimálny čas na otvorenie okna",
-          "maximum_relative_modulation_floor": "Spodná hranica maximálnej relatívnej modulácie"
+          "window_minimum_open_time": "Minimálny čas na otvorenie okna"
         },
         "data_description": {
           "cycles_per_hour": "Maximálny počet pracovných cyklov za hodinu.",
           "automatic_duty_cycle": "Povoliť alebo zakázať automatický pracovný cyklus pre moduláciu šírky impulzu (PWM).",
           "overshoot_protection": "Aktivujte ochranu proti prekročeniu pomocou modulácie šírky impulzov (PWM), aby ste zabránili prekročeniu teploty kotla.",
           "sensor_max_value_age": "Maximálny vek hodnoty teplotného snímača pred tým, než sa považuje za prerušenie.",
-          "window_minimum_open_time": "Minimálny čas, počas ktorého musí byť okno otvorené, kým systém zareaguje.",
-          "maximum_relative_modulation_floor": "Najnižšia maximálna relatívna modulácia, ktorú kotol akceptuje, napr. 31 pre Junkers Cerapur. Nižšie hodnoty sa na ňu zvýšia."
+          "window_minimum_open_time": "Minimálny čas, počas ktorého musí byť okno otvorené, kým systém zareaguje."
         },
         "description": "Na jemné doladenie a prispôsobenie.",
         "title": "Konfigurácia systému"

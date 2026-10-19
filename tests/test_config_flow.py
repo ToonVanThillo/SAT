@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -44,14 +47,15 @@ async def test_create_coordinator_in_reconfigure_has_no_config_entry(hass):
 
 
 @pytest.mark.parametrize("mode, shown", [(MODE_MQTT_EMS, True), (MODE_MQTT_OPENTHERM, False)])
-async def test_system_configuration_shows_modulation_floor_only_for_ems(hass, mode, shown):
-    result = await options_flow(mode).async_step_system_configuration()
+async def test_advanced_shows_modulation_floor_only_for_ems(hass, mode, shown):
+    flow = options_flow(mode)
 
-    assert (CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR in result["data_schema"].schema) is shown
+    assert (CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR in (await flow.async_step_advanced())["data_schema"].schema) is shown
+    assert CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR not in (await flow.async_step_system_configuration())["data_schema"].schema
 
 
 async def test_modulation_floor_allows_up_to_254(hass):
-    result = await options_flow(MODE_MQTT_EMS).async_step_system_configuration()
+    result = await options_flow(MODE_MQTT_EMS).async_step_advanced()
 
     assert selector_max(result, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR) == 254
 
@@ -62,3 +66,11 @@ async def test_maximum_relative_modulation_allows_above_100_only_for_ems(hass, m
 
     assert selector_max(result, CONF_MAXIMUM_RELATIVE_MODULATION) == maximum
 
+
+@pytest.mark.parametrize("language", ["en", "de", "es", "fr", "it", "nl", "pt", "sk"])
+async def test_translations_modulation_floor_in_advanced(language):
+    steps = json.loads((Path(__file__).parent.parent / "custom_components/sat/translations" / f"{language}.json").read_text(encoding="utf-8"))["options"]["step"]
+
+    for section in ("data", "data_description"):
+        assert "maximum_relative_modulation_floor" in steps["advanced"][section]
+        assert "maximum_relative_modulation_floor" not in steps["system_configuration"].get(section, {})

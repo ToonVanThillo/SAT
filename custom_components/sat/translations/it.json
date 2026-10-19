@@ -153,6 +153,7 @@
           "force_pulse_width_modulation": "Forzare la Modulazione di Larghezza di Impulso",
           "maximum_consumption": "Consumo Massimo",
           "maximum_relative_modulation": "Modulazione Relativa Massima",
+          "maximum_relative_modulation_floor": "Soglia minima della modulazione relativa massima",
           "minimum_consumption": "Consumo Minimo",
           "sample_time": "Tempo di Campionamento",
           "simulation": "Simulazione",
@@ -164,6 +165,7 @@
           "dynamic_minimum_setpoint": "Attiva la regolazione dinamica del punto di impostazione minimo in base alla temperatura di ritorno della caldaia, che aiuta anche a identificare se delle valvole sono chiuse.",
           "maximum_consumption": "Il consumo massimo di gas quando la caldaia è attiva.",
           "maximum_relative_modulation": "Rappresenta il livello di modulazione più alto per un sistema di riscaldamento efficiente.",
+          "maximum_relative_modulation_floor": "La modulazione relativa massima più bassa accettata dalla caldaia, ad es. 31 per la Junkers Cerapur. I valori inferiori vengono portati a questo.",
           "minimum_consumption": "Il consumo minimo di gas quando la caldaia è attiva.",
           "sample_time": "L'intervallo di tempo minimo tra gli aggiornamenti del controllore PID.",
           "target_temperature_step": "Regolare il passo della temperatura target per un'accurata regolazione dei livelli di comfort.",
@@ -227,15 +229,13 @@
           "sync_climates_with_mode": "Sincronizza climi con la modalità",
           "overshoot_protection": "Protezione dal Superamento (con PWM)",
           "sensor_max_value_age": "Età massima del valore del sensore di temperatura",
-          "window_minimum_open_time": "Tempo minimo di apertura della finestra",
-          "maximum_relative_modulation_floor": "Soglia minima della modulazione relativa massima"
+          "window_minimum_open_time": "Tempo minimo di apertura della finestra"
         },
         "data_description": {
           "automatic_duty_cycle": "Abilitare o disabilitare il ciclo di lavoro automatico per la Modulazione di Larghezza di Impulso (PWM).",
           "overshoot_protection": "Abilitare la protezione dal superamento con la Modulazione di Larghezza di Impulso (PWM) per prevenire il superamento della temperatura della caldaia.",
           "sensor_max_value_age": "L'età massima del valore del sensore di temperatura prima di considerarlo stazionario.",
-          "window_minimum_open_time": "Il tempo minimo che una finestra deve essere aperta prima che il sistema reagisca.",
-          "maximum_relative_modulation_floor": "La modulazione relativa massima più bassa accettata dalla caldaia, ad es. 31 per la Junkers Cerapur. I valori inferiori vengono portati a questo."
+          "window_minimum_open_time": "Il tempo minimo che una finestra deve essere aperta prima che il sistema reagisca."
         },
         "description": "Per una regolazione fine e una personalizzazione.",
         "title": "Configurazione del Sistema"

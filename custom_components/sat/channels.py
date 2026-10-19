@@ -86,7 +86,7 @@ class ChannelDefinition:
             raise ValueError(f"Channel {self.quantity.value} has neither read nor write")
 
 
-@dataclass(frozen=True, slots=True, kwv_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ChannelState:
     """Tracked state of one channel; `sent` is the encoded value of the last successful write or adopted read-back."""
     status: ChannelStatus

@@ -153,6 +153,7 @@
           "force_pulse_width_modulation": "Forçar Modulação por Largura de Pulso",
           "maximum_consumption": "Consumo Máximo",
           "maximum_relative_modulation": "Modulação Relativa Máxima",
+          "maximum_relative_modulation_floor": "Mínimo da modulação relativa máxima",
           "minimum_consumption": "Consumo Mínimo",
           "sample_time": "Tempo de Amostragem",
           "simulation": "Simulação",
@@ -164,6 +165,7 @@
           "dynamic_minimum_setpoint": "Ativa o ajuste dinâmico do setpoint com base na temperatura de retorno da caldeira, o que também ajuda a identificar se alguma válvula está fechada.",
           "maximum_consumption": "O consumo máximo de gás quando a caldeira está ativa.",
           "maximum_relative_modulation": "Representa o nível máximo de modulação para um sistema de aquecimento eficiente.",
+          "maximum_relative_modulation_floor": "A modulação relativa máxima mais baixa que a caldeira aceita, p. ex. 31 para a Junkers Cerapur. Valores inferiores são elevados a este.",
           "minimum_consumption": "O consumo mínimo de gás quando a caldeira está ativa.",
           "sample_time": "O intervalo de tempo mínimo entre atualizações do controlador PID.",
           "target_temperature_step": "Ajuste o passo da temperatura alvo para afinação do nível de conforto.",
@@ -227,15 +229,13 @@
           "sync_climates_with_mode": "Sincronizar climas com o modo",
           "overshoot_protection": "Proteção contra Overshoot (com PWM)",
           "sensor_max_value_age": "Idade máxima do valor do sensor de temperatura",
-          "window_minimum_open_time": "Tempo mínimo para a janela estar aberta",
-          "maximum_relative_modulation_floor": "Mínimo da modulação relativa máxima"
+          "window_minimum_open_time": "Tempo mínimo para a janela estar aberta"
         },
         "data_description": {
           "automatic_duty_cycle": "Ativar ou desativar ciclo de trabalho automático para Modulação por Largura de Pulso (PWM).",
           "overshoot_protection": "Ativar proteção contra overshoot com Modulação por Largura de Pulso (PWM) para evitar overshooting da temperatura da caldeira.",
           "sensor_max_value_age": "A idade máxima do valor do sensor de temperatura antes de ser considerado como estagnado.",
-          "window_minimum_open_time": "O tempo mínimo que uma janela deve estar aberta antes de o sistema reagir.",
-          "maximum_relative_modulation_floor": "A modulação relativa máxima mais baixa que a caldeira aceita, p. ex. 31 para a Junkers Cerapur. Valores inferiores são elevados a este."
+          "window_minimum_open_time": "O tempo mínimo que uma janela deve estar aberta antes de o sistema reagir."
         },
         "description": "Para afinação e personalização.",
         "title": "Configuração do Sistema"
