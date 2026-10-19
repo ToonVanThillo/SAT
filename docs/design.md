@@ -131,7 +131,7 @@ Each channel gets a diagnostic entity, "<Quantity> Synchro", for
 troubleshooting current behaviour: every problem shows, and a problem that
 keeps recurring shows as one ongoing state instead of switching back and
 forth. A problem shows from the moment it occurs until the diagnostic window
-(5 minutes) has passed since it last occurred:
+(1 minute) has passed since it last occurred:
 - `OUT_OF_SYNC`: the channel was `OUT_OF_SYNC` within the window.
 - `DRIFTED`: the channel was `DRIFTED` within the window.
 - `IN_SYNC`: neither; the channel behaves as intended, including `PENDING`.

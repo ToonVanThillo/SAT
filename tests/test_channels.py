@@ -951,7 +951,7 @@ async def test_failed_write_records_out_of_sync_time():
     assert (channels.states[CS].status, channels.states[CS].last_out_of_sync_at) == (ChannelStatus.OUT_OF_SYNC, T0)
 
 
-RECENT = T0 - timedelta(minutes=1)
+RECENT = T0 - DIAGNOSTIC_WINDOW / 2
 
 
 @pytest.mark.parametrize("status", [ChannelStatus.IDLE, ChannelStatus.WAITING, ChannelStatus.WRITE_ONLY, ChannelStatus.READ_ONLY])
