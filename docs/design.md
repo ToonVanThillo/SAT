@@ -145,9 +145,13 @@ verify and write, and when the window expires.
 The entities have no attributes: an attribute that changes every cycle would
 record a new state each time. The channel details (internal status, target,
 sent and read-back values with their times, drift count, last-problem times)
-are in the integration's diagnostics download. On backends with channels these entities replace the Control
-Setpoint, Relative Modulation and Central Heating synchro sensors; backends
-without channels keep the synchro sensors until they migrate.
+are in the integration's diagnostics download, together with the config entry
+(device address, unique ID and discovery keys redacted) and the raw device
+values with their receive times.
+
+On backends with channels these entities replace the Control Setpoint,
+Relative Modulation and Central Heating synchro sensors; backends without
+channels keep the synchro sensors until they migrate.
 
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
