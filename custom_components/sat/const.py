@@ -36,7 +36,7 @@ EMS_MAXIMUM_RELATIVE_MODULATION = 254
 MAX_BOILER_TEMPERATURE_AGE = 60
 
 WAITING_CYCLES_BEFORE_WARNING = 3
-DIAGNOSTIC_WINDOW = timedelta(minutes=5)
+DIAGNOSTIC_WINDOW = timedelta(minutes=1)
 # Formatted with the config entry id; sent after the channels verify or write.
 SIGNAL_CHANNELS_UPDATED: SignalTypeFormat[()] = SignalTypeFormat("sat_channels_updated_{}")
 
