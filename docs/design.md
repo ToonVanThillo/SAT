@@ -140,11 +140,12 @@ forth. A problem shows from the moment it occurs until the diagnostic window
 
 `OUT_OF_SYNC` takes precedence over `DRIFTED`. The state is derived from the
 channel's tracked state and the current time, and is updated after every
-control cycle.
+verify and write, and when the window expires.
 
-Attributes: the internal status, target, sent and read-back values with
-timestamps, the drift count, and the times the channel was last `DRIFTED` and
-last `OUT_OF_SYNC`. On backends with channels these entities replace the Control
+The entities have no attributes: an attribute that changes every cycle would
+record a new state each time. The channel details (internal status, target,
+sent and read-back values with their times, drift count, last-problem times)
+are in the integration's diagnostics download. On backends with channels these entities replace the Control
 Setpoint, Relative Modulation and Central Heating synchro sensors; backends
 without channels keep the synchro sensors until they migrate.
 
@@ -179,8 +180,14 @@ without channels keep the synchro sensors until they migrate.
    i. EMS-ESP: no max relative modulation writes for hot water.
    j. EMS-ESP: the max relative modulation option and its minimum allow values
       above 100, up to the range EMS-ESP accepts for `burnmaxpower`.
-3. Channel diagnostics; on backends with channels they replace the synchro
-   sensors.
+3. Channel diagnostics:
+   a. Last-seen problem times, the `WAITING` status, the diagnostic status and
+      public channel states; not yet used.
+   b. Channel diagnostic entities on backends with channels, replacing their
+      synchro sensors; the coordinator owns the channel set.
+   c. Coordinators receive their config entry explicitly instead of through
+      HA's setup context.
+   d. A diagnostics download with the channel details.
 4. Migrate the other backends; remove the synchro sensors.
 5. Update the PID and heating curve inside the control cycle from the captured
    inputs, instead of on sensor events.

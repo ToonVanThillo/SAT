@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import timedelta
 from enum import Enum
 
+from homeassistant.util.signal_type import SignalTypeFormat
+
 NAME = "Smart Autotune Thermostat"
 DOMAIN = "sat"
 CLIMATE = "climate"
@@ -35,6 +37,8 @@ MAX_BOILER_TEMPERATURE_AGE = 60
 
 WAITING_CYCLES_BEFORE_WARNING = 3
 DIAGNOSTIC_WINDOW = timedelta(minutes=5)
+# Formatted with the config entry id; sent after the channels verify or write.
+SIGNAL_CHANNELS_UPDATED: SignalTypeFormat[()] = SignalTypeFormat("sat_channels_updated_{}")
 
 # Configuration and options
 CONF_MODE = "mode"

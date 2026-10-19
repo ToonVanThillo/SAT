@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING, Mapping, Any, Optional, Callable
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback, HassJob
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
-from .channels import RELEASE, ChannelState, DesiredState, Quantity
+from .channels import RELEASE, Channels, ChannelState, DesiredState, Quantity
 from .const import *
 from .flame import Flame, FlameState
 from .helpers import calculate_default_maximum_setpoint, seconds_since
@@ -140,6 +141,8 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
         self._flame: Flame = Flame()
         self._snapshot: BoilerSnapshot | None = None
+        # Set by backends migrated to channels; the others keep the `async_set_*` path.
+        self._channels: Channels | None = None
         self._device_on_since: Optional[float] = None
         self._listeners_unsub: Optional[Callable[[], None]] = None
 
@@ -484,10 +487,20 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
     @property
     def channel_states(self) -> Mapping[Quantity, ChannelState]:
         """Current tracked state per channel; empty for backends without channels."""
-        return MappingProxyType({})
+        return MappingProxyType({}) if self._channels is None else self._channels.states
 
+    @callback
     def verify(self, snapshot: BoilerSnapshot) -> None:
         """Verify the previous cycle's writes against `snapshot`; backends without channels have nothing to verify."""
+        if self._channels is not None:
+            self._channels.verify(snapshot)
+            self._async_send_channels_updated()
+
+    @callback
+    def _async_send_channels_updated(self) -> None:
+        """Signal this entry's channel synchro sensors; without a config entry there are none."""
+        if self.config_entry is not None:
+            async_dispatcher_send(self.hass, SIGNAL_CHANNELS_UPDATED.format(self.config_entry.entry_id))
 
     async def async_control_heating_loop(self, climate: Optional[SatClimate] = None, pwm_state: Optional[PWMState] = None, _time=None) -> None:
         """Control the heating loop for the device."""
@@ -538,10 +551,16 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             self._boiler_temperature_cold = min(self.boiler_temperature, self._boiler_temperature_cold)
 
     async def async_submit(self, desired: DesiredState) -> None:
-        """Apply every requested field of `desired` through the matching setter, in a fixed order; None and RELEASE fields are skipped.
+        """Reconcile `desired` through the channels, if the backend has them; fields without a channel are ignored.
 
-        The max relative modulation and heater state are skipped when the last snapshot shows them already applied; without a snapshot they are always written.
+        Otherwise apply every requested field through the matching setter, in a fixed order; None and RELEASE fields are skipped. The max
+        relative modulation and heater state are skipped when the last snapshot shows them already applied; without a snapshot they are always written.
         """
+        if self._channels is not None:
+            await self._channels.async_write(desired)
+            self._async_send_channels_updated()
+            return
+
         snapshot = self._snapshot
 
         if desired.control_setpoint is not None and desired.control_setpoint is not RELEASE:

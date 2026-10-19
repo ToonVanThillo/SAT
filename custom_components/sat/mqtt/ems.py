@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from homeassistant.core import HomeAssistant
 
-from ..channels import ChannelDefinition, Channels, ChannelState, DesiredState, Quantity
+from ..channels import ChannelDefinition, Channels, Quantity
 from ..const import CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS
 from ..coordinator import BoilerSnapshot, DeviceState, Reading
 from ..helpers import float_value
@@ -58,7 +58,7 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         floor = int(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR]))
         heater_states = {DATA_OFF: DeviceState.ON, DATA_ON: DeviceState.OFF}
 
-        self._channels: Channels = Channels([
+        self._channels = Channels([
             # EMS-ESP falls back to the panel value about a minute after the last write.
             ChannelDefinition(
                 quantity=Quantity.CONTROL_SETPOINT,
@@ -158,17 +158,6 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
 
     def get_tracked_entities(self) -> list[str]:
         return [DATA_BOILER_DATA]
-
-    @property
-    def channel_states(self) -> Mapping[Quantity, ChannelState]:
-        return self._channels.states
-
-    def verify(self, snapshot: BoilerSnapshot) -> None:
-        self._channels.verify(snapshot)
-
-    async def async_submit(self, desired: DesiredState) -> None:
-        """Reconcile `desired` through the EMS-ESP channels; the thermostat setpoint has no channel and is ignored."""
-        await self._channels.async_write(desired)
 
     async def _async_write_command(self, command: str, value: Any) -> None:
         """Publish an EMS-ESP boiler command; raises if publishing fails."""

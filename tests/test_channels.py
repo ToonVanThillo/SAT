@@ -14,6 +14,7 @@ from custom_components.sat.channels import (
     DesiredState,
     Quantity,
     diagnostic_status,
+    held_problem_expiry,
 )
 from custom_components.sat.const import DIAGNOSTIC_WINDOW, WAITING_CYCLES_BEFORE_WARNING
 from custom_components.sat.coordinator import Reading
@@ -1025,6 +1026,64 @@ async def test_release_keeps_the_out_of_sync_time():
 
     state = channels.states[CS]
     assert (state.status, state.last_out_of_sync_at) == (ChannelStatus.IDLE, T0)
+
+
+# Held problem expiry
+
+@pytest.mark.parametrize("status", [
+    ChannelStatus.IDLE, ChannelStatus.WAITING, ChannelStatus.WRITE_ONLY, ChannelStatus.READ_ONLY,
+    ChannelStatus.PENDING, ChannelStatus.IN_SYNC, ChannelStatus.DRIFTED, ChannelStatus.OUT_OF_SYNC,
+])
+def test_no_held_problem_expiry_when_there_is_no_recorded_problem(status):
+    assert held_problem_expiry(ChannelState(status=status), T0) is None
+
+
+@pytest.mark.parametrize(("status", "field"), [(ChannelStatus.DRIFTED, "last_drift_at"), (ChannelStatus.OUT_OF_SYNC, "last_out_of_sync_at")])
+def test_no_held_problem_expiry_while_the_channel_still_has_the_problem(status, field):
+    state = ChannelState(status=status, **{field: RECENT})
+
+    assert held_problem_expiry(state, T0) is None
+
+
+def test_drifted_channel_with_a_held_out_of_sync_expires_with_the_out_of_sync():
+    state = ChannelState(status=ChannelStatus.DRIFTED, last_drift_at=T0, last_out_of_sync_at=RECENT)
+
+    assert held_problem_expiry(state, T0) == RECENT + DIAGNOSTIC_WINDOW
+
+
+@pytest.mark.parametrize("status", [ChannelStatus.IDLE, ChannelStatus.WAITING, ChannelStatus.WRITE_ONLY, ChannelStatus.READ_ONLY])
+def test_no_held_problem_expiry_when_the_status_passes_through(status):
+    state = ChannelState(status=status, last_drift_at=RECENT, last_out_of_sync_at=RECENT)
+
+    assert held_problem_expiry(state, T0) is None
+
+
+@pytest.mark.parametrize("status", [ChannelStatus.PENDING, ChannelStatus.IN_SYNC])
+@pytest.mark.parametrize("field", ["last_drift_at", "last_out_of_sync_at"])
+def test_held_problem_expires_a_window_after_it_was_last_seen(status, field):
+    state = ChannelState(status=status, **{field: RECENT})
+
+    assert held_problem_expiry(state, T0) == RECENT + DIAGNOSTIC_WINDOW
+
+
+@pytest.mark.parametrize("status", [ChannelStatus.PENDING, ChannelStatus.IN_SYNC, ChannelStatus.DRIFTED])
+def test_held_out_of_sync_expires_at_its_own_time_whatever_the_drift_time(status):
+    state = ChannelState(status=status, last_drift_at=T0, last_out_of_sync_at=RECENT)
+
+    assert held_problem_expiry(state, T0) == RECENT + DIAGNOSTIC_WINDOW
+
+
+def test_held_drift_expires_a_window_after_its_time_once_the_held_out_of_sync_is_gone():
+    state = ChannelState(status=ChannelStatus.IN_SYNC, last_drift_at=T0, last_out_of_sync_at=RECENT)
+    after_out_of_sync = RECENT + DIAGNOSTIC_WINDOW
+
+    assert held_problem_expiry(state, after_out_of_sync) == T0 + DIAGNOSTIC_WINDOW
+
+
+def test_held_problem_expiry_is_none_once_the_window_has_passed():
+    state = ChannelState(status=ChannelStatus.IN_SYNC, last_drift_at=RECENT)
+
+    assert held_problem_expiry(state, RECENT + DIAGNOSTIC_WINDOW) is None
 
 
 # WAITING

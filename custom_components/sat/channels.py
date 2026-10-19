@@ -101,11 +101,7 @@ class ChannelState:
 
 
 def diagnostic_status(state: ChannelState, now: datetime) -> ChannelStatus:
-    """The status shown to the user at `now`: a problem keeps showing until `DIAGNOSTIC_WINDOW` has passed since it was last seen.
-
-    `IDLE`, `WAITING`, `WRITE_ONLY` and `READ_ONLY` pass through, even after a recent problem. Otherwise `OUT_OF_SYNC` (now or
-    within the window) takes precedence over `DRIFTED`; without either the channel is `IN_SYNC`, including while `PENDING`.
-    """
+    """The status shown to the user at `now`: a problem keeps showing until `DIAGNOSTIC_WINDOW` has passed since it was last seen."""
     if state.status in (ChannelStatus.IDLE, ChannelStatus.WAITING, ChannelStatus.WRITE_ONLY, ChannelStatus.READ_ONLY):
         return state.status
 
@@ -116,6 +112,16 @@ def diagnostic_status(state: ChannelState, now: datetime) -> ChannelStatus:
         return ChannelStatus.DRIFTED
 
     return ChannelStatus.IN_SYNC
+
+
+def held_problem_expiry(state: ChannelState, now: datetime) -> datetime | None:
+    """When the problem `diagnostic_status` shows at `now` stops showing if the channel no longer has it; None otherwise."""
+    shown = diagnostic_status(state, now)
+    if shown == state.status:
+        return None
+
+    seen_at = {ChannelStatus.OUT_OF_SYNC: state.last_out_of_sync_at, ChannelStatus.DRIFTED: state.last_drift_at}.get(shown)
+    return None if seen_at is None else seen_at + DIAGNOSTIC_WINDOW
 
 
 def _within_window(seen_at: datetime | None, now: datetime) -> bool:

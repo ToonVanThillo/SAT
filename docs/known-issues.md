@@ -84,14 +84,9 @@ known bug".
   back its own value, so the configured value is resent after every new
   read-back and the channel stays `OUT_OF_SYNC`.
 
-## Synchro sensors (replaced in plan step 3)
+## Synchro sensors (replaced per backend as it migrates to channels; removed in plan step 4)
 - Control Setpoint Synchro compares the unclamped climate setpoint with the
   clamped value sent, so it reports a mismatch above the maximum setpoint.
-- Control Setpoint Synchro compares the unrounded climate setpoint with the
-  integer EMS-ESP sends (e.g. 37.2 vs 37), so it reports a mismatch for almost
-  every non-integer setpoint on EMS-ESP.
-- Relative Modulation Synchro reports a mismatch on EMS when the max relative
-  modulation floor option raises the requested value.
 - Central Heating Synchro can never trigger in HEAT mode: it compares
   `hvac_action`, which is derived from `device_active`, with `device_active`.
 

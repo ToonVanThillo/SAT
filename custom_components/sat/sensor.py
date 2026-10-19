@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import logging
 import typing
+from datetime import datetime
 
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPower, UnitOfTemperature, UnitOfVolume
-from homeassistant.core import HomeAssistant, Event, EventStateChangedData
+from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature, UnitOfVolume
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, Event, EventStateChangedData, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_state_change_event
+from homeassistant.util import dt as dt_util
 
-from .const import CONF_MODE, MODE_SERIAL, CONF_NAME, DOMAIN, COORDINATOR, CLIMATE, MODE_SIMULATOR, CONF_MINIMUM_CONSUMPTION, CONF_MAXIMUM_CONSUMPTION
+from .channels import ChannelStatus, Quantity, diagnostic_status, held_problem_expiry
+from .const import CONF_MODE, MODE_SERIAL, CONF_NAME, DOMAIN, COORDINATOR, CLIMATE, MODE_SIMULATOR, CONF_MINIMUM_CONSUMPTION, CONF_MAXIMUM_CONSUMPTION, SIGNAL_CHANNELS_UPDATED
 from .coordinator import SatDataUpdateCoordinator
 from .entity import SatEntity, SatClimateEntity
 from .serial import sensor as serial_sensor
@@ -26,12 +30,15 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
     """
     Add sensors for the serial protocol if the integration is set to use it.
     """
+    # The coordinator is stored before the platforms are set up; the channel sensors don't depend on the climate.
+    coordinator: SatDataUpdateCoordinator = _hass.data[DOMAIN][_config_entry.entry_id][COORDINATOR]
+    _async_add_entities([SatChannelSynchroSensor(coordinator, _config_entry, quantity) for quantity in coordinator.channel_states])
+
     # Some sanity checks before we continue
-    if any(key not in _hass.data[DOMAIN][_config_entry.entry_id] for key in (CLIMATE, COORDINATOR)):
+    if CLIMATE not in _hass.data[DOMAIN][_config_entry.entry_id]:
         return
 
     climate = _hass.data[DOMAIN][_config_entry.entry_id][CLIMATE]
-    coordinator = _hass.data[DOMAIN][_config_entry.entry_id][COORDINATOR]
 
     # Check if integration is set to use the serial protocol
     if _config_entry.data.get(CONF_MODE) == MODE_SERIAL:
@@ -285,3 +292,50 @@ class SatBoilerSensor(SatEntity, SensorEntity):
     @property
     def unique_id(self) -> str:
         return f"{self._config_entry.data.get(CONF_NAME).lower()}-boiler-status"
+
+
+class SatChannelSynchroSensor(SatEntity, SensorEntity):
+    """Diagnostic status of one channel, written after each channel verify or write and when a held problem expires."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry, quantity: Quantity) -> None:
+        super().__init__(coordinator, config_entry)
+
+        self._quantity = quantity
+        self._unsub_expiry: CALLBACK_TYPE | None = None
+        self._attr_options = [status.value for status in ChannelStatus if status != ChannelStatus.PENDING]
+        self._attr_name = f"{quantity.value.replace('_', ' ').title()} Synchro"
+        self._attr_unique_id = f"{config_entry.data[CONF_NAME].lower()}-channel-{quantity.value}"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        signal = SIGNAL_CHANNELS_UPDATED.format(self._config_entry.entry_id)
+        self.async_on_remove(async_dispatcher_connect(self.hass, signal, self._handle_coordinator_update))
+        self.async_on_remove(self._async_cancel_expiry)
+
+    @property
+    def native_value(self) -> str:
+        return diagnostic_status(self._coordinator.channel_states[self._quantity], dt_util.utcnow()).value
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Write the state, replacing the timer that writes it again when a held problem expires."""
+        self._async_cancel_expiry()
+        if (expires_at := held_problem_expiry(self._coordinator.channel_states[self._quantity], dt_util.utcnow())) is not None:
+            self._unsub_expiry = async_track_point_in_utc_time(self.hass, self._async_expired, expires_at)
+
+        super()._handle_coordinator_update()
+
+    @callback
+    def _async_expired(self, _now: datetime) -> None:
+        self._unsub_expiry = None
+        self._handle_coordinator_update()
+
+    @callback
+    def _async_cancel_expiry(self) -> None:
+        if self._unsub_expiry is not None:
+            self._unsub_expiry()
+            self._unsub_expiry = None

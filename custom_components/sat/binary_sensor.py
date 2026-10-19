@@ -31,11 +31,15 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
     if _config_entry.data.get(CONF_MODE) == MODE_SERIAL:
         await serial_binary_sensor.async_setup_entry(_hass, _config_entry, _async_add_entities)
 
-    if coordinator.supports_setpoint_management:
-        _async_add_entities([SatControlSetpointSynchroSensor(coordinator, _config_entry, climate)])
+    # Backends with channels get a channel synchro sensor per channel instead (sensor platform)
+    if not coordinator.channel_states:
+        if coordinator.supports_setpoint_management:
+            _async_add_entities([SatControlSetpointSynchroSensor(coordinator, _config_entry, climate)])
 
-    if coordinator.supports_relative_modulation_management:
-        _async_add_entities([SatRelativeModulationSynchroSensor(coordinator, _config_entry, climate)])
+        if coordinator.supports_relative_modulation_management:
+            _async_add_entities([SatRelativeModulationSynchroSensor(coordinator, _config_entry, climate)])
+
+        _async_add_entities([SatCentralHeatingSynchroSensor(coordinator, _config_entry, climate)])
 
     if len(_config_entry.options.get(CONF_WINDOW_SENSORS, [])) > 0:
         _async_add_entities([SatWindowSensor(coordinator, _config_entry, climate)])
@@ -43,7 +47,6 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
     _async_add_entities([
         SatFlameHealthSensor(coordinator, _config_entry),
         SatBoilerHealthSensor(coordinator, _config_entry),
-        SatCentralHeatingSynchroSensor(coordinator, _config_entry, climate)
     ])
 
 
