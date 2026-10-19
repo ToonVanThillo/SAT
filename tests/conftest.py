@@ -93,7 +93,7 @@ async def base_components(hass: HomeAssistant) -> None:
 @pytest.fixture
 async def ems(hass: HomeAssistant, mqtt_mock, no_publish_delay) -> SatEmsMqttCoordinator:
     """Return a started EMS MQTT coordinator on topic `ems-esp`, with the startup publishes cleared."""
-    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: "ems-esp"})
+    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: "ems-esp"}, config_entry=None)
     await coordinator.async_added_to_hass()
     mqtt_mock.async_publish.reset_mock()
 
@@ -103,7 +103,7 @@ async def ems(hass: HomeAssistant, mqtt_mock, no_publish_delay) -> SatEmsMqttCoo
 @pytest.fixture
 async def otgw(hass: HomeAssistant, mqtt_mock, no_publish_delay) -> SatOpenThermMqttCoordinator:
     """Return a started OpenTherm MQTT coordinator on topic `otgw` (device `gw1`), with the startup publishes cleared."""
-    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"})
+    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"}, config_entry=None)
     await coordinator.async_added_to_hass()
     mqtt_mock.async_publish.reset_mock()
 

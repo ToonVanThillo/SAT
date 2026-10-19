@@ -3,6 +3,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.sat.config_flow import SatFlowHandler, SatOptionsFlowHandler
 from custom_components.sat.const import (
+    CONF_DEVICE,
     CONF_MAXIMUM_RELATIVE_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
     CONF_MODE,
@@ -30,7 +31,16 @@ async def test_create_coordinator(hass):
         "device": "test_device",
     }
 
-    await flow_handler.async_create_coordinator()
+    assert (await flow_handler.async_create_coordinator()).config_entry is None
+
+
+async def test_create_coordinator_in_reconfigure_has_no_config_entry(hass):
+    config_entry = MockConfigEntry(domain=DOMAIN, data={CONF_MODE: MODE_FAKE, CONF_NAME: "Test", CONF_DEVICE: "test_device"})
+    flow_handler = SatFlowHandler()
+    flow_handler.config_entry = config_entry
+    flow_handler.data = dict(config_entry.data)
+
+    assert (await flow_handler.async_create_coordinator()).config_entry is None
 
 
 @pytest.mark.parametrize("mode, shown", [(MODE_MQTT_EMS, True), (MODE_MQTT_OPENTHERM, False)])

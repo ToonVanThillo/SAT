@@ -50,7 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     # Resolve the coordinator by using the factory according to the mode
     hass.data[DOMAIN][entry.entry_id][COORDINATOR] = SatDataUpdateCoordinatorFactory().resolve(
-        hass=hass, data=entry.data, options=entry.options, mode=entry.data.get(CONF_MODE), device=entry.data.get(CONF_DEVICE)
+        hass=hass, data=entry.data, options=entry.options, mode=entry.data.get(CONF_MODE), device=entry.data.get(CONF_DEVICE), config_entry=entry
     )
 
     # Making sure everything is loaded

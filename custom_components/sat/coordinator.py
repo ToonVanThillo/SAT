@@ -8,6 +8,7 @@ from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping, Any, Optional, Callable
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback, HassJob
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -97,42 +98,42 @@ class SatData(dict):
 
 class SatDataUpdateCoordinatorFactory:
     @staticmethod
-    def resolve(hass: HomeAssistant, mode: str, device: str, data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> SatDataUpdateCoordinator:
+    def resolve(hass: HomeAssistant, mode: str, device: str, data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> SatDataUpdateCoordinator:
         if mode == MODE_FAKE:
             from .fake import SatFakeCoordinator
-            return SatFakeCoordinator(hass=hass, config_data=data, options=options)
+            return SatFakeCoordinator(hass=hass, config_data=data, options=options, config_entry=config_entry)
 
         if mode == MODE_SIMULATOR:
             from .simulator import SatSimulatorCoordinator
-            return SatSimulatorCoordinator(hass=hass, config_data=data, options=options)
+            return SatSimulatorCoordinator(hass=hass, config_data=data, options=options, config_entry=config_entry)
 
         if mode == MODE_SWITCH:
             from .switch import SatSwitchCoordinator
-            return SatSwitchCoordinator(hass=hass, entity_id=device, config_data=data, options=options)
+            return SatSwitchCoordinator(hass=hass, entity_id=device, config_data=data, options=options, config_entry=config_entry)
 
         if mode == MODE_ESPHOME:
             from .esphome import SatEspHomeCoordinator
-            return SatEspHomeCoordinator(hass=hass, device_id=device, config_data=data, options=options)
+            return SatEspHomeCoordinator(hass=hass, device_id=device, config_data=data, options=options, config_entry=config_entry)
 
         if mode == MODE_MQTT_EMS:
             from .mqtt.ems import SatEmsMqttCoordinator
-            return SatEmsMqttCoordinator(hass=hass, device_id=device, config_data=data, options=options)
+            return SatEmsMqttCoordinator(hass=hass, device_id=device, config_data=data, options=options, config_entry=config_entry)
 
         if mode == MODE_MQTT_OPENTHERM:
             from .mqtt.opentherm import SatOpenThermMqttCoordinator
-            return SatOpenThermMqttCoordinator(hass=hass, device_id=device, config_data=data, options=options)
+            return SatOpenThermMqttCoordinator(hass=hass, device_id=device, config_data=data, options=options, config_entry=config_entry)
 
         if mode == MODE_SERIAL:
             from .serial import SatSerialCoordinator
-            return SatSerialCoordinator(hass=hass, port=device, config_data=data, options=options)
+            return SatSerialCoordinator(hass=hass, port=device, config_data=data, options=options, config_entry=config_entry)
 
         raise Exception(f'Invalid mode[{mode}]')
 
 
 class SatDataUpdateCoordinator(DataUpdateCoordinator):
-    def __init__(self, hass: HomeAssistant, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, hass: HomeAssistant, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
         """Initialize."""
-        super().__init__(hass, _LOGGER, name=DOMAIN)
+        super().__init__(hass, _LOGGER, config_entry=config_entry, name=DOMAIN)
         self.data: SatData = SatData()
 
         self._boiler_temperature_cold: Optional[float] = None

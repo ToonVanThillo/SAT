@@ -4,6 +4,7 @@ from abc import abstractmethod
 from typing import Mapping, Any
 
 from homeassistant.components import mqtt
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 
@@ -19,8 +20,8 @@ STORAGE_VERSION = 1
 class SatMqttCoordinator(SatDataUpdateCoordinator):
     """Base class to manage fetching data using MQTT."""
 
-    def __init__(self, hass: HomeAssistant, device_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> None:
-        super().__init__(hass, config_data, options)
+    def __init__(self, hass: HomeAssistant, device_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
+        super().__init__(hass, config_data, options, config_entry=config_entry)
 
         self._device_id: str = device_id
         self._topic: str = config_data.get(CONF_MQTT_TOPIC)

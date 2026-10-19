@@ -24,7 +24,7 @@ def build(hass: HomeAssistant, manufacturer: str | None = None) -> SatOpenThermM
     if manufacturer is not None:
         config[CONF_MANUFACTURER] = manufacturer
 
-    return SatOpenThermMqttCoordinator(hass, "gw1", config)
+    return SatOpenThermMqttCoordinator(hass, "gw1", config, config_entry=None)
 
 
 async def feed(hass: HomeAssistant, key: str, payload: str) -> None:

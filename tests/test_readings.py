@@ -116,4 +116,4 @@ async def test_snapshot_readings_are_read_only(ems, boiler_data):
 
 
 async def test_snapshot_readings_empty_without_device_data(hass):
-    assert not SatFakeCoordinator(hass, {}).snapshot().readings
+    assert not SatFakeCoordinator(hass, {}, config_entry=None).snapshot().readings

@@ -5,6 +5,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any, Optional
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from ..channels import ChannelDefinition, Channels, Quantity
@@ -52,8 +53,8 @@ def _encode_control_setpoint(value: float) -> int:
 class SatEmsMqttCoordinator(SatMqttCoordinator):
     """Class to manage to fetch data from the OTGW Gateway using MQTT."""
 
-    def __init__(self, hass: HomeAssistant, device_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> None:
-        super().__init__(hass, device_id, config_data, options)
+    def __init__(self, hass: HomeAssistant, device_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
+        super().__init__(hass, device_id, config_data, options, config_entry=config_entry)
 
         floor = int(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR]))
         heater_states = {DATA_OFF: DeviceState.ON, DATA_ON: DeviceState.OFF}

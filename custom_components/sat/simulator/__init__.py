@@ -3,6 +3,7 @@ from __future__ import annotations
 from time import monotonic
 from typing import Optional, TYPE_CHECKING, Mapping, Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from ..const import CONF_SIMULATED_HEATING, CONF_SIMULATED_COOLING, MINIMUM_SETPOINT, CONF_SIMULATED_WARMING_UP, CONF_MAXIMUM_SETPOINT, PWMStatus
@@ -14,9 +15,9 @@ if TYPE_CHECKING:
 
 
 class SatSimulatorCoordinator(SatDataUpdateCoordinator):
-    def __init__(self, hass: HomeAssistant, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, hass: HomeAssistant, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
         """Initialize."""
-        super().__init__(hass, config_data, options)
+        super().__init__(hass, config_data, options, config_entry=config_entry)
 
         self._setpoint = MINIMUM_SETPOINT
         self._boiler_temperature = MINIMUM_SETPOINT

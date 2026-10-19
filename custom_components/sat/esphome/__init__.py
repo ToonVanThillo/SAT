@@ -4,6 +4,7 @@ import logging
 from typing import Mapping, Any
 
 from homeassistant.components import mqtt, binary_sensor, esphome, number, sensor, switch
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, Event, EventStateChangedData
 from homeassistant.helpers import device_registry, entity_registry
 from homeassistant.helpers.device_registry import DeviceEntry
@@ -41,8 +42,8 @@ _LOGGER: logging.Logger = logging.getLogger(__name__)
 class SatEspHomeCoordinator(SatDataUpdateCoordinator, SatEntityCoordinator):
     """Class to manage to fetch data from the OTGW Gateway using esphome."""
 
-    def __init__(self, hass: HomeAssistant, device_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> None:
-        super().__init__(hass, config_data, options)
+    def __init__(self, hass: HomeAssistant, device_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
+        super().__init__(hass, config_data, options, config_entry=config_entry)
 
         self._device: DeviceEntry = device_registry.async_get(hass).async_get(device_id)
         self._mac_address: str = list(self._device.connections)[0][1]

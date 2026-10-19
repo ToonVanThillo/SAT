@@ -145,7 +145,7 @@ async def test_submit_heater_state_rules(hass, otgw, published, state, active, e
 # Startup
 
 async def test_startup_submits_only_maximum_setpoint(hass, mqtt_mock, no_publish_delay):
-    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: "ems-esp"})
+    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: "ems-esp"}, config_entry=None)
 
     with patch.object(coordinator, "async_submit", new=AsyncMock()) as submit:
         await coordinator.async_added_to_hass()
@@ -263,7 +263,7 @@ async def test_overshoot_on_ems_publishes_nothing(ems, boiler_data, published):
 # Hot water
 
 async def test_hot_water_number_writes_directly(hass, mqtt_mock, no_publish_delay, published):
-    otgw = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"})
+    otgw = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"}, config_entry=None)
     entity = SatHotWaterSetpointEntity(otgw, MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "Test"}))
 
     with patch.object(otgw, "async_submit", new=AsyncMock()) as submit:

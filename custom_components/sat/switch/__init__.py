@@ -4,6 +4,7 @@ from typing import Mapping, Any
 
 from homeassistant.components.input_boolean import DOMAIN as INPUT_BOOLEAN_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import SERVICE_TURN_ON, SERVICE_TURN_OFF, ATTR_ENTITY_ID, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry
@@ -18,9 +19,9 @@ DOMAIN_SERVICE = {
 
 
 class SatSwitchCoordinator(SatDataUpdateCoordinator):
-    def __init__(self, hass: HomeAssistant, entity_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, hass: HomeAssistant, entity_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
         """Initialize."""
-        super().__init__(hass, config_data, options)
+        super().__init__(hass, config_data, options, config_entry=config_entry)
 
         self._entity: RegistryEntry = entity_registry.async_get(hass).async_get(entity_id)
 

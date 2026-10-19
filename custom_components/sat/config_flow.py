@@ -518,8 +518,9 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_create_coordinator(self) -> SatDataUpdateCoordinator:
         """Resolve the coordinator by using the factory according to the mode"""
+        # Temporary coordinators are not attached to any entry, so they neither register their shutdown on it nor send its channel signal.
         return SatDataUpdateCoordinatorFactory().resolve(
-            hass=self.hass, data=self.data, mode=self.data[CONF_MODE], device=self.data[CONF_DEVICE]
+            hass=self.hass, data=self.data, mode=self.data[CONF_MODE], device=self.data[CONF_DEVICE], config_entry=None
         )
 
     def _create_mqtt_form(self, step_id: str, default_topic: Optional[str] = None, default_device: Optional[str] = None):

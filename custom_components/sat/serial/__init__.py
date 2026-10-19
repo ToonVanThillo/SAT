@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Optional, Any, Mapping
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from pyotgw import vars as gw_vars, OpenThermGateway
@@ -25,9 +26,9 @@ TRANSLATE_SOURCE = {
 class SatSerialCoordinator(SatDataUpdateCoordinator):
     """Class to manage to fetch data from the OTGW Gateway using pyotgw."""
 
-    def __init__(self, hass: HomeAssistant, port: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, hass: HomeAssistant, port: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
         """Initialize."""
-        super().__init__(hass, config_data, options)
+        super().__init__(hass, config_data, options, config_entry=config_entry)
         self.async_set_updated_data(DEFAULT_STATUS)
 
         self._port: str = port

@@ -23,7 +23,7 @@ def subscribed(mqtt_mock, prefix: str) -> list[str]:
 # Publishing
 
 async def test_publish_waits_one_second_after_publish(hass, mqtt_mock):
-    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"})
+    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"}, config_entry=None)
 
     with patch("custom_components.sat.mqtt.asyncio.sleep", new=AsyncMock()) as sleep:
         await coordinator.async_set_control_max_setpoint(55)
@@ -32,7 +32,7 @@ async def test_publish_waits_one_second_after_publish(hass, mqtt_mock):
 
 
 async def test_publish_failure_is_swallowed_and_setter_completes(hass, mqtt_mock, no_publish_delay, caplog):
-    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"})
+    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"}, config_entry=None)
     mqtt_mock.async_publish.side_effect = Exception("broker down")
 
     # current behaviour, known bug: a failed publish is only logged, the caller is told nothing
@@ -44,7 +44,7 @@ async def test_publish_failure_is_swallowed_and_setter_completes(hass, mqtt_mock
 
 
 async def test_publish_in_simulation_publishes_nothing(hass, mqtt_mock, no_publish_delay):
-    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"}, {CONF_SIMULATION: True})
+    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"}, {CONF_SIMULATION: True}, config_entry=None)
 
     await coordinator.async_set_control_setpoint(55)
     await coordinator.async_set_heater_state(DeviceState.ON)
@@ -55,7 +55,7 @@ async def test_publish_in_simulation_publishes_nothing(hass, mqtt_mock, no_publi
 # Startup
 
 async def test_startup_subscribes_each_key(hass, mqtt_mock, no_publish_delay):
-    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"})
+    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"}, config_entry=None)
     await coordinator.async_added_to_hass()
 
     # MaxTSet (the maximum control setpoint reported by the gateway) is not among the subscribed keys
@@ -79,14 +79,14 @@ async def test_startup_subscribes_each_key(hass, mqtt_mock, no_publish_delay):
 
 
 async def test_startup_ems_subscribes_once(hass, mqtt_mock, no_publish_delay):
-    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: "ems-esp"})
+    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: "ems-esp"}, config_entry=None)
     await coordinator.async_added_to_hass()
 
     assert subscribed(mqtt_mock, "ems-esp/") == ["ems-esp/boiler_data"]
 
 
 async def test_startup_opentherm_subscribes_before_boot_then_sends_max_setpoint(hass, mqtt_mock, published, no_publish_delay):
-    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"})
+    coordinator = SatOpenThermMqttCoordinator(hass, "gw1", {CONF_MQTT_TOPIC: "otgw"}, config_entry=None)
     mqtt_mock.reset_mock()
     await coordinator.async_added_to_hass()
 

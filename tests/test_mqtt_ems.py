@@ -117,7 +117,7 @@ def status(coordinator: SatEmsMqttCoordinator, quantity: Quantity) -> ChannelSta
 
 async def start(hass: HomeAssistant, options: dict) -> SatEmsMqttCoordinator:
     """Return a started EMS coordinator with the given options."""
-    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: TOPIC}, options)
+    coordinator = SatEmsMqttCoordinator(hass, "ems", {CONF_MQTT_TOPIC: TOPIC}, options, config_entry=None)
     await coordinator.async_added_to_hass()
 
     return coordinator
