@@ -12,13 +12,12 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.util import dt as dt_util
 
+from .const import DIAGNOSTIC_WINDOW, WAITING_CYCLES_BEFORE_WARNING
+
 if TYPE_CHECKING:
     from .coordinator import BoilerSnapshot, DeviceState, Reading
 
 _LOGGER = logging.getLogger(__name__)
-
-# Held-back first-write cycles tolerated before warning; after a restart the first live read-back takes a cycle or two.
-WAITING_CYCLES_BEFORE_WARNING = 3
 
 
 class Release(Enum):
@@ -51,6 +50,7 @@ class Quantity(str, Enum):
 
 class ChannelStatus(str, Enum):
     IDLE = "idle"
+    WAITING = "waiting"
     PENDING = "pending"
     IN_SYNC = "in_sync"
     OUT_OF_SYNC = "out_of_sync"
@@ -96,6 +96,30 @@ class ChannelState:
     read_back: Any = None
     read_back_at: datetime | None = None
     drift_count: int = 0
+    last_drift_at: datetime | None = None
+    last_out_of_sync_at: datetime | None = None
+
+
+def diagnostic_status(state: ChannelState, now: datetime) -> ChannelStatus:
+    """The status shown to the user at `now`: a problem keeps showing until `DIAGNOSTIC_WINDOW` has passed since it was last seen.
+
+    `IDLE`, `WAITING`, `WRITE_ONLY` and `READ_ONLY` pass through, even after a recent problem. Otherwise `OUT_OF_SYNC` (now or
+    within the window) takes precedence over `DRIFTED`; without either the channel is `IN_SYNC`, including while `PENDING`.
+    """
+    if state.status in (ChannelStatus.IDLE, ChannelStatus.WAITING, ChannelStatus.WRITE_ONLY, ChannelStatus.READ_ONLY):
+        return state.status
+
+    if state.status == ChannelStatus.OUT_OF_SYNC or _within_window(state.last_out_of_sync_at, now):
+        return ChannelStatus.OUT_OF_SYNC
+
+    if state.status == ChannelStatus.DRIFTED or _within_window(state.last_drift_at, now):
+        return ChannelStatus.DRIFTED
+
+    return ChannelStatus.IN_SYNC
+
+
+def _within_window(seen_at: datetime | None, now: datetime) -> bool:
+    return seen_at is not None and now - seen_at < DIAGNOSTIC_WINDOW
 
 
 class _Channel:
@@ -112,6 +136,13 @@ class _Channel:
     @property
     def name(self) -> str:
         return self.definition.quantity.value
+
+    def record_seen(self) -> None:
+        """Refresh the last-seen time of the problem status the channel has now; call at the end of each verify and write step."""
+        if self.state.status == ChannelStatus.DRIFTED:
+            self.state = replace(self.state, last_drift_at=dt_util.utcnow())
+        elif self.state.status == ChannelStatus.OUT_OF_SYNC:
+            self.state = replace(self.state, last_out_of_sync_at=dt_util.utcnow())
 
     def read(self, snapshot: BoilerSnapshot) -> Reading | None:
         if self.definition.read is None:
@@ -179,6 +210,8 @@ class _Channel:
         # Before the first send, wait for a live read-back (recorded by verify); a matching one is taken as sent.
         first_send = not write_only and self.state.sent_at is None
         if first_send and self.state.read_back_at is None:
+            if self.state.status == ChannelStatus.IDLE:
+                self.state = replace(self.state, status=ChannelStatus.WAITING)
             self._held_back += 1
             if self._held_back == WAITING_CYCLES_BEFORE_WARNING + 1:
                 _LOGGER.warning("Channel %s is waiting for a live read-back before its first write", self.name)
@@ -250,8 +283,10 @@ class Channels:
         """Compare each channel's read-back with its last sent value; run right after the snapshot."""
         for channel in self._channels.values():
             channel.verify(snapshot)
+            channel.record_seen()
 
     async def async_write(self, desired: DesiredState) -> None:
         """Update targets from `desired` and write what is needed, channel by channel in definition order."""
         for quantity, channel in self._channels.items():
             await channel.async_write(getattr(desired, quantity.value))
+            channel.record_seen()

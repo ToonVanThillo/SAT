@@ -7,14 +7,15 @@ import pytest
 
 from custom_components.sat.channels import (
     RELEASE,
-    WAITING_CYCLES_BEFORE_WARNING,
     ChannelDefinition,
     Channels,
     ChannelState,
     ChannelStatus,
     DesiredState,
     Quantity,
+    diagnostic_status,
 )
+from custom_components.sat.const import DIAGNOSTIC_WINDOW, WAITING_CYCLES_BEFORE_WARNING
 from custom_components.sat.coordinator import Reading
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -700,7 +701,7 @@ async def test_no_write_before_live_read_back(snapshot, write_every_cycle):
 
     state = channels.states[CS]
     assert fake.calls == []
-    assert (state.status, state.target, state.sent, state.sent_at) == (ChannelStatus.IDLE, 50.0, None, None)
+    assert (state.status, state.target, state.sent, state.sent_at) == (ChannelStatus.WAITING, 50.0, None, None)
 
 
 async def test_matching_first_live_read_back_is_adopted(freezer):
@@ -881,4 +882,207 @@ async def test_value_requested_after_release_waits_for_a_live_read_back(freezer)
     channels.verify(snap(control_setpoint=Reading(value=50.0, received_at=None)))
     await channels.async_write(DesiredState(control_setpoint=50.0))
     assert fake.calls == [50.0]
-    assert channels.states[CS].status == ChannelStatus.IDLE
+    assert channels.states[CS].status == ChannelStatus.WAITING
+
+
+# Last-seen times and diagnostic status
+
+async def test_drift_time_is_refreshed_while_drifted(freezer):
+    definition, _ = rw()
+    channels = primed(definition)
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
+    assert channels.states[CS].last_drift_at is None
+
+    freezer.move_to(T0 + timedelta(seconds=10))
+    channels.verify(snap(control_setpoint=live(40.0, T0 + timedelta(seconds=2))))
+    assert channels.states[CS].last_drift_at == T0 + timedelta(seconds=10)
+
+    # The rewrite and a verify without a fresh read-back keep it DRIFTED, each refreshing the time
+    freezer.move_to(T0 + timedelta(seconds=20))
+    await channels.async_write(DesiredState())
+    assert channels.states[CS].last_drift_at == T0 + timedelta(seconds=20)
+
+    freezer.move_to(T0 + timedelta(seconds=30))
+    channels.verify(snap(control_setpoint=live(40.0, T0 + timedelta(seconds=2))))
+    assert channels.states[CS].last_drift_at == T0 + timedelta(seconds=30)
+
+    # A verify whose read raises keeps it DRIFTED and refreshes the time too
+    freezer.move_to(T0 + timedelta(seconds=35))
+    channels.verify(None)
+    assert channels.states[CS].last_drift_at == T0 + timedelta(seconds=35)
+
+    # Back in sync, the time of the last drift stays
+    freezer.move_to(T0 + timedelta(seconds=40))
+    channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=39))))
+    state = channels.states[CS]
+    assert (state.status, state.drift_count, state.last_drift_at, state.last_out_of_sync_at) == (
+        ChannelStatus.IN_SYNC, 1, T0 + timedelta(seconds=35), None,
+    )
+
+
+async def test_out_of_sync_time_is_refreshed_while_out_of_sync(freezer):
+    definition, _ = rw()
+    channels = primed(definition)
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+
+    freezer.move_to(T0 + timedelta(seconds=10))
+    channels.verify(snap(control_setpoint=live(40.0, T0 + timedelta(seconds=5))))
+    assert channels.states[CS].last_out_of_sync_at == T0 + timedelta(seconds=10)
+
+    freezer.move_to(T0 + timedelta(seconds=20))
+    await channels.async_write(DesiredState())
+    assert channels.states[CS].last_out_of_sync_at == T0 + timedelta(seconds=20)
+
+    freezer.move_to(T0 + timedelta(seconds=30))
+    channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=25))))
+    state = channels.states[CS]
+    assert (state.status, state.last_out_of_sync_at, state.last_drift_at) == (ChannelStatus.IN_SYNC, T0 + timedelta(seconds=20), None)
+
+
+async def test_failed_write_records_out_of_sync_time():
+    definition, fake = rw()
+    fake.fail = True
+    channels = primed(definition)
+
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+
+    assert (channels.states[CS].status, channels.states[CS].last_out_of_sync_at) == (ChannelStatus.OUT_OF_SYNC, T0)
+
+
+RECENT = T0 - timedelta(minutes=1)
+
+
+@pytest.mark.parametrize("status", [ChannelStatus.IDLE, ChannelStatus.WAITING, ChannelStatus.WRITE_ONLY, ChannelStatus.READ_ONLY])
+def test_diagnostic_status_of_released_or_unverifiable_channel_ignores_recent_problems(status):
+    state = ChannelState(status=status, last_drift_at=RECENT, last_out_of_sync_at=RECENT)
+
+    assert diagnostic_status(state, T0) == status
+
+
+@pytest.mark.parametrize(("status", "expected"), [
+    (ChannelStatus.PENDING, ChannelStatus.IN_SYNC),
+    (ChannelStatus.IN_SYNC, ChannelStatus.IN_SYNC),
+    (ChannelStatus.DRIFTED, ChannelStatus.DRIFTED),
+    (ChannelStatus.OUT_OF_SYNC, ChannelStatus.OUT_OF_SYNC),
+])
+def test_diagnostic_status_from_current_status(status, expected):
+    assert diagnostic_status(ChannelState(status=status), T0) == expected
+
+
+@pytest.mark.parametrize("status", [ChannelStatus.PENDING, ChannelStatus.IN_SYNC])
+@pytest.mark.parametrize(("seen", "expected"), [
+    ({"last_drift_at": RECENT}, ChannelStatus.DRIFTED),
+    ({"last_out_of_sync_at": RECENT}, ChannelStatus.OUT_OF_SYNC),
+    ({"last_drift_at": RECENT, "last_out_of_sync_at": RECENT}, ChannelStatus.OUT_OF_SYNC),
+])
+def test_diagnostic_status_shows_recent_problem(status, seen, expected):
+    assert diagnostic_status(ChannelState(status=status, **seen), T0) == expected
+
+
+def test_diagnostic_status_out_of_sync_within_window_takes_precedence_over_drifted():
+    state = ChannelState(status=ChannelStatus.DRIFTED, last_drift_at=T0, last_out_of_sync_at=RECENT)
+
+    assert diagnostic_status(state, T0) == ChannelStatus.OUT_OF_SYNC
+
+
+@pytest.mark.parametrize("field, problem", [("last_drift_at", ChannelStatus.DRIFTED), ("last_out_of_sync_at", ChannelStatus.OUT_OF_SYNC)])
+@pytest.mark.parametrize(("elapsed", "shows"), [(DIAGNOSTIC_WINDOW - timedelta(microseconds=1), True), (DIAGNOSTIC_WINDOW, False)])
+def test_diagnostic_window_boundary_is_exclusive(field, problem, elapsed, shows):
+    state = ChannelState(status=ChannelStatus.IN_SYNC, **{field: T0})
+
+    assert diagnostic_status(state, T0 + elapsed) == (problem if shows else ChannelStatus.IN_SYNC)
+
+
+@pytest.mark.parametrize("field, problem", [("last_drift_at", ChannelStatus.DRIFTED), ("last_out_of_sync_at", ChannelStatus.OUT_OF_SYNC)])
+def test_diagnostic_status_counts_a_problem_time_later_than_now_as_within_the_window(field, problem):
+    state = ChannelState(status=ChannelStatus.IN_SYNC, **{field: T0 + timedelta(hours=1)})
+
+    assert diagnostic_status(state, T0) == problem
+
+
+async def test_problem_times_survive_release_and_the_diagnostic_status_is_then_idle():
+    definition, _ = rw()
+    channels = primed(definition)
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    channels.verify(snap(control_setpoint=live(50.0, T0 + timedelta(seconds=1))))
+    channels.verify(snap(control_setpoint=live(40.0, T0 + timedelta(seconds=2))))
+    assert channels.states[CS].last_drift_at == T0
+
+    await channels.async_write(DesiredState(control_setpoint=RELEASE))
+
+    state = channels.states[CS]
+    assert (state.status, state.last_drift_at) == (ChannelStatus.IDLE, T0)
+    assert diagnostic_status(state, T0) == ChannelStatus.IDLE
+
+
+async def test_release_keeps_the_out_of_sync_time():
+    definition, fake = rw()
+    fake.fail = True
+    channels = primed(definition)
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    await channels.async_write(DesiredState(control_setpoint=RELEASE))
+
+    state = channels.states[CS]
+    assert (state.status, state.last_out_of_sync_at) == (ChannelStatus.IDLE, T0)
+
+
+# WAITING
+
+async def waiting_channel(**kwargs):
+    definition, fake = rw(**kwargs)
+    channels = Channels([definition])
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    assert channels.states[CS].status == ChannelStatus.WAITING
+
+    return channels, fake
+
+
+async def test_waiting_status_is_kept_by_verify_without_a_live_read_back():
+    channels, _ = await waiting_channel()
+
+    channels.verify(snap())
+    channels.verify(snap(control_setpoint=Reading(value=50.0, received_at=None)))
+
+    assert channels.states[CS].status == ChannelStatus.WAITING
+
+
+async def test_waiting_channel_adopts_a_matching_live_read_back_without_writing():
+    channels, fake = await waiting_channel()
+
+    channels.verify(snap(control_setpoint=live(50.0, T0 - timedelta(seconds=1))))
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+
+    assert (fake.calls, channels.states[CS].status) == ([], ChannelStatus.IN_SYNC)
+
+
+async def test_waiting_channel_writes_a_differing_live_read_back():
+    channels, fake = await waiting_channel()
+
+    channels.verify(snap(control_setpoint=live(40.0, T0 - timedelta(seconds=1))))
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+
+    assert (fake.calls, channels.states[CS].status) == ([50.0], ChannelStatus.PENDING)
+
+
+async def test_waiting_channel_is_out_of_sync_when_its_first_write_fails():
+    channels, fake = await waiting_channel()
+    fake.fail = True
+
+    channels.verify(snap(control_setpoint=live(40.0, T0 - timedelta(seconds=1))))
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+
+    assert channels.states[CS].status == ChannelStatus.OUT_OF_SYNC
+
+
+async def test_out_of_sync_channel_stays_out_of_sync_when_its_next_write_is_held_back():
+    definition, fake = rw()
+    channels = primed(definition)
+    fake.fail = True
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+    assert channels.states[CS].status == ChannelStatus.OUT_OF_SYNC
+
+    channels.verify(snap(control_setpoint=Reading(value=40.0, received_at=None)))
+    await channels.async_write(DesiredState(control_setpoint=50.0))
+
+    assert (channels.states[CS].status, fake.calls) == (ChannelStatus.OUT_OF_SYNC, [])

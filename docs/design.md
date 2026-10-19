@@ -81,9 +81,11 @@ One channel per controllable quantity per backend.
   the timescale of a cycle).
 
 **Tracked state:** target value, sent value and time, read-back value
-and time, drift count, status.
+and time, drift count, the times the channel was last `DRIFTED` and last
+`OUT_OF_SYNC` (refreshed after every verify and write), status.
 
-**Statuses:** `IDLE` (no target or nothing sent yet), `PENDING`, `IN_SYNC`, `OUT_OF_SYNC`,
+**Statuses:** `IDLE` (no target), `WAITING` (a target, waiting for a live
+read-back before the first write), `PENDING`, `IN_SYNC`, `OUT_OF_SYNC`,
 `DRIFTED`, `WRITE_ONLY`, `READ_ONLY`.
 
 **Verify** (read-write channels, every cycle, right after the snapshot)
@@ -99,7 +101,9 @@ sent value:
   status, if this cycle's verify found a mismatch or the channel rewrites every
   cycle.
 - A read-write channel writes only once its read-back is live (received, not
-  restored); if it waits for more than three cycles, a warning is logged once.
+  restored); until then its status is `WAITING` (an `OUT_OF_SYNC` channel keeps
+  its status). If it waits for more than
+  three cycles, a warning is logged once.
   If the latest live read-back matches the encoded target (within tolerance)
   when the first write is due, it is taken as sent: the channel is `IN_SYNC`
   without writing.
@@ -123,19 +127,26 @@ setting reads back as sent). Whether the boiler acts on it is out of scope.
   current `async_set_*` path.
 
 ## Diagnostics
-Each channel gets a diagnostic entity whose state is a filtered status, so
-short transients such as `PENDING` don't show:
-- `OK`: the channel behaves as intended, including `PENDING`.
-- `DRIFTED`: the setting drifted from the sent value at least once within the
-  diagnostic window. It stays until a full window passes without drift, so a
-  value that keeps drifting and being rewritten stays visible.
-- `OUT_OF_SYNC`: the latest value did not read back as sent. It stays until a
-  write is confirmed.
-- `WRITE_ONLY`, `READ_ONLY`, `IDLE` (no target or nothing sent yet).
+Each channel gets a diagnostic entity, "<Quantity> Synchro", for
+troubleshooting current behaviour: every problem shows, and a problem that
+keeps recurring shows as one ongoing state instead of switching back and
+forth. A problem shows from the moment it occurs until the diagnostic window
+(5 minutes) has passed since it last occurred:
+- `OUT_OF_SYNC`: the channel was `OUT_OF_SYNC` within the window.
+- `DRIFTED`: the channel was `DRIFTED` within the window.
+- `IN_SYNC`: neither; the channel behaves as intended, including `PENDING`.
+- `WAITING`, `WRITE_ONLY`, `READ_ONLY`, `IDLE`: the channel's own status, also
+  within the window of an earlier problem.
+
+`OUT_OF_SYNC` takes precedence over `DRIFTED`. The state is derived from the
+channel's tracked state and the current time, and is updated after every
+control cycle.
 
 Attributes: the internal status, target, sent and read-back values with
-timestamps, and the drift count. These entities replace the Control
-Setpoint, Relative Modulation and Central Heating synchro sensors.
+timestamps, the drift count, and the times the channel was last `DRIFTED` and
+last `OUT_OF_SYNC`. On backends with channels these entities replace the Control
+Setpoint, Relative Modulation and Central Heating synchro sensors; backends
+without channels keep the synchro sensors until they migrate.
 
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
@@ -168,8 +179,9 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
    i. EMS-ESP: no max relative modulation writes for hot water.
    j. EMS-ESP: the max relative modulation option and its minimum allow values
       above 100, up to the range EMS-ESP accepts for `burnmaxpower`.
-3. Channel diagnostics; remove the synchro sensors.
-4. Migrate the other backends.
+3. Channel diagnostics; on backends with channels they replace the synchro
+   sensors.
+4. Migrate the other backends; remove the synchro sensors.
 5. Update the PID and heating curve inside the control cycle from the captured
    inputs, instead of on sensor events.
 6. Relative modulation keeps the current max relative modulation while the
@@ -179,7 +191,11 @@ Setpoint, Relative Modulation and Central Heating synchro sensors.
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
   knob value; a written setpoint must be below it and reverts to it after a
   few minutes. Whether 0 (sent for 10) is echoed as 0 is unknown.
-- The length of the diagnostic window.
+- A read-back sampled before a write but received after it (e.g. EMS-ESP
+  publishing on an interval) would give a false `OUT_OF_SYNC`. Not observed
+  yet; the channel diagnostics should show whether it happens. If so, it is
+  fixed in the channel (e.g. a grace period after a send), not in the
+  diagnostic.
 - The listener debounce can starve while the device keeps publishing changes;
   how control cycles are triggered is outside this layer but needs fixing.
 - MQTT brokers redeliver retained messages on reconnect; they are stamped as

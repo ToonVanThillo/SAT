@@ -1,6 +1,7 @@
 # Base component constants
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import Enum
 
 NAME = "Smart Autotune Thermostat"
@@ -31,6 +32,9 @@ MAXIMUM_RELATIVE_MODULATION = 100
 EMS_MAXIMUM_RELATIVE_MODULATION = 254
 
 MAX_BOILER_TEMPERATURE_AGE = 60
+
+WAITING_CYCLES_BEFORE_WARNING = 3
+DIAGNOSTIC_WINDOW = timedelta(minutes=5)
 
 # Configuration and options
 CONF_MODE = "mode"

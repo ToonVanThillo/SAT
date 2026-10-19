@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from homeassistant.core import HomeAssistant
 
-from ..channels import ChannelDefinition, Channels, DesiredState, Quantity
+from ..channels import ChannelDefinition, Channels, ChannelState, DesiredState, Quantity
 from ..const import CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS
 from ..coordinator import BoilerSnapshot, DeviceState, Reading
 from ..helpers import float_value
@@ -158,6 +158,10 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
 
     def get_tracked_entities(self) -> list[str]:
         return [DATA_BOILER_DATA]
+
+    @property
+    def channel_states(self) -> Mapping[Quantity, ChannelState]:
+        return self._channels.states
 
     def verify(self, snapshot: BoilerSnapshot) -> None:
         self._channels.verify(snapshot)

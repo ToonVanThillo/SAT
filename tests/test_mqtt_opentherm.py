@@ -4,6 +4,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
+from custom_components.sat.channels import Quantity
 from custom_components.sat.const import (
     CONF_FORCE_PULSE_WIDTH_MODULATION,
     CONF_MANUFACTURER,
@@ -161,3 +162,10 @@ async def test_hot_water_keeps_modulation_at_maximum_with_pwm(hass, entry, clima
     commands = [c[1] for c in await run_loop(climate, mqtt_mock, published) if c[0] == COMMAND_TOPIC]
     assert "MM=100" in commands
     assert "MM=0" not in commands
+
+
+async def test_channel_states_are_empty_without_channels(otgw):
+    assert len(otgw.channel_states) == 0
+
+    with pytest.raises(TypeError):
+        otgw.channel_states[Quantity.CONTROL_SETPOINT] = None

@@ -1,21 +1,30 @@
 """Characterization tests for the EMS MQTT coordinator."""
 import json
 import logging
+from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
-from custom_components.sat.channels import ChannelStatus, DesiredState, Quantity
+from custom_components.sat.channels import (
+    ChannelStatus,
+    DesiredState,
+    Quantity,
+    diagnostic_status,
+)
 from custom_components.sat.const import (
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
     CONF_MQTT_TOPIC,
     CONF_SIMULATION,
+    DIAGNOSTIC_WINDOW,
 )
 from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
+from tests.conftest import advance
 from tests.const import EMS_BOILER_DATA
 
 TOPIC = "ems-esp"
@@ -103,7 +112,7 @@ def command(payload: str) -> tuple:
 
 
 def status(coordinator: SatEmsMqttCoordinator, quantity: Quantity) -> ChannelStatus:
-    return coordinator._channels.states[quantity].status
+    return coordinator.channel_states[quantity].status
 
 
 async def start(hass: HomeAssistant, options: dict) -> SatEmsMqttCoordinator:
@@ -285,4 +294,47 @@ async def test_simulation_publishes_nothing(hass, mqtt_mock, no_publish_delay, b
     # The writes went through the channels, which take them as sent
     mqtt_mock.async_publish.assert_not_called()
     assert "Failed to write" not in caplog.text
-    assert {state.status for state in coordinator._channels.states.values()} == {ChannelStatus.PENDING}
+    assert {state.status for state in coordinator.channel_states.values()} == {ChannelStatus.PENDING}
+
+
+# Channel diagnostics
+
+async def test_drift_shows_in_the_diagnostic_status_until_five_minutes_after_it_was_last_seen(ems, boiler_data, freezer, hass):
+    desired = DesiredState(control_setpoint=55)
+    control_setpoint = Quantity.CONTROL_SETPOINT
+    await boiler_data(**EMS_BOILER_DATA)
+    await cycle(ems, desired)
+    await advance(hass, freezer, 10)
+    await boiler_data(selflowtemp=55)
+    await cycle(ems, desired)
+    assert status(ems, control_setpoint) == ChannelStatus.IN_SYNC
+    assert ems.channel_states[control_setpoint].last_drift_at is None
+    assert diagnostic_status(ems.channel_states[control_setpoint], dt_util.utcnow()) == ChannelStatus.IN_SYNC
+
+    # The device reverts the setpoint
+    await advance(hass, freezer, 10)
+    await boiler_data(selflowtemp=40)
+    await cycle(ems, desired)
+    drifted_at = dt_util.utcnow()
+    assert ems.channel_states[control_setpoint].last_drift_at == drifted_at
+    assert diagnostic_status(ems.channel_states[control_setpoint], drifted_at) == ChannelStatus.DRIFTED
+
+    # The rewrite is read back: in sync again, but the drift keeps showing
+    await advance(hass, freezer, 10)
+    await boiler_data(selflowtemp=55)
+    await cycle(ems, desired)
+    state = ems.channel_states[control_setpoint]
+    assert state.status == ChannelStatus.IN_SYNC
+    assert state.drift_count == 1
+    ended_at = state.last_drift_at
+    assert ended_at is not None and ended_at < dt_util.utcnow()
+
+    window = DIAGNOSTIC_WINDOW
+    assert diagnostic_status(state, ended_at + window - timedelta(seconds=1)) == ChannelStatus.DRIFTED
+    assert diagnostic_status(state, ended_at + window) == ChannelStatus.IN_SYNC
+    assert [s.last_drift_at for q, s in ems.channel_states.items() if q != control_setpoint] == [None] * 3
+
+
+async def test_channel_states_cannot_be_mutated(ems):
+    with pytest.raises(TypeError):
+        ems.channel_states[Quantity.CONTROL_SETPOINT] = None

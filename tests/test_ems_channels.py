@@ -24,7 +24,7 @@ async def test_boiler_reverting_the_setpoint_is_drift_and_rewritten(ems, boiler_
     await boiler_data(selflowtemp=50)
     await cycle(ems, desired)
 
-    state = ems._channels.states[Quantity.CONTROL_SETPOINT]
+    state = ems.channel_states[Quantity.CONTROL_SETPOINT]
     assert (state.status, state.drift_count) == (ChannelStatus.DRIFTED, 1)
     assert published() == [command('{"cmd": "selflowtemp", "value": 40}')] * 3
 

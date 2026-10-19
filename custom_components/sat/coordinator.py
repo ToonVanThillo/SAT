@@ -15,7 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
-from .channels import RELEASE, DesiredState
+from .channels import RELEASE, ChannelState, DesiredState, Quantity
 from .const import *
 from .flame import Flame, FlameState
 from .helpers import calculate_default_maximum_setpoint, seconds_since
@@ -480,6 +480,11 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
         return self._snapshot
+
+    @property
+    def channel_states(self) -> Mapping[Quantity, ChannelState]:
+        """Current tracked state per channel; empty for backends without channels."""
+        return MappingProxyType({})
 
     def verify(self, snapshot: BoilerSnapshot) -> None:
         """Verify the previous cycle's writes against `snapshot`; backends without channels have nothing to verify."""
