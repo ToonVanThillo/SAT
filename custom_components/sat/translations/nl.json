@@ -2,12 +2,12 @@
   "config": {
     "abort": {
       "already_configured": "Gateway is al geconfigureerd.",
-      "reconfigure_successful": "Gateway is opnieuw geconfigureerd."
+      "reconfigure_successful": "Gateway is opnieuw geconfigureerd.",
+      "unable_to_calibrate": "Het kalibratieproces is op een probleem gestuit en kon niet succesvol worden voltooid. Zorg ervoor dat uw verwarmingssysteem correct functioneert en dat alle vereiste sensoren zijn aangesloten en correct werken.\n\nAls u problemen blijft ondervinden met de kalibratie, overweeg dan om contact met ons op te nemen voor verdere hulp. Onze excuses voor het ongemak."
     },
     "error": {
       "connection": "Kan geen verbinding maken met de gateway.",
-      "mqtt_component": "Het MQTT-component is niet beschikbaar.",
-      "unable_to_calibrate": "Het kalibratieproces is op een probleem gestuit en kon niet succesvol worden voltooid. Zorg ervoor dat uw verwarmingssysteem correct functioneert en dat alle vereiste sensoren zijn aangesloten en correct werken.\n\nAls u problemen blijft ondervinden met de kalibratie, overweeg dan om contact met ons op te nemen voor verdere hulp. Onze excuses voor het ongemak."
+      "mqtt_component": "Het MQTT-component is niet beschikbaar."
     },
     "progress": {
       "calibration": "Kalibreren en de waarde van de overshootbeveiliging vinden...\n\nEven geduld a.u.b. terwijl wij uw verwarmingssysteem optimaliseren. Dit proces kan ongeveer 20 minuten duren."

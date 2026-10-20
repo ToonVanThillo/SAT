@@ -111,10 +111,8 @@ known bug".
   manufacturer is not preselected.
 - Calibration (overshoot protection) in the config flow never subscribes to
   MQTT: on OpenTherm over MQTT it sends heating commands and waits for flame
-  and boiler temperature that never update, so it times out. On timeout the boiler is left at heater ON with the calibration
-  setpoint, because the reset in `OvershootProtection.calculate` only runs on
-  cancellation, and the climate's previous HVAC mode is not restored (the
-  config flow aborts before restoring it). Calibration is also reported to have problems in general.
+  and boiler temperature that never update, so it times out. Calibration is
+  also reported to have problems in general.
 - Calibration on EMS-ESP publishes nothing: the config flow's coordinator never
   subscribes to MQTT and never verifies a snapshot, so its channels wait for a
   live read-back forever.
@@ -129,9 +127,23 @@ known bug".
   system's calibration setpoint is known, so an unknown heating system raises
   `TypeError` instead of the intended `ValueError`.
 - If the boiler temperature becomes unavailable during calibration's
-  stable-temperature phase, `float(None)` raises and calibration aborts without
-  a reset, leaving the heater ON. A reading of 0.0 with relative modulation 0
-  submits 0.0 as the control setpoint.
+  stable-temperature phase, `float(None)` raises and calibration aborts. A
+  reading of 0.0 with relative modulation 0 submits 0.0 as the control
+  setpoint.
+- `start_calibration` in the config flow catches `CancelledError` without
+  re-raising it, against asyncio and HA convention.
+- The calibration step reads the SAT climate's state without a None check
+  (`hass.states.get(climate_id).state`), so it raises if the entity is
+  registered but has no state.
+- If cleaning up the calibration coordinator raises (e.g. a storage error), the
+  previous HVAC mode is not restored and the climate stays OFF. If the climate
+  was unavailable when calibration started, the restore fails. Either error is
+  only logged (as "Task exception was never retrieved") when calibration
+  succeeded.
+- The calibration step awaits turning the climate OFF before it records the
+  calibration task, so a second submit during that call starts a second
+  calibration and the climate is restored to OFF. The frontend normally
+  prevents this by disabling the button while a request is pending.
 
 ## Setup
 - Platforms are set up concurrently. If `sensor` or `binary_sensor` runs before

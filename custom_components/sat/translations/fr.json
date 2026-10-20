@@ -2,12 +2,12 @@
   "config": {
     "abort": {
       "already_configured": "La passerelle est déjà configurée.",
-      "reconfigure_successful": "La passerelle a été reconfigurée."
+      "reconfigure_successful": "La passerelle a été reconfigurée.",
+      "unable_to_calibrate": "Le processus de calibration a rencontré un problème et n'a pas pu être complété avec succès. Veuillez vous assurer que votre système de chauffage fonctionne correctement et que tous les capteurs requis sont connectés et fonctionnent correctement.\n\nSi vous continuez à rencontrer des problèmes avec la calibration, envisagez de nous contacter pour obtenir de l'aide supplémentaire. Nous nous excusons pour tout désagrément causé."
     },
     "error": {
       "connection": "Impossible de se connecter à la passerelle.",
-      "mqtt_component": "Le composant MQTT n'est pas disponible.",
-      "unable_to_calibrate": "Le processus de calibration a rencontré un problème et n'a pas pu être complété avec succès. Veuillez vous assurer que votre système de chauffage fonctionne correctement et que tous les capteurs requis sont connectés et fonctionnent correctement.\n\nSi vous continuez à rencontrer des problèmes avec la calibration, envisagez de nous contacter pour obtenir de l'aide supplémentaire. Nous nous excusons pour tout désagrément causé."
+      "mqtt_component": "Le composant MQTT n'est pas disponible."
     },
     "progress": {
       "calibration": "Calibration et recherche de la valeur de protection contre les dépassements en cours...\n\nVeuillez patienter pendant que nous optimisons votre système de chauffage. Ce processus peut prendre environ 20 minutes."

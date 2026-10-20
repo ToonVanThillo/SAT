@@ -2,12 +2,12 @@
   "config": {
     "abort": {
       "already_configured": "O Gateway já está configurado.",
-      "reconfigure_successful": "O Gateway foi reconfigurado com sucesso."
+      "reconfigure_successful": "O Gateway foi reconfigurado com sucesso.",
+      "unable_to_calibrate": "O processo de calibração encontrou um problema e não pôde ser concluído com sucesso. Por favor, assegure-se de que o seu sistema de aquecimento está a funcionar corretamente e que todos os sensores necessários estão ligados e a funcionar corretamente.\n\nSe continuar a ter problemas com a calibração, considere contactar-nos para obter mais assistência. Pedimos desculpa por qualquer inconveniente causado."
     },
     "error": {
       "connection": "Não foi possível ligar ao gateway.",
-      "mqtt_component": "O componente MQTT não está disponível.",
-      "unable_to_calibrate": "O processo de calibração encontrou um problema e não pôde ser concluído com sucesso. Por favor, assegure-se de que o seu sistema de aquecimento está a funcionar corretamente e que todos os sensores necessários estão ligados e a funcionar corretamente.\n\nSe continuar a ter problemas com a calibração, considere contactar-nos para obter mais assistência. Pedimos desculpa por qualquer inconveniente causado."
+      "mqtt_component": "O componente MQTT não está disponível."
     },
     "progress": {
       "calibration": "A calibrar e a encontrar o valor de proteção contra overshoot...\n\nPor favor, aguarde enquanto otimizamos o seu sistema de aquecimento. Este processo pode demorar aproximadamente 20 minutos."

@@ -42,10 +42,10 @@ class OvershootProtection:
                 await self._wait_a_moment(OVERSHOOT_PROTECTION_RELATIVE_MODULATION_WAIT)
 
             return self._calculate_overshoot_value()
-        except asyncio.CancelledError as exception:
+        except (Exception, asyncio.CancelledError):
             await self._coordinator.async_submit(DesiredState(control_setpoint=MINIMUM_SETPOINT, heater_state=DeviceState.OFF))
 
-            raise exception
+            raise
 
     async def _wait_for_flame(self) -> None:
         """Wait until the heating system flame is active."""

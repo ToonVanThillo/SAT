@@ -371,35 +371,46 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         entities = entity_registry.async_get(self.hass)
         climate_id = entities.async_get_entity_id(climate.DOMAIN, DOMAIN, device_name.lower())
 
-        async def start_calibration():
+        async def start_calibration() -> None:
+            coordinator: SatDataUpdateCoordinator | None = None
+
             try:
                 coordinator = await self.async_create_coordinator()
                 await coordinator.async_setup()
 
                 overshoot_protection = OvershootProtection(coordinator, self.data.get(CONF_HEATING_SYSTEM))
                 self.overshoot_protection_value = await overshoot_protection.calculate()
-
-                await coordinator.async_will_remove_from_hass()
             except asyncio.TimeoutError:
                 _LOGGER.warning("Timed out during overshoot protection calculation.")
             except asyncio.CancelledError:
                 _LOGGER.warning("Cancelled overshoot protection calculation.")
+            except Exception:
+                _LOGGER.exception("Unexpected error during overshoot protection calculation.")
+            finally:
+                if coordinator is not None:
+                    await coordinator.async_will_remove_from_hass()
 
-        if not self.calibration:
-            self.calibration = self.hass.async_create_task(
-                start_calibration()
-            )
+                # Make sure to restore the mode after we are done
+                if climate_id is not None:
+                    data = {ATTR_ENTITY_ID: climate_id, climate.ATTR_HVAC_MODE: self.previous_hvac_mode}
+                    await self.hass.services.async_call(climate.DOMAIN, climate.SERVICE_SET_HVAC_MODE, data, blocking=True)
 
-            # Make sure to turn off the existing climate if we found one
-            if climate_id is not None:
-                self.previous_hvac_mode = self.hass.states.get(climate_id).state
-                data = {ATTR_ENTITY_ID: climate_id, climate.ATTR_HVAC_MODE: climate.HVACMode.OFF}
-                await self.hass.services.async_call(climate.DOMAIN, climate.SERVICE_SET_HVAC_MODE, data, blocking=True)
+        if not self.calibration or not self.calibration.done():
+            if not self.calibration:
+                # Turn off the existing climate before starting, since the task starts eagerly and restores the mode when it ends
+                if climate_id is not None:
+                    self.previous_hvac_mode = self.hass.states.get(climate_id).state
+                    data = {ATTR_ENTITY_ID: climate_id, climate.ATTR_HVAC_MODE: climate.HVACMode.OFF}
+                    await self.hass.services.async_call(climate.DOMAIN, climate.SERVICE_SET_HVAC_MODE, data, blocking=True)
 
-            # Make sure all climate valves are open
-            for entity_id in self.data.get(CONF_RADIATORS, []) + self.data.get(CONF_ROOMS, []):
-                data = {ATTR_ENTITY_ID: entity_id, climate.ATTR_HVAC_MODE: climate.HVACMode.HEAT}
-                await self.hass.services.async_call(climate.DOMAIN, climate.SERVICE_SET_HVAC_MODE, data, blocking=True)
+                self.calibration = self.hass.async_create_task(
+                    start_calibration()
+                )
+
+                # Make sure all climate valves are open
+                for entity_id in self.data.get(CONF_RADIATORS, []) + self.data.get(CONF_ROOMS, []):
+                    data = {ATTR_ENTITY_ID: entity_id, climate.ATTR_HVAC_MODE: climate.HVACMode.HEAT}
+                    await self.hass.services.async_call(climate.DOMAIN, climate.SERVICE_SET_HVAC_MODE, data, blocking=True)
 
             return self.async_show_progress(
                 step_id="calibrate",
@@ -408,7 +419,7 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         if self.overshoot_protection_value is None:
-            return self.async_abort(reason="unable_to_calibrate")
+            return self.async_show_progress_done(next_step_id="calibration_failed")
 
         self._enable_overshoot_protection(
             self.overshoot_protection_value
@@ -417,12 +428,10 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self.calibration = None
         self.overshoot_protection_value = None
 
-        # Make sure to restore the mode after we are done
-        if climate_id is not None:
-            data = {ATTR_ENTITY_ID: climate_id, climate.ATTR_HVAC_MODE: self.previous_hvac_mode}
-            await self.hass.services.async_call(climate.DOMAIN, climate.SERVICE_SET_HVAC_MODE, data, blocking=True)
-
         return self.async_show_progress_done(next_step_id="calibrated")
+
+    async def async_step_calibration_failed(self, _user_input: dict[str, Any] | None = None):
+        return self.async_abort(reason="unable_to_calibrate")
 
     async def async_step_calibrated(self, _user_input: dict[str, Any] | None = None):
         return self.async_show_menu(

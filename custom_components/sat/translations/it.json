@@ -2,12 +2,12 @@
   "config": {
     "abort": {
       "already_configured": "Il gateway è già configurato.",
-      "reconfigure_successful": "Il gateway è stato riconfigurato."
+      "reconfigure_successful": "Il gateway è stato riconfigurato.",
+      "unable_to_calibrate": "Il processo di calibrazione ha incontrato un problema e non è stato completato con successo. Si prega di assicurarsi che il sistema di riscaldamento funzioni correttamente e che tutti i sensori richiesti siano connessi e funzionanti correttamente.\n\nSe continui a riscontrare problemi con la calibrazione, considera di contattarci per ulteriore assistenza. Ci scusiamo per eventuali inconvenienti causati."
     },
     "error": {
       "connection": "Impossibile connettersi al gateway.",
-      "mqtt_component": "Il componente MQTT non è disponibile.",
-      "unable_to_calibrate": "Il processo di calibrazione ha incontrato un problema e non è stato completato con successo. Si prega di assicurarsi che il sistema di riscaldamento funzioni correttamente e che tutti i sensori richiesti siano connessi e funzionanti correttamente.\n\nSe continui a riscontrare problemi con la calibrazione, considera di contattarci per ulteriore assistenza. Ci scusiamo per eventuali inconvenienti causati."
+      "mqtt_component": "Il componente MQTT non è disponibile."
     },
     "progress": {
       "calibration": "Calibrazione e ricerca del valore di protezione dal superamento in corso...\n\nSi prega di attendere mentre ottimizziamo il tuo sistema di riscaldamento. Questo processo può richiedere circa 20 minuti."

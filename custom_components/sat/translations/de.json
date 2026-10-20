@@ -2,12 +2,12 @@
   "config": {
     "abort": {
       "already_configured": "Gateway ist bereits konfiguriert.",
-      "reconfigure_successful": "Gateway wurde neu konfiguriert."
+      "reconfigure_successful": "Gateway wurde neu konfiguriert.",
+      "unable_to_calibrate": "Der Kalibrierungsprozess ist auf ein Problem gestoßen und konnte nicht erfolgreich abgeschlossen werden. Bitte stellen Sie sicher, dass Ihr Heizsystem ordnungsgemäß funktioniert und dass alle erforderlichen Sensoren angeschlossen und funktionsfähig sind.\n\nWenn Sie weiterhin Probleme mit der Kalibrierung haben, ziehen Sie in Erwägung, uns für weitere Unterstützung zu kontaktieren. Wir entschuldigen uns für etwaige Unannehmlichkeiten."
     },
     "error": {
       "connection": "Verbindung zum Gateway konnte nicht hergestellt werden.",
-      "mqtt_component": "Die MQTT-Komponente ist nicht verfügbar.",
-      "unable_to_calibrate": "Der Kalibrierungsprozess ist auf ein Problem gestoßen und konnte nicht erfolgreich abgeschlossen werden. Bitte stellen Sie sicher, dass Ihr Heizsystem ordnungsgemäß funktioniert und dass alle erforderlichen Sensoren angeschlossen und funktionsfähig sind.\n\nWenn Sie weiterhin Probleme mit der Kalibrierung haben, ziehen Sie in Erwägung, uns für weitere Unterstützung zu kontaktieren. Wir entschuldigen uns für etwaige Unannehmlichkeiten."
+      "mqtt_component": "Die MQTT-Komponente ist nicht verfügbar."
     },
     "progress": {
       "calibration": "Kalibrierung und Ermittlung des Überschwingungsschutzwertes...\n\nBitte warten Sie, während wir Ihr Heizsystem optimieren. Dieser Prozess kann etwa 20 Minuten dauern."

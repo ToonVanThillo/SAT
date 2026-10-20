@@ -2,12 +2,12 @@
   "config": {
     "abort": {
       "already_configured": "La puerta de enlace ya está configurada.",
-      "reconfigure_successful": "La puerta de enlace ha sido reconfigurada."
+      "reconfigure_successful": "La puerta de enlace ha sido reconfigurada.",
+      "unable_to_calibrate": "El proceso de calibración ha encontrado un problema y no se pudo completar con éxito. Por favor, asegúrese de que su sistema de calefacción está funcionando correctamente y que todos los sensores necesarios están conectados y funcionando correctamente.\n\nSi continúa experimentando problemas con la calibración, considere contactarnos para obtener más ayuda. Pedimos disculpas por cualquier inconveniente causado."
     },
     "error": {
       "connection": "No se puede conectar a la puerta de enlace.",
-      "mqtt_component": "El componente MQTT no está disponible.",
-      "unable_to_calibrate": "El proceso de calibración ha encontrado un problema y no se pudo completar con éxito. Por favor, asegúrese de que su sistema de calefacción está funcionando correctamente y que todos los sensores necesarios están conectados y funcionando correctamente.\n\nSi continúa experimentando problemas con la calibración, considere contactarnos para obtener más ayuda. Pedimos disculpas por cualquier inconveniente causado."
+      "mqtt_component": "El componente MQTT no está disponible."
     },
     "progress": {
       "calibration": "Calibrando y encontrando el valor de protección contra sobrecalentamiento...\n\nPor favor, espere mientras optimizamos su sistema de calefacción. Este proceso puede tomar aproximadamente 20 minutos."
