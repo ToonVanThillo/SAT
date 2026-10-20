@@ -111,8 +111,7 @@ known bug".
   manufacturer is not preselected.
 - Calibration (overshoot protection) in the config flow never subscribes to
   MQTT: on OpenTherm over MQTT it sends heating commands and waits for flame
-  and boiler temperature that never update, so it times out (or hangs, see
-  below). On timeout the boiler is left at heater ON with the calibration
+  and boiler temperature that never update, so it times out. On timeout the boiler is left at heater ON with the calibration
   setpoint, because the reset in `OvershootProtection.calculate` only runs on
   cancellation, and the climate's previous HVAC mode is not restored (the
   config flow aborts before restoring it). Calibration is also reported to have problems in general.
@@ -126,9 +125,13 @@ known bug".
 - Calibration requests a fixed max relative modulation of 100
   (`MAXIMUM_RELATIVE_MODULATION`, used by `overshoot_protection.py`), regardless of
   the configured maximum relative modulation.
-- `overshoot_protection.py` waits for the boiler temperature in a loop without
-  `await` when it is missing or 0.0, which blocks the HA event loop;
-  `asyncio.wait_for` cannot interrupt it.
+- `OvershootProtection.__init__` calls `min()` before checking that the heating
+  system's calibration setpoint is known, so an unknown heating system raises
+  `TypeError` instead of the intended `ValueError`.
+- If the boiler temperature becomes unavailable during calibration's
+  stable-temperature phase, `float(None)` raises and calibration aborts without
+  a reset, leaving the heater ON. A reading of 0.0 with relative modulation 0
+  submits 0.0 as the control setpoint.
 
 ## Setup
 - Platforms are set up concurrently. If `sensor` or `binary_sensor` runs before

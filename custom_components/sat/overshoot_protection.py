@@ -65,8 +65,11 @@ class OvershootProtection:
 
     async def _wait_for_stable_temperature(self) -> None:
         """Wait until the boiler temperature stabilizes, influenced by relative modulation."""
-        while not self._coordinator.boiler_temperature:
+        if not self._coordinator.boiler_temperature:
             _LOGGER.warning("Waiting for boiler temperature")
+
+        while not self._coordinator.boiler_temperature:
+            await self._trigger_heating_cycle(is_ready=False)
 
         starting_temperature = self._coordinator.boiler_temperature
         previous_average_temperature = self._coordinator.boiler_temperature
