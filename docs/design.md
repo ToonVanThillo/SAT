@@ -149,9 +149,7 @@ are in the integration's diagnostics download, together with the config entry
 (device address, unique ID and discovery keys redacted) and the raw device
 values with their receive times.
 
-On backends with channels these entities replace the Control Setpoint,
-Relative Modulation and Central Heating synchro sensors; backends without
-channels keep the synchro sensors until they migrate.
+Backends without channels have no synchro diagnostics until they migrate.
 
 ## Calculated setpoint sensor
 A "Calculated Setpoint" sensor shows the flow temperature the control loop
@@ -198,17 +196,18 @@ diagnostic, so its history can be compared with the boiler's flow temperature.
 3. Channel diagnostics:
    a. Last-seen problem times, the `WAITING` status, the diagnostic status and
       public channel states; not yet used.
-   b. Channel diagnostic entities on backends with channels, replacing their
-      synchro sensors; the coordinator owns the channel set.
+   b. Channel diagnostic entities on backends with channels; the coordinator
+      owns the channel set.
    c. Coordinators receive their config entry explicitly instead of through
       HA's setup context.
    d. A diagnostics download with the channel details.
-4. Migrate the other backends; remove the synchro sensors.
+4. Remove the synchro binary sensors.
 5. Update the PID and heating curve inside the control cycle from the captured
    inputs, instead of on sensor events.
 6. Relative modulation keeps the current max relative modulation while the
    boiler setpoint is at the minimum (COLD), instead of requesting the maximum.
 7. A Calculated Setpoint sensor.
+8. Migrate the other backends to channels.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the

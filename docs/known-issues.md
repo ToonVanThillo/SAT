@@ -19,7 +19,7 @@ known bug".
   resent every cycle while the boiler is enabled but idle and a valve is open.
   In HVAC OFF, OFF is resent every cycle while the boiler is heating, but never
   sent while it is enabled but idle. EMS-ESP compares with the `heatingoff`
-  setting. Plan step 4 addresses this.
+  setting. Plan step 8 addresses this.
 - The heating loop doesn't re-check the HVAC mode after its awaits, so a cycle
   that is running when the HVAC mode changes can still submit the previous
   mode's desired state afterwards; the next cycle corrects it.
@@ -75,7 +75,7 @@ known bug".
 - OpenTherm over MQTT uses bare `float()`, so a non-numeric payload such as
   "unavailable" raises on access instead of giving None.
 - For OpenTherm over MQTT, a failed publish is logged and swallowed, so the
-  setter completes as if it succeeded. Plan step 4 addresses this.
+  setter completes as if it succeeded. Plan step 8 addresses this.
 - The simulator overrides the coordinator update step without calling the
   base, so `_device_on_since` is never set and its target stays at the minimum
   (10 °C, or the minimum setpoint); the simulator never heats towards the
@@ -87,12 +87,6 @@ known bug".
   boiler's own `burnmaxpower` maximum is never confirmed: the boiler reads
   back its own value, so the configured value is resent after every new
   read-back and the channel stays `OUT_OF_SYNC`.
-
-## Synchro sensors (replaced per backend as it migrates to channels; removed in plan step 4)
-- Control Setpoint Synchro compares the unclamped climate setpoint with the
-  clamped value sent, so it reports a mismatch above the maximum setpoint.
-- Central Heating Synchro can never trigger in HEAT mode: it compares
-  `hvac_action`, which is derived from `device_active`, with `device_active`.
 
 ## Startup and stored data
 - When HA is already running (reload or new entry), the first control loop runs

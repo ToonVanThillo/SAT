@@ -591,10 +591,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return self.pwm.enabled
 
     @property
-    def relative_modulation_value(self) -> int:
-        return self.get_relative_modulation_value(self._coordinator.boiler)
-
-    @property
     def relative_modulation_state(self) -> RelativeModulationState:
         return self.relative_modulation.state(self._coordinator.boiler)
 

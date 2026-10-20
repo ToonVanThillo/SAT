@@ -21,7 +21,7 @@ pytestmark = pytest.mark.usefixtures("loop_entry")
 
 CHANNELS = ["control_setpoint", "maximum_relative_modulation", "heater_state", "maximum_setpoint"]
 HEALTH = {"test-flame-health", "test-boiler-health"}
-SYNCHRO = {"test-control-setpoint-synchro", "test-relative-modulation-synchro", "test-central-heating-synchro"}
+LEGACY_SUFFIXES = ("-control-setpoint-synchro", "-relative-modulation-synchro", "-central-heating-synchro")
 OPTIONS = ["idle", "waiting", "in_sync", "out_of_sync", "drifted", "write_only", "read_only"]
 SETPOINT = Quantity.CONTROL_SETPOINT
 
@@ -63,9 +63,8 @@ async def step(climate, boiler_data, freezer, **data) -> None:
 # Which entities exist
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_ems_has_channel_sensors_and_no_synchro_binary_sensors(hass, entry):
+async def test_ems_has_channel_sensors(hass, entry):
     assert unique_ids(hass, entry, "sensor") >= {f"test-channel-{name}" for name in CHANNELS}
-    assert not unique_ids(hass, entry, "binary_sensor") & SYNCHRO
     assert unique_ids(hass, entry, "binary_sensor") >= HEALTH
 
     for name in CHANNELS:
@@ -88,10 +87,11 @@ async def test_ems_has_channel_sensors_and_no_synchro_binary_sensors(hass, entry
 
 
 @pytest.mark.parametrize(*otgw_entry())
-async def test_backend_without_channels_has_synchro_binary_sensors_and_no_channel_sensors(hass, entry):
+async def test_backend_without_channels_has_no_channel_sensors(hass, entry):
     assert not {uid for uid in unique_ids(hass, entry, "sensor") if "-channel-" in uid}
-    assert unique_ids(hass, entry, "binary_sensor") >= SYNCHRO | HEALTH
+    assert unique_ids(hass, entry, "binary_sensor") >= HEALTH
     assert shown(hass) is None
+    assert not {uid for uid in unique_ids(hass, entry, "binary_sensor") if uid.endswith(LEGACY_SUFFIXES)}
 
 
 @pytest.mark.parametrize(*ems_entry())
