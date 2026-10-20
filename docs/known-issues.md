@@ -60,6 +60,12 @@ known bug".
   a bare `float()` (the `_async_climate_changed` state listener and
   `_async_update_rooms_from_climates` at startup), so a room with a non-numeric
   target raises there.
+- The climate entity exposes many control-loop values as extra state attributes
+  (setpoints, PID terms, PWM and relative modulation state, errors), several of
+  which change every cycle. HA convention is to keep climate attributes to the
+  standard set and expose such values as separate entities; frequent attribute
+  changes also record a new state each time. Some (heating curve, error) are
+  already duplicated as sensors.
 
 ## Device communication
 - EMS-ESP on/off values are only recognised as "on"/"off"; with EMS-ESP's

@@ -153,6 +153,17 @@ On backends with channels these entities replace the Control Setpoint,
 Relative Modulation and Central Heating synchro sensors; backends without
 channels keep the synchro sensors until they migrate.
 
+## Calculated setpoint sensor
+A "Calculated Setpoint" sensor shows the flow temperature the control loop
+aims for: the heating curve plus the PID output, after the low-pass filter. It
+is a regular sensor (temperature device class, measurement state class), not a
+diagnostic, so its history can be compared with the boiler's flow temperature.
+- It shows the value before PWM and before the minimum and maximum setpoint
+  limits. With PWM active it still shows the calculated value, not the
+  setpoint PWM applies.
+- It updates once per cycle, after the decide phase, and is unknown when the
+  climate has no calculated setpoint. It has no attributes.
+
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
   refactor. Tests that pin known bugs are labelled as such and listed in
@@ -197,6 +208,7 @@ channels keep the synchro sensors until they migrate.
    inputs, instead of on sensor events.
 6. Relative modulation keeps the current max relative modulation while the
    boiler setpoint is at the minimum (COLD), instead of requesting the maximum.
+7. A Calculated Setpoint sensor.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
