@@ -13,15 +13,26 @@ Each cycle has three phases, in this order:
    update step and builds one immutable `BoilerSnapshot`. The channels verify
    the previous cycle's writes against it.
 2. **Decide**: the control logic (climate, PWM, PID, relative modulation) reads
-   only the snapshot, the inputs, and the coordinator's capabilities and
-   configured limits, and produces a `DesiredState`. No device writes happen
+   only the snapshot, the inputs, the coordinator's capabilities and configured
+   limits, and which sent values the channels have confirmed (as of this
+   cycle's verify), and produces a `DesiredState`. No device writes happen
    here.
 3. **Reconcile**: the coordinator hands the `DesiredState` to its channels,
    which write what is needed.
 
 In HVAC mode OFF the decide phase requests heater OFF and releases the control
-setpoint. In HEAT with a missing or unreadable temperature, only the snapshot
-phase runs.
+setpoint. In HEAT, when it requests heater OFF (the PWM off phase, a calculated
+setpoint that is too cold, or a PWM minimum setpoint at or below the cold
+threshold), it releases the control setpoint only on backends that switch
+heating off with a separate command, and only once the heater channel has
+confirmed heating off; until then, and on a backend whose boiler is kept off by
+a low setpoint, it requests the computed setpoint (10 °C, or the PWM minimum
+setpoint). On EMS-ESP that command is `heatingoff`, under which EMS-ESP itself
+keeps sending the boiler a flow temperature of 0, so writing it as well is
+redundant. For now only EMS-ESP releases: on backends without channels a
+release leaves the last setpoint on the device, so they keep requesting the
+minimum until they migrate. In HEAT with a missing or unreadable
+temperature, only the snapshot phase runs.
 
 Every write goes through this path, including HVAC mode OFF and pushing the
 setpoint to the thermostat. Hot water control is out of scope; where a backend
@@ -123,6 +134,9 @@ setting reads back as sent). Whether the boiler acts on it is out of scope.
 - `async_submit(desired: DesiredState)` runs reconciliation.
 - `verify(snapshot)` runs right after the cycle's snapshot; backends with channels
   verify the previous cycle's writes, others do nothing.
+- `confirmed_value(quantity)` gives a channel's sent value while the device has
+  confirmed it (`IN_SYNC`), else None; the decide phase uses it to act only on
+  confirmed device state.
 - Backends supply channel definitions. Backends not yet migrated keep their
   current `async_set_*` path.
 
@@ -207,12 +221,17 @@ diagnostic, so its history can be compared with the boiler's flow temperature.
 6. Relative modulation keeps the current max relative modulation while the
    boiler setpoint is at the minimum (COLD), instead of requesting the maximum.
 7. A Calculated Setpoint sensor.
-8. Migrate the other backends to channels.
+8. Migrate the other backends to channels; those that switch heating off with a
+   separate command then also release the control setpoint on heater OFF in
+   HEAT.
+9. EMS-ESP: in HEAT, heater OFF releases the control setpoint instead of
+   requesting the minimum.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
   knob value; a written setpoint must be below it and reverts to it after a
-  few minutes. Whether 0 (sent for 10) is echoed as 0 is unknown.
+  few minutes. Under `heatingoff`, EMS-ESP itself sends `selflowtemp` 0 to the
+  boiler, which reads back 5.
 - A read-back sampled before a write but received after it (e.g. EMS-ESP
   publishing on an interval) would give a false `OUT_OF_SYNC`. Not observed
   yet; the channel diagnostics should show whether it happens. If so, it is

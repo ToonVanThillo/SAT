@@ -60,7 +60,7 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         heater_states = {DATA_OFF: DeviceState.ON, DATA_ON: DeviceState.OFF}
 
         self._channels = Channels([
-            # EMS-ESP falls back to the panel value about a minute after the last write.
+            # While heating is enabled, EMS-ESP falls back to the panel value about a minute after the last write; under `heatingoff` it sends 0 itself.
             ChannelDefinition(
                 quantity=Quantity.CONTROL_SETPOINT,
                 read=lambda snapshot: _reading(snapshot, DATA_CONTROL_SETPOINT, float_value),
@@ -101,6 +101,11 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
 
     @property
     def supports_relative_modulation(self) -> bool:
+        return True
+
+    @property
+    def releases_control_setpoint_when_heater_off(self) -> bool:
+        # `heatingoff` keeps the boiler off, so the setpoint isn't needed.
         return True
 
     @property

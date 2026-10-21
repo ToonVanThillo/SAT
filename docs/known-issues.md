@@ -29,17 +29,30 @@ known bug".
   within `BOILER_DEADBAND` (2 °C) of it, the status is AT_SETPOINT, which flame
   health (`_HEATING_STATUSES` in `flame.py`) counts as heat demand. With the
   flame off for longer than `STUCK_OFF_SECONDS` (300 s), flame health reports
-  STUCK_OFF although nothing is wrong. EMS-ESP reports `selflowtemp` 0 under
-  `heatingoff` (status IDLE), unless it falls back to the boiler's knob value
-  (see the open question in the design doc).
+  STUCK_OFF although nothing is wrong. EMS-ESP reports `selflowtemp` 5 under
+  `heatingoff` (status IDLE).
 - With PWM, a minimum setpoint ≤ `COLD_SETPOINT` (28.2 °C) makes the ON phase
-  request heater OFF.
-- With PWM, the OFF phase requests `MINIMUM_SETPOINT`; the next cycle reads it
-  back as ≤ 10, so relative modulation is COLD and requests the configured
-  maximum. The first ON-phase cycle still decides from that read-back and keeps
-  the maximum; the next requests 0 (or the floor) again. The max relative
-  modulation is written twice per PWM cycle, and the boiler starts each ON
-  phase at the maximum. Observed on EMS-ESP.
+  request heater OFF; on EMS-ESP it then also releases the control setpoint.
+- With PWM, the OFF phase requests `MINIMUM_SETPOINT` (on EMS-ESP only until
+  the heater channel confirms heating off; then it releases the setpoint). The
+  boiler reads back ≤ 10 (EMS-ESP: 5 under `heatingoff`), so relative
+  modulation is COLD and requests the configured maximum. The first ON-phase
+  cycle still decides from that read-back and keeps the maximum; the next
+  requests 0 (or the floor) again. The max relative modulation is written twice
+  per PWM cycle, and the boiler starts each ON phase at the maximum. Observed
+  on EMS-ESP. Plan step 6 addresses this.
+- Flame health stores no average on-time when a cycle completes: the ON→OFF
+  transition doesn't record the duration, and the next ON phase seeds the
+  average from its first seconds. PWM treats a missing or short (< 60 s)
+  average as short cycling and, while the flame is off, forces its setpoint to
+  flow + 10 °C.
+- The boiler's anti-cycle period (burner min period, minimum 3 min) appears to
+  start when heating is re-enabled, not when the flame goes out. In a field
+  test the flame relit 3:13 after `heatingoff` was switched off, 6:20 after it
+  went out. PWM counts the wait as ON time. Needs further testing.
+- The temperature tracker skips only a boiler setpoint of exactly
+  `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
+  heating off counts as a setpoint decrease and starts stabilisation mode.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with
@@ -66,6 +79,9 @@ known bug".
   standard set and expose such values as separate entities; frequent attribute
   changes also record a new state each time. Some (heating curve, error) are
   already duplicated as sensors.
+- Flame Health is unavailable while the flame status is INSUFFICIENT_DATA. In
+  HA, unavailable means the device can't be reached; missing data should be
+  unknown.
 
 ## Device communication
 - EMS-ESP on/off values are only recognised as "on"/"off"; with EMS-ESP's
@@ -96,6 +112,12 @@ known bug".
   during a draw) keeps hot water active until the first live message. In HVAC
   OFF the first loop can send heater OFF based on stored values, except on
   EMS-ESP, whose channel writes wait for a live read-back.
+- EMS-ESP values are stored only on unload, so after an HA restart the restored
+  values can be much older than the restart. In a field test the first cycle
+  decided on a restored flow temperature of 48.7 °C and flame on (actual: about
+  27 °C, flame off). The temperature tracker starts inactive and only activates
+  when the flame goes off, so after a restart a heat-up shows as
+  OVERSHOOT_HANDLING until the first flame-off.
 - The config flow's manufacturer step reads `member_id` from stored data
   without subscribing to MQTT. On a fresh install there is no stored
   `member_id`, so no manufacturer is preselected.

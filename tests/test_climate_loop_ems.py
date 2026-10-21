@@ -14,10 +14,11 @@ from custom_components.sat.const import (
     CONF_MAXIMUM_RELATIVE_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
     CONF_MAXIMUM_SETPOINT,
+    CONF_MINIMUM_SETPOINT,
     CONF_RADIATORS,
 )
 from tests.conftest import advance
-from tests.const import IDLE, ems_entry
+from tests.const import IDLE, ems_entry, with_data
 from tests.test_climate_loop import message, run_loop
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
@@ -25,13 +26,6 @@ pytestmark = pytest.mark.usefixtures("loop_entry")
 INSIDE = "sensor.test_inside_sensor"
 OUTSIDE = "sensor.test_outside_sensor"
 RADIATOR = "climate.radiator"
-
-
-def with_data(data: dict, options: dict | None = None) -> tuple[str, list[tuple]]:
-    """Return the EMS entry parametrization with extra config entry data."""
-    names, [(domains, entry_data, entry_options, config)] = ems_entry(options)
-
-    return names, [(domains, entry_data | data, entry_options, config)]
 
 
 async def cycle(hass: HomeAssistant, climate: SatClimate, boiler_data, freezer: FrozenDateTimeFactory, **data) -> None:
@@ -57,11 +51,12 @@ async def test_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boile
     assert climate.setpoint == 35.0
 
 
-@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_SETPOINT: 15}))
+# The minimum setpoint is above COLD_SETPOINT (28.2), so the PWM ON phase requests heater ON and doesn't release the setpoint
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_SETPOINT: 29}))
 async def test_pwm_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
 
-    assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 15}')
+    assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 29}')
 
 
 @pytest.mark.parametrize(*ems_entry())

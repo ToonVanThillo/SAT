@@ -17,7 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
-from .channels import RELEASE, Channels, ChannelState, DesiredState, Quantity
+from .channels import RELEASE, Channels, ChannelState, ChannelStatus, DesiredState, Quantity
 from .const import *
 from .flame import Flame, FlameState
 from .helpers import calculate_default_maximum_setpoint, seconds_since
@@ -453,6 +453,14 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         return True
 
     @property
+    def releases_control_setpoint_when_heater_off(self) -> bool:
+        """Returns whether the control setpoint is released, instead of set to the minimum, while the heater is requested OFF.
+
+        Only for backends that switch heating off with a separate command; a backend whose boiler is kept off by a low setpoint must keep receiving it.
+        """
+        return False
+
+    @property
     def supports_maximum_setpoint_management(self):
         """Returns whether the device supports setting a maximum setpoint.
 
@@ -489,6 +497,11 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
     def channel_states(self) -> Mapping[Quantity, ChannelState]:
         """Current tracked state per channel; empty for backends without channels."""
         return MappingProxyType({}) if self._channels is None else self._channels.states
+
+    def confirmed_value(self, quantity: Quantity) -> Any:
+        """Return the value last sent on the channel if a verify confirmed it (`IN_SYNC`, also when adopted as sent); None otherwise or without such a channel."""
+        state = self.channel_states.get(quantity)
+        return state.sent if state is not None and state.status == ChannelStatus.IN_SYNC else None
 
     @callback
     def verify(self, snapshot: BoilerSnapshot) -> None:

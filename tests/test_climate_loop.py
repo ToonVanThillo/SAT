@@ -14,9 +14,10 @@ from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
     CONF_FORCE_PULSE_WIDTH_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
+    CONF_MINIMUM_SETPOINT,
 )
 from tests.conftest import advance
-from tests.const import IDLE, ems_entry
+from tests.const import IDLE, ems_entry, with_data
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
 
@@ -102,25 +103,39 @@ async def test_hvac_off_with_disabled_heater_publishes_nothing(entry, climate, b
     assert published() == []
 
 
+# A minimum setpoint above COLD_SETPOINT (28.2), so the PWM ON phase requests heater ON
+WARM_MINIMUM_SETPOINT = {CONF_MINIMUM_SETPOINT: 30}
+
+
 @pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+async def test_pwm_on_with_cold_minimum_setpoint_stops_heater(entry, climate, boiler_data, mqtt_mock, published):
+    await boiler_data(**IDLE)
+
+    # current behaviour, known bug: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF
+    assert await run_loop(climate, mqtt_mock, published) == [
+        message('{"cmd": "selflowtemp", "value": 20}'),
+        message('{"cmd": "burnmaxpower", "value": 0}'),
+        message('{"cmd": "heatingoff", "value": "on"}'),
+    ]
+
+
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
 async def test_hot_water_does_not_raise_pwm_modulation(entry, climate, boiler_data, mqtt_mock, published):
-    # heatingoff "on" hides a heater OFF write: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF (known bug, see docs/known-issues.md)
-    await boiler_data(**IDLE | {"tapwateractive": "on", "heatingoff": "on"})
+    await boiler_data(**IDLE | {"tapwateractive": "on"})
 
     # burnmaxpower does not limit hot water power on EMS-ESP, so hot water does not raise it to the maximum
     assert await run_loop(climate, mqtt_mock, published) == [
-        message('{"cmd": "selflowtemp", "value": 20}'),
+        message('{"cmd": "selflowtemp", "value": 30}'),
         message('{"cmd": "burnmaxpower", "value": 0}'),
     ]
 
 
-@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
 async def test_pwm_on_sends_minimum_setpoint_and_zero_modulation_once(entry, climate, boiler_data, mqtt_mock, published, freezer):
-    # heatingoff "on" hides a heater OFF write: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF (known bug, see docs/known-issues.md)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
+    await boiler_data(**IDLE)
 
     assert await run_loop(climate, mqtt_mock, published) == [
-        message('{"cmd": "selflowtemp", "value": 20}'),
+        message('{"cmd": "selflowtemp", "value": 30}'),
         message('{"cmd": "burnmaxpower", "value": 0}'),
     ]
 
@@ -129,16 +144,15 @@ async def test_pwm_on_sends_minimum_setpoint_and_zero_modulation_once(entry, cli
     await boiler_data(burnmaxpower=0)
     mqtt_mock.async_publish.reset_mock()
     await climate.async_control_heating_loop()
-    assert published() == [message('{"cmd": "selflowtemp", "value": 20}')]
+    assert published() == [message('{"cmd": "selflowtemp", "value": 30}')]
 
 
-@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 31}))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 31}))
 async def test_pwm_on_with_floor_option_sends_floor_modulation_once(entry, climate, boiler_data, mqtt_mock, published, freezer):
-    # heatingoff "on" hides a heater OFF write: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF (known bug, see docs/known-issues.md)
-    await boiler_data(**IDLE | {"burnmaxpower": 100, "heatingoff": "on"})
+    await boiler_data(**IDLE | {"burnmaxpower": 100})
 
     assert await run_loop(climate, mqtt_mock, published) == [
-        message('{"cmd": "selflowtemp", "value": 20}'),
+        message('{"cmd": "selflowtemp", "value": 30}'),
         message('{"cmd": "burnmaxpower", "value": 31}'),
     ]
 
@@ -147,7 +161,7 @@ async def test_pwm_on_with_floor_option_sends_floor_modulation_once(entry, clima
     await boiler_data(burnmaxpower=31)
     mqtt_mock.async_publish.reset_mock()
     await climate.async_control_heating_loop()
-    assert published() == [message('{"cmd": "selflowtemp", "value": 20}')]
+    assert published() == [message('{"cmd": "selflowtemp", "value": 30}')]
 
 
 @pytest.mark.parametrize(*ems_entry())

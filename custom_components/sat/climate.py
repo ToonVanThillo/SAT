@@ -37,7 +37,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .area import Areas, SENSOR_TEMPERATURE_ID
 from .boiler import BoilerState
-from .channels import RELEASE, DesiredState
+from .channels import RELEASE, DesiredState, Quantity, Release
 from .const import *
 from .const import PWMStatus
 from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
@@ -854,9 +854,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 self._setpoint = MINIMUM_SETPOINT
                 _LOGGER.debug("Setting setpoint to absolute minimum: %.1f°C", MINIMUM_SETPOINT)
 
-        control_setpoint = min(self._setpoint, self._coordinator.maximum_setpoint)
-        _LOGGER.info("Control setpoint will be updated to: %.1f°C", control_setpoint)
-        return control_setpoint
+        return min(self._setpoint, self._coordinator.maximum_setpoint)
 
     async def _async_control_relative_modulation(self, snapshot: BoilerSnapshot) -> int | None:
         """Decide the maximum relative modulation; returns None when it is unsupported."""
@@ -984,8 +982,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         else:
             await self.pwm.update(flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint)
 
-        # Always request the control setpoint to make sure we stay in control
-        control_setpoint = self._control_setpoint(self.pwm.state)
+        # Control setpoint to request, unless released below once heater off is confirmed
+        control_setpoint: float | Release = self._control_setpoint(self.pwm.state)
 
         # Request the relative modulation value, if supported
         relative_modulation = await self._async_control_relative_modulation(snapshot)
@@ -1008,6 +1006,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.status)
 
         heater_state = self._heater_state(self._setpoint, inputs.valves_open)
+        if heater_state == DeviceState.OFF and self._coordinator.releases_control_setpoint_when_heater_off and self._coordinator.confirmed_value(Quantity.HEATER_STATE) == DeviceState.OFF:
+            control_setpoint = RELEASE
+            _LOGGER.info("Control setpoint released (heater off)")
+        else:
+            _LOGGER.info("Control setpoint will be updated to: %.1f°C", control_setpoint)
 
         await self._coordinator.async_submit(DesiredState(control_setpoint=control_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state))
 
