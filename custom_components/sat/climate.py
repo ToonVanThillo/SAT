@@ -32,6 +32,7 @@ from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE, STATE_UNKNO
 from homeassistant.core import HomeAssistant, ServiceCall, Event, CoreState, EventStateChangedData, HassJob, callback
 from homeassistant.helpers import entity_registry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval, async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -820,6 +821,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self.pid.update_reset(error=max_error, heating_curve_value=self.heating_curve.value)
             self._calculated_setpoint = None
             self.pwm.reset()
+            async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
 
         self.async_write_ha_state()
 
@@ -896,6 +898,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
     def reset_control_state(self):
         """Reset control state when major changes occur."""
         self.pwm.disable()
+        async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
         self._calculated_setpoint = None
 
     def async_track_sensor_temperature(self, entity_id):
@@ -958,6 +961,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # In HVAC mode OFF the decide phase requests heater OFF and releases the control setpoint
         if self.hvac_mode != HVACMode.HEAT:
             await self._coordinator.async_submit(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))
+            async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
             return
 
         # Stop if the current, target or outside temperature is not available
@@ -981,6 +985,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self.pwm.reset()
         else:
             await self.pwm.update(flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint)
+
+        async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
 
         # Control setpoint to request, unless released below once heater off is confirmed
         control_setpoint: float | Release = self._control_setpoint(self.pwm.state)

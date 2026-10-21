@@ -39,6 +39,8 @@ WAITING_CYCLES_BEFORE_WARNING = 3
 DIAGNOSTIC_WINDOW = timedelta(minutes=1)
 # Formatted with the config entry id; sent after the channels verify or write.
 SIGNAL_CHANNELS_UPDATED: SignalTypeFormat[()] = SignalTypeFormat("sat_channels_updated_{}")
+# Formatted with the config entry id; sent after each PWM status change.
+SIGNAL_PWM_UPDATED: SignalTypeFormat[tuple[PWMStatus]] = SignalTypeFormat("sat_pwm_updated_{}")
 
 # Configuration and options
 CONF_MODE = "mode"

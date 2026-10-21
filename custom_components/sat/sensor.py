@@ -14,7 +14,7 @@ from homeassistant.helpers.event import async_track_point_in_utc_time, async_tra
 from homeassistant.util import dt as dt_util
 
 from .channels import ChannelStatus, Quantity, diagnostic_status, held_problem_expiry
-from .const import CONF_MODE, MODE_SERIAL, CONF_NAME, DOMAIN, COORDINATOR, CLIMATE, MODE_SIMULATOR, CONF_MINIMUM_CONSUMPTION, CONF_MAXIMUM_CONSUMPTION, SIGNAL_CHANNELS_UPDATED
+from .const import CONF_MODE, MODE_SERIAL, CONF_NAME, DOMAIN, COORDINATOR, CLIMATE, MODE_SIMULATOR, CONF_MINIMUM_CONSUMPTION, CONF_MAXIMUM_CONSUMPTION, SIGNAL_CHANNELS_UPDATED, SIGNAL_PWM_UPDATED, PWMStatus
 from .coordinator import SatDataUpdateCoordinator
 from .entity import SatEntity, SatClimateEntity
 from .serial import sensor as serial_sensor
@@ -61,6 +61,9 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
 
         if float(_config_entry.options.get(CONF_MINIMUM_CONSUMPTION) or 0) > 0 and float(_config_entry.options.get(CONF_MAXIMUM_CONSUMPTION) or 0) > 0:
             _async_add_entities([SatCurrentConsumptionSensor(coordinator, _config_entry)])
+
+    if coordinator.supports_setpoint_management:
+        _async_add_entities([SatPWMStatusSensor(coordinator, _config_entry)])
 
 
 class SatCurrentPowerSensor(SatEntity, SensorEntity):
@@ -339,3 +342,33 @@ class SatChannelSynchroSensor(SatEntity, SensorEntity):
         if self._unsub_expiry is not None:
             self._unsub_expiry()
             self._unsub_expiry = None
+
+
+class SatPWMStatusSensor(SatEntity, SensorEntity):
+    """Diagnostic status of the PWM controller; ON during the on-phase, OFF during the off-phase, IDLE when PWM is not active."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_options = [s.value for s in PWMStatus]
+
+    def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry) -> None:
+        super().__init__(coordinator, config_entry)
+
+        self._status = PWMStatus.IDLE
+        self._attr_name = "PWM Status"
+        self._attr_unique_id = f"{config_entry.data[CONF_NAME].lower()}-pwm-status"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        signal = SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id)
+        self.async_on_remove(async_dispatcher_connect(self.hass, signal, self._on_pwm_updated))
+
+    @callback
+    def _on_pwm_updated(self, status: PWMStatus) -> None:
+        self._status = status
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> str:
+        return self._status.value
