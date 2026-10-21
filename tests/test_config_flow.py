@@ -1,9 +1,9 @@
-import json
-from pathlib import Path
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -86,7 +86,6 @@ async def test_maximum_relative_modulation_allows_above_100_only_for_ems(hass, m
     assert selector_max(result, CONF_MAXIMUM_RELATIVE_MODULATION) == maximum
 
 
-<<<<<<< HEAD
 @pytest.mark.parametrize("language", ["en", "de", "es", "fr", "it", "nl", "pt", "sk"])
 async def test_translations_modulation_floor_in_advanced(language):
     steps = json.loads((Path(__file__).parent.parent / "custom_components/sat/translations" / f"{language}.json").read_text(encoding="utf-8"))["options"]["step"]
@@ -94,7 +93,8 @@ async def test_translations_modulation_floor_in_advanced(language):
     for section in ("data", "data_description"):
         assert "maximum_relative_modulation_floor" in steps["advanced"][section]
         assert "maximum_relative_modulation_floor" not in steps["system_configuration"].get(section, {})
-=======
+
+
 # Calibration step
 
 PREVIOUS = "heat"
@@ -235,4 +235,3 @@ async def test_closing_the_flow_cancels_calibration_and_restores_the_mode_once(
     assert hass.config_entries.flow.async_progress() == []
     assert events.count((SAT, PREVIOUS)) == 1
     assert events.count(("coordinator", "removed")) == 1
->>>>>>> 88ece62 (Calibration restores the boiler and HVAC mode on every failure and aborts cleanly)
