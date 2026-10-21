@@ -4,7 +4,7 @@ import logging
 import typing
 from datetime import datetime
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature, UnitOfVolume
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, Event, EventStateChangedData, callback
@@ -54,6 +54,7 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
         SatManufacturerSensor(coordinator, _config_entry),
         SatErrorValueSensor(coordinator, _config_entry, climate),
         SatHeatingCurveSensor(coordinator, _config_entry, climate),
+        SatCalculatedSetpointSensor(coordinator, _config_entry, climate),
     ])
 
     if coordinator.supports_relative_modulation_management:
@@ -195,6 +196,34 @@ class SatHeatingCurveSensor(SatClimateEntity, SensorEntity):
     def unique_id(self) -> str:
         """Return a unique ID to use for this entity."""
         return f"{self._config_entry.data.get(CONF_NAME).lower()}-heating-curve"
+
+
+class SatCalculatedSetpointSensor(SatClimateEntity, SensorEntity):
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+
+    async def async_added_to_hass(self) -> None:
+        async def on_state_change(_event: Event[EventStateChangedData]):
+            self.async_write_ha_state()
+
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self._climate.entity_id], on_state_change
+            )
+        )
+
+    @property
+    def name(self) -> str:
+        return f"Calculated Setpoint {self._config_entry.data.get(CONF_NAME)}"
+
+    @property
+    def native_value(self) -> float | None:
+        return self._climate.calculated_setpoint
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._config_entry.data.get(CONF_NAME).lower()}-calculated-setpoint"
 
 
 class SatErrorValueSensor(SatClimateEntity, SensorEntity):
