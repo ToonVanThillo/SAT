@@ -996,6 +996,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         snapshot = self._coordinator.snapshot()
         self._coordinator.verify(snapshot)
 
+        # The PWM cycles per hour follow the captured outside temperature
+        self.pwm.update_cycles_per_hour(inputs.outside_temperature)
+
         # In HVAC mode OFF the decide phase requests heater OFF and releases the control setpoint
         if self.hvac_mode != HVACMode.HEAT:
             await self._coordinator.async_submit(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))

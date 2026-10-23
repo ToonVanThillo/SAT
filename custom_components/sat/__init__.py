@@ -188,13 +188,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if entry.options.get("heating_curve_version") is not None and int(entry.options.get("heating_curve_version")) < 2:
                 new_options["heating_curve_version"] = 3
 
-        if entry.version < 9:
-            if entry.data.get("heating_system") == "heat_pump":
-                new_options["cycles_per_hour"] = 2
-
-            if entry.data.get("heating_system") == "radiators":
-                new_options["cycles_per_hour"] = 3
-
         if entry.version < 10:
             if entry.data.get("mode") == "mqtt":
                 device = device_registry.async_get(hass).async_get(entry.data.get("device"))

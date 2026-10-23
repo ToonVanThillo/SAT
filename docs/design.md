@@ -32,7 +32,7 @@ keeps sending the boiler a flow temperature of 0, so writing it as well is
 redundant. For now only EMS-ESP releases: on backends without channels a
 release leaves the last setpoint on the device, so they keep requesting the
 minimum until they migrate. In HEAT with a missing or unreadable
-temperature, only the snapshot phase runs.
+temperature, only the snapshot phase and the PWM cycle-frequency update run.
 
 Every write goes through this path, including HVAC mode OFF and pushing the
 setpoint to the thermostat. Hot water control is out of scope; where a backend
@@ -183,6 +183,26 @@ diagnostic, so its history can be compared with the boiler's flow temperature.
 - It updates once per cycle, after the decide phase, and is unknown when the
   climate has no calculated setpoint. It has no attributes.
 
+## PWM cycle frequency
+The number of PWM cycles per hour, N, follows the outside temperature captured
+at the start of each cycle.
+- N is linear between two configured points (default 4 at 0 °C, 2 at 12 °C),
+  clamped to their range and rounded to the nearest integer, halves up.
+  Without an outside temperature PWM keeps the last N; before the first
+  reading it uses the N of the colder point. If the configured points are
+  invalid, the defaults apply and an error is logged.
+- N sets the cycle timing: the normal period 3600/N, the duty ranges in which
+  the on-time is held at 180 s or the off-time at 180 s, the duty below which
+  no pulse starts, and the maximum number of pulses started per hour.
+- N is latched when a pulse starts and holds for that pulse and the off phase
+  after it, until the next pulse starts or the off phase exceeds twice the
+  latched normal period.
+- A started pulse lasts at least 180 s; only a reset, a disable, missing
+  values or an HVAC mode other than HEAT end it earlier.
+- N is updated every cycle, also in HVAC mode OFF and when a temperature is
+  missing. A diagnostic "PWM Cycles Per Hour" sensor (measurement, unit
+  cycles/h, no attributes) shows the N in effect.
+
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
   refactor. Tests that pin known bugs are labelled as such and listed in
@@ -233,6 +253,8 @@ diagnostic, so its history can be compared with the boiler's flow temperature.
    HEAT.
 9. EMS-ESP: in HEAT, heater OFF releases the control setpoint instead of
    requesting the minimum.
+10. PWM cycles per hour from the outside temperature, and a minimum pulse of
+    180 s.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the

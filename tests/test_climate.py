@@ -55,7 +55,9 @@ async def test_scenario_1(hass: HomeAssistant, entry: MockConfigEntry, climate: 
 
     assert climate.pulse_width_modulation_enabled
     assert climate.pwm.last_duty_cycle_percentage == 23.83
-    assert climate.pwm.duty_cycle == (285, 914)
+    # 9.9 °C outside gives 2 cycles per hour
+    assert climate.pwm.cycles_per_hour == 2
+    assert climate.pwm.duty_cycle == (428, 1371)
 
 
 @pytest.mark.parametrize(*[
@@ -102,7 +104,9 @@ async def test_scenario_2(hass: HomeAssistant, entry: MockConfigEntry, climate: 
 
     assert climate.pulse_width_modulation_enabled
     assert climate.pwm.last_duty_cycle_percentage == 2.6
-    assert climate.pwm.duty_cycle == (0, 2400)
+    # 11.1 °C outside gives 2 cycles per hour
+    assert climate.pwm.cycles_per_hour == 2
+    assert climate.pwm.duty_cycle == (0, 3600)
 
 
 @pytest.mark.parametrize(*[
@@ -149,4 +153,6 @@ async def test_scenario_3(hass: HomeAssistant, entry: MockConfigEntry, climate: 
 
     assert climate.pulse_width_modulation_enabled
     assert climate.pwm.last_duty_cycle_percentage == 53.62
-    assert climate.pwm.duty_cycle == (643, 556)
+    # -2.2 °C outside gives 4 cycles per hour
+    assert climate.pwm.cycles_per_hour == 4
+    assert climate.pwm.duty_cycle == (482, 417)

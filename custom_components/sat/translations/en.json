@@ -152,6 +152,9 @@
     }
   },
   "options": {
+    "error": {
+      "cycles_per_hour_temperatures_equal": "The cold and mild outside temperatures must differ."
+    },
     "step": {
       "advanced": {
         "data": {
@@ -234,7 +237,10 @@
       },
       "system_configuration": {
         "data": {
-          "cycles_per_hour": "Duty Cycles per hour",
+          "cycles_per_hour_cold_temperature": "Cold outside temperature",
+          "cycles_per_hour_cold": "Duty cycles per hour when cold",
+          "cycles_per_hour_mild_temperature": "Mild outside temperature",
+          "cycles_per_hour_mild": "Duty cycles per hour when mild",
           "automatic_duty_cycle": "Automatic duty cycle",
           "sync_climates_with_mode": "Synchronize climates with mode",
           "overshoot_protection": "Overshoot Protection (with PWM)",
@@ -242,7 +248,10 @@
           "window_minimum_open_time": "Minimum time for window to be open"
         },
         "data_description": {
-          "cycles_per_hour": "The maximum amount of duty cycles per hour.",
+          "cycles_per_hour_cold_temperature": "Outside temperature of the first point of the cycles-per-hour line. Between the two points the cycles per hour are interpolated and rounded; beyond them they stay at the nearest point's value.",
+          "cycles_per_hour_cold": "Cycles per hour at the first point's temperature.",
+          "cycles_per_hour_mild_temperature": "Outside temperature of the second point of the cycles-per-hour line. Must differ from the first point's temperature.",
+          "cycles_per_hour_mild": "Cycles per hour at the second point's temperature.",
           "automatic_duty_cycle": "Enable or disable automatic duty cycle for Pulse Width Modulation (PWM).",
           "overshoot_protection": "Enable overshoot protection with Pulse Width Modulation (PWM) to prevent boiler temperature overshooting.",
           "sensor_max_value_age": "The maximum age of the temperature sensor value before considering it as a stall.",

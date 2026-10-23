@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 from typing import TYPE_CHECKING
@@ -16,6 +18,10 @@ from .pwm import PWM, CycleConfig
 
 if TYPE_CHECKING:
     from .climate import SatClimate
+
+_LOGGER = logging.getLogger(__name__)
+
+_CYCLES_PER_HOUR_OPTIONS = (CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE, CONF_CYCLES_PER_HOUR_COLD, CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE, CONF_CYCLES_PER_HOUR_MILD)
 
 
 def create_pid_controller(config_options) -> PID:
@@ -67,16 +73,31 @@ def create_heating_curve_controller(config_data, config_options) -> HeatingCurve
     return HeatingCurve(heating_system=heating_system, coefficient=coefficient)
 
 
+def _create_cycle_config(options: Mapping[str, Any], maximum_time: int) -> CycleConfig:
+    """Create the PWM cycle configuration from the cycles per hour options; raises ValueError or TypeError for invalid values."""
+    return CycleConfig(
+        maximum_time=maximum_time,
+        cold_temperature=float(options[CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE]),
+        cold_cycles_per_hour=int(options[CONF_CYCLES_PER_HOUR_COLD]),
+        mild_temperature=float(options[CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE]),
+        mild_cycles_per_hour=int(options[CONF_CYCLES_PER_HOUR_MILD]),
+    )
+
+
 def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulation_management: bool, config_data: MappingProxyType[str, Any], config_options: MappingProxyType[str, Any]) -> PWM | None:
     """Create and return a PWM controller instance with the given configuration options."""
     # Extract the configuration options
-    max_duty_cycles = int(config_options.get(CONF_CYCLES_PER_HOUR))
     automatic_duty_cycle = bool(config_options.get(CONF_AUTOMATIC_DUTY_CYCLE))
     max_cycle_time = int(convert_time_str_to_seconds(config_options.get(CONF_DUTY_CYCLE)))
     force = bool(config_data.get(CONF_MODE) == MODE_SWITCH) or bool(config_options.get(CONF_FORCE_PULSE_WIDTH_MODULATION))
 
-    # Extra settings
-    cycles = CycleConfig(maximum_count=max_duty_cycles, maximum_time=max_cycle_time)
+    # Invalid mapping options fall back to the defaults, so heating keeps running
+    try:
+        cycles = _create_cycle_config(config_options, max_cycle_time)
+    except (TypeError, ValueError) as error:
+        invalid = {key: config_options.get(key) for key in _CYCLES_PER_HOUR_OPTIONS}
+        _LOGGER.error("Invalid cycles per hour options %s (%s); using the defaults instead.", invalid, error)
+        cycles = _create_cycle_config(OPTIONS_DEFAULTS, max_cycle_time)
 
     # Return a new PWM controller instance with the given configuration options
     return PWM(heating_curve=heating_curve, cycles=cycles, automatic_duty_cycle=automatic_duty_cycle, supports_relative_modulation_management=supports_relative_modulation_management, force=force)

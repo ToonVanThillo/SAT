@@ -21,7 +21,7 @@ from .serial import sensor as serial_sensor
 from .simulator import sensor as simulator_sensor
 
 if typing.TYPE_CHECKING:
-    pass
+    from .climate import SatClimate
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
             _async_add_entities([SatCurrentConsumptionSensor(coordinator, _config_entry)])
 
     if coordinator.supports_setpoint_management:
-        _async_add_entities([SatPWMStatusSensor(coordinator, _config_entry)])
+        _async_add_entities([SatPWMStatusSensor(coordinator, _config_entry), SatPWMCyclesPerHourSensor(coordinator, _config_entry, climate)])
 
 
 class SatCurrentPowerSensor(SatEntity, SensorEntity):
@@ -401,3 +401,31 @@ class SatPWMStatusSensor(SatEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         return self._status.value
+
+
+class SatPWMCyclesPerHourSensor(SatClimateEntity, SensorEntity):
+    """Diagnostic cycles per hour the PWM controller uses; latched for the running cycle, otherwise following the outside temperature."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "cycles/h"
+
+    def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry, climate: SatClimate) -> None:
+        super().__init__(coordinator, config_entry, climate)
+
+        self._attr_name = "PWM Cycles Per Hour"
+        self._attr_unique_id = f"{config_entry.data[CONF_NAME].lower()}-pwm-cycles-per-hour"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        signal = SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id)
+        self.async_on_remove(async_dispatcher_connect(self.hass, signal, self._on_pwm_updated))
+
+    @callback
+    def _on_pwm_updated(self, _status: PWMStatus) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> int:
+        return self._climate.pwm.cycles_per_hour

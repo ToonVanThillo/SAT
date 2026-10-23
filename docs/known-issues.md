@@ -53,9 +53,13 @@ known bug".
 - The temperature tracker skips only a boiler setpoint of exactly
   `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
   heating off counts as a setpoint decrease and starts stabilisation mode.
-- On a fresh install without stored data, the flame's first observation is
-  off (no data yet), so a burn already running when the first device data
-  arrives is counted as a full cycle, measured from that data.
+
+- A started PWM pulse is held ON for at least 180 s, while the exposed PWM
+  duty cycle keeps following the recalculated on time. With automatic duty
+  cycle it can read 0 s on while the status is ON (the low-duty case without
+  flame), and flame health's PWM_SHORT check cannot fire then. With a fixed
+  duty cycle the on time can read small but non-zero, and PWM_SHORT can still
+  fire although the pulse runs 180 s. Follows from the minimum-pulse rule.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with

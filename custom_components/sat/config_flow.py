@@ -22,6 +22,7 @@ from .coordinator import SatDataUpdateCoordinator
 from .helpers import calculate_default_maximum_setpoint, snake_case
 from .manufacturer import ManufacturerFactory, MANUFACTURERS
 from .overshoot_protection import OvershootProtection
+from .pwm import MAXIMUM_CYCLES_PER_HOUR, MINIMUM_CYCLES_PER_HOUR
 from .validators import valid_serial_device
 
 DEFAULT_NAME = "Living Room"
@@ -690,38 +691,35 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def async_step_system_configuration(self, _user_input: dict[str, Any] | None = None):
+        errors: dict[str, str] = {}
         if _user_input is not None:
-            return await self.update_options(_user_input)
+            if float(_user_input[CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE]) != float(_user_input[CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE]):
+                return await self.update_options(_user_input)
 
-        options = await self.get_options()
+            errors["base"] = "cycles_per_hour_temperatures_equal"
+
+        # Show the rejected input again, so it can be corrected
+        options = await self.get_options() | (_user_input or {})
+
+        temperature = selector.NumberSelector(selector.NumberSelectorConfig(min=-30, max=30, step=0.5, unit_of_measurement="°C"))
+        cycles_per_hour = selector.NumberSelector(selector.NumberSelectorConfig(min=MINIMUM_CYCLES_PER_HOUR, max=MAXIMUM_CYCLES_PER_HOUR, step=1, mode=selector.NumberSelectorMode.BOX))
 
         schema: dict[Marker, Any] = {
             vol.Required(CONF_AUTOMATIC_DUTY_CYCLE, default=options[CONF_AUTOMATIC_DUTY_CYCLE]): bool,
             vol.Required(CONF_SYNC_CLIMATES_WITH_MODE, default=options[CONF_SYNC_CLIMATES_WITH_MODE]): bool,
+            vol.Required(CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE, default=options[CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE]): temperature,
+            vol.Required(CONF_CYCLES_PER_HOUR_COLD, default=options[CONF_CYCLES_PER_HOUR_COLD]): cycles_per_hour,
+            vol.Required(CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE, default=options[CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE]): temperature,
+            vol.Required(CONF_CYCLES_PER_HOUR_MILD, default=options[CONF_CYCLES_PER_HOUR_MILD]): cycles_per_hour,
         }
-
-        if options.get(CONF_HEATING_SYSTEM) == HEATING_SYSTEM_HEAT_PUMP:
-            schema[vol.Required(CONF_CYCLES_PER_HOUR, default=str(options[CONF_CYCLES_PER_HOUR]))] = selector.SelectSelector(
-                selector.SelectSelectorConfig(mode=SelectSelectorMode.DROPDOWN, options=[
-                    selector.SelectOptionDict(value="2", label="Normal (2x per hour)"),
-                    selector.SelectOptionDict(value="3", label="High (3x per hour)"),
-                ])
-            )
-
-        if options.get(CONF_HEATING_SYSTEM) == HEATING_SYSTEM_RADIATORS:
-            schema[vol.Required(CONF_CYCLES_PER_HOUR, default=str(options[CONF_CYCLES_PER_HOUR]))] = selector.SelectSelector(
-                selector.SelectSelectorConfig(mode=SelectSelectorMode.DROPDOWN, options=[
-                    selector.SelectOptionDict(value="3", label="Normal (3x per hour)"),
-                    selector.SelectOptionDict(value="4", label="High (4x per hour)"),
-                ])
-            )
 
         schema[vol.Required(CONF_SENSOR_MAX_VALUE_AGE, default=options[CONF_SENSOR_MAX_VALUE_AGE])] = selector.TimeSelector()
         schema[vol.Required(CONF_WINDOW_MINIMUM_OPEN_TIME, default=options[CONF_WINDOW_MINIMUM_OPEN_TIME])] = selector.TimeSelector()
 
         return self.async_show_form(
             step_id="system_configuration",
-            data_schema=vol.Schema(schema)
+            data_schema=vol.Schema(schema),
+            errors=errors
         )
 
     async def async_step_advanced(self, _user_input: dict[str, Any] | None = None):
