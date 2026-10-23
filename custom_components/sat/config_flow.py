@@ -320,7 +320,14 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             if _user_input.get(CONF_THERMOSTAT) is None:
                 self.data[CONF_THERMOSTAT] = None
 
-            if (await self.async_create_coordinator()).supports_setpoint_management:
+            coordinator = await self.async_create_coordinator()
+
+            try:
+                supports_setpoint_management = coordinator.supports_setpoint_management
+            finally:
+                await coordinator.async_will_remove_from_hass()
+
+            if supports_setpoint_management:
                 return await self.async_step_calibrate_system()
 
             return await self.async_step_automatic_gains()

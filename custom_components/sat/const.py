@@ -11,6 +11,7 @@ DOMAIN = "sat"
 CLIMATE = "climate"
 SENTRY = "sentry"
 COORDINATOR = "coordinator"
+SETUP_CONFIG = "setup_config"
 CONFIG_STORE = "config_store"
 
 MODE_FAKE = "fake"

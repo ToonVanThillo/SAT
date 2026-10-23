@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.components import climate
+from homeassistant.components import climate, mqtt
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.data_entry_flow import FlowResultType
@@ -35,6 +35,8 @@ from custom_components.sat.const import (
     MODE_MQTT_OPENTHERM,
 )
 from custom_components.sat.overshoot_protection import OvershootProtection
+from tests.conftest import current
+from tests.const import IDLE, STORE_KEY, ems_entry
 
 
 def options_flow(mode: str) -> SatOptionsFlowHandler:
@@ -138,6 +140,11 @@ def flow_id(hass: HomeAssistant, events: list[tuple[str, str]]) -> Iterator[Call
             result = await manager.async_configure(result["flow_id"], user_input)
 
         assert result["step_id"] == "calibrate_system"
+
+        # The areas step tears down the coordinator it created to read its capabilities
+        assert events == [("coordinator", "removed")]
+        events.clear()
+
         return result["flow_id"]
 
     with patch.object(SatFlowHandler, "async_create_coordinator", AsyncMock(return_value=coordinator)):
@@ -235,3 +242,76 @@ async def test_closing_the_flow_cancels_calibration_and_restores_the_mode_once(
     assert hass.config_entries.flow.async_progress() == []
     assert events.count((SAT, PREVIOUS)) == 1
     assert events.count(("coordinator", "removed")) == 1
+
+
+# Temporary coordinators and the live entry
+
+@pytest.mark.parametrize("data", [
+    {CONF_MODE: MODE_MQTT_EMS, CONF_DEVICE: "ems", CONF_MQTT_TOPIC: "ems-esp"},
+    {CONF_MODE: MODE_MQTT_OPENTHERM, CONF_DEVICE: "gw1", CONF_MQTT_TOPIC: "otgw"},
+], ids=["ems", "opentherm"])
+async def test_the_flow_coordinator_neither_subscribes_nor_publishes(hass, mqtt_mock, no_publish_delay, published, data: dict[str, str]) -> None:
+    flow = SatFlowHandler()
+    flow.hass = hass
+    flow.data = data | {CONF_NAME: "Test"}
+
+    with patch.object(mqtt, "async_subscribe", wraps=mqtt.async_subscribe) as subscribe:
+        await flow.async_step_manufacturer()
+        await hass.async_block_till_done()
+
+    subscribe.assert_not_called()
+    assert published() == []
+
+
+async def test_the_manufacturer_step_without_stored_data_stores_nothing(hass, mqtt_mock, hass_storage) -> None:
+    flow = SatFlowHandler()
+    flow.hass = hass
+    flow.data = {CONF_MODE: MODE_MQTT_EMS, CONF_NAME: "Test", CONF_DEVICE: "ems", CONF_MQTT_TOPIC: "ems-esp"}
+
+    await flow.async_step_manufacturer()
+
+    assert STORE_KEY not in hass_storage
+
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_manufacturer_step_leaves_the_live_ems_entry_untouched(hass, entry, coordinator, boiler_data, hass_storage) -> None:
+    hass_storage[STORE_KEY] = {"version": 1, "key": STORE_KEY, "data": {"selflowtemp": 50}}
+    flow = SatFlowHandler()
+    flow.hass = hass
+    flow.data = dict(entry.data)
+
+    result = await flow.async_step_manufacturer()
+
+    assert result["step_id"] == "manufacturer"
+    assert hass_storage[STORE_KEY]["data"] == {"selflowtemp": 50}
+
+    await boiler_data(**IDLE | {"burngas": "on"})
+    assert coordinator.flame_active is True
+
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_reconfigure_flow_leaves_the_live_ems_entry_untouched(hass, entry, coordinator, boiler_data, hass_storage) -> None:
+    await boiler_data(**IDLE | {"selflowtemp": 44})
+    hass_storage[STORE_KEY] = {"version": 1, "key": STORE_KEY, "data": {"selflowtemp": 50}}
+    manager = hass.config_entries.flow
+
+    result = await manager.async_init(DOMAIN, context={"source": "reconfigure", "entry_id": entry.entry_id})
+    assert result["step_id"] == "sensors"
+    result = await manager.async_configure(result["flow_id"], {
+        "inside_sensor_entity_id": "sensor.test_inside_sensor", "outside_sensor_entity_id": ["sensor.test_outside_sensor"]})
+    result = await manager.async_configure(result["flow_id"], {"heating_system": "radiators"})
+    assert result["step_id"] == "areas"
+    result = await manager.async_configure(result["flow_id"], {})
+
+    assert result["step_id"] != "areas"
+    assert hass_storage[STORE_KEY]["data"] == {"selflowtemp": 50}
+    assert current(hass, entry) is coordinator
+
+    await boiler_data(**IDLE | {"burngas": "on"})
+    assert coordinator.flame_active is True
+
+    manager.async_abort(result["flow_id"])
+    await hass.async_block_till_done()
+    assert hass_storage[STORE_KEY]["data"] == {"selflowtemp": 50}

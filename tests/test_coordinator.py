@@ -11,8 +11,7 @@ from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
 from custom_components.sat.mqtt.opentherm import SatOpenThermMqttCoordinator
 from tests.conftest import advance
-
-STORE_KEY = "sat_ems_mqtt_coordinator_ems"
+from tests.const import STORE_KEY
 
 
 def subscribed(mqtt_mock, prefix: str) -> list[str]:

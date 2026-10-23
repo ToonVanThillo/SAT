@@ -7,7 +7,7 @@ from homeassistant.core import callback
 from custom_components.sat.coordinator import Reading
 from custom_components.sat.fake import SatFakeCoordinator
 from tests.conftest import advance
-from tests.test_coordinator import STORE_KEY
+from tests.const import STORE_KEY
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 

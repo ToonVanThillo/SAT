@@ -53,6 +53,9 @@ known bug".
 - The temperature tracker skips only a boiler setpoint of exactly
   `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
   heating off counts as a setpoint decrease and starts stabilisation mode.
+- On a fresh install without stored data, the flame's first observation is
+  off (no data yet), so a burn already running when the first device data
+  arrives is counted as a full cycle, measured from that data.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with
@@ -82,6 +85,10 @@ known bug".
 - Flame Health is unavailable while the flame status is INSUFFICIENT_DATA. In
   HA, unavailable means the device can't be reached; missing data should be
   unknown.
+- After the climate is renamed (HA removes and re-adds the entity), room
+  temperature sensors are no longer tracked: their listeners are released on
+  removal, but `_sensors` keeps their IDs, so `async_track_sensor_temperature`
+  returns early on re-add.
 
 ## Device communication
 - EMS-ESP on/off values are only recognised as "on"/"off"; with EMS-ESP's
@@ -136,6 +143,9 @@ known bug".
   boiler through its own coordinator; on OpenTherm over MQTT the climate's OFF
   cycle keeps running and switches the heater off whenever it sees the boiler
   active, interrupting the calibration.
+- Calibration while reconfiguring a serial entry connects a second coordinator
+  to the live entry's port. It receives device data while it runs, and its
+  teardown sends control setpoint 0 to the gateway (`_graceful_disconnect`).
 - Calibration requests a fixed max relative modulation of 100
   (`MAXIMUM_RELATIVE_MODULATION`, used by `overshoot_protection.py`), regardless of
   the configured maximum relative modulation.
@@ -165,6 +175,11 @@ known bug".
 - Platforms are set up concurrently. If `sensor` or `binary_sensor` runs before
   `climate` has registered itself, `sensor` adds no entities and `binary_sensor`
   raises; nothing retries. Tests set up the base components first.
+- The reverse also happens: with window sensors, on a fresh install the climate
+  fails to add. `_register_event_listeners` looks up SAT's window binary sensor
+  in the entity registry before `binary_sensor` has registered it, so the
+  entity ID is None and tracking it raises `AttributeError: 'NoneType' object
+  has no attribute 'lower'`. Tests register the window sensor first.
 - The manifest registers `ems-esp/#` for MQTT discovery. HA never drops this
   subscription and only skips a message whose payload equals the previous one
   on the same topic, so every changed message on any EMS-ESP topic starts a
@@ -173,7 +188,22 @@ known bug".
   `already_configured` without logging. That is at least one flow every 10 s
   (`boiler_data`). With more than 10 distinct topics, these aborts also keep
   changing the entry's list of its last 10 discovery topics, and HA saves the
-  config entries again.
+  config entries again. These updates don't reload SAT, which reloads only when
+  the entry's data or options change.
+- A control loop that is already running when the entry unloads (e.g. waiting
+  the second after an MQTT publish) still finishes, and can write once more
+  through the old coordinator.
+- The ESPHome backend's teardown has no test: the test environment lacks
+  `aioesphomeapi`, so the ESPHome modules can't be imported.
+- If saving the device data fails while an MQTT entry unloads, the error
+  escapes `async_unload_entry` after the platforms are unloaded: the entry ends
+  in FAILED_UNLOAD and its `hass.data` entry is left behind.
+- Reconfigure reloads the entry twice when its data changed:
+  `async_update_reload_and_abort` schedules a reload, and so does the update
+  listener.
+- A coordinator whose start fails (e.g. MQTT not available) logs the error and
+  isn't started again until the entry reloads; until then it receives no
+  device data.
 - The manifest's OpenTherm discovery filter `OTGW/value/+` matches one level
   after `value/`, but the gateway's values are on `OTGW/value/<device>/<key>`,
   so OpenTherm over MQTT is never discovered. If the filter matched those

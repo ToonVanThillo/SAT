@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import Mapping, Any
 
 from homeassistant.components import mqtt
@@ -26,6 +27,7 @@ class SatMqttCoordinator(SatDataUpdateCoordinator):
         self._device_id: str = device_id
         self._topic: str = config_data.get(CONF_MQTT_TOPIC)
         self._store: Store = Store(hass, STORAGE_VERSION, snake_case(f"{self.__class__.__name__}_{device_id}"))
+        self._subscriptions: list[Callable[[], None]] = []
 
     @property
     def device_id(self) -> str:
@@ -34,23 +36,40 @@ class SatMqttCoordinator(SatDataUpdateCoordinator):
     async def async_setup(self):
         await self._load_stored_data()
 
-    async def async_added_to_hass(self) -> None:
-        await mqtt.async_wait_for_mqtt_client(self.hass)
+    async def _async_start(self) -> None:
+        """Subscribe to the device topics and boot the device, unless torn down while waiting for the MQTT client.
+
+        Raises if MQTT is not available.
+        """
+        if not await mqtt.async_wait_for_mqtt_client(self.hass):
+            raise ConnectionError("MQTT is not available")
+
+        # The wait can take long while HA starts
+        if self._torn_down:
+            return
 
         for key in self.get_tracked_entities():
-            await mqtt.async_subscribe(
+            self._subscriptions.append(await mqtt.async_subscribe(
                 self.hass,
                 self._get_topic_for_subscription(key),
                 self._create_message_handler(key)
-            )
+            ))
 
         await self.boot()
 
-        await super().async_added_to_hass()
-
     async def async_will_remove_from_hass(self) -> None:
-        # Save the updated data to persistent storage
-        await self._save_data()
+        """Release the base resources, unsubscribe from MQTT and save the device data; safe to call more than once.
+
+        Messages arriving during the save are not handled, so the saved data is the final data.
+        Without any data (never set up and no messages), nothing is saved, so stored data is kept.
+        """
+        await super().async_will_remove_from_hass()
+
+        while self._subscriptions:
+            self._subscriptions.pop()()
+
+        if self.data:
+            await self._save_data()
 
     async def _load_stored_data(self) -> None:
         """Load the data from persistent storage."""

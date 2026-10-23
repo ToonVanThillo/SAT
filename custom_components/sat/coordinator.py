@@ -146,6 +146,8 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         self._channels: Channels | None = None
         self._device_on_since: Optional[float] = None
         self._listeners_unsub: Optional[Callable[[], None]] = None
+        self._started: bool = False
+        self._torn_down: bool = False
 
         self._options: Mapping[str, Any] = options or {}
         self._config_data: Mapping[str, Any] = config_data
@@ -157,7 +159,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         if config_data.get(CONF_MANUFACTURER) is not None:
             self._manufacturer = ManufacturerFactory.resolve_by_name(config_data.get(CONF_MANUFACTURER))
 
-        self.async_add_listener(lambda: self._flame.update(boiler_state=self.boiler))
+        self._flame_listener_unsub: Callable[[], None] | None = self.async_add_listener(lambda: self._flame.update(boiler_state=self.boiler))
 
     @property
     @abstractmethod
@@ -474,12 +476,43 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         pass
 
     async def async_added_to_hass(self) -> None:
-        """Perform setup when the integration is added to Home Assistant."""
-        await self.async_submit(DesiredState(maximum_setpoint=self.maximum_setpoint))
+        """Start the coordinator: the backend's start, then request the maximum setpoint.
+
+        Runs once: does nothing if already started (e.g. the climate re-added on an entity ID
+        change) or torn down. A reload creates a new coordinator. A failing backend start is
+        logged and skips the rest.
+        """
+        if self._started or self._torn_down:
+            return
+
+        self._started = True
+
+        try:
+            await self._async_start()
+        except Exception:
+            _LOGGER.exception("Failed to start the %s coordinator; it isn't started again until the entry reloads", self.device_type)
+            return
+
+        if not self._torn_down:
+            await self.async_submit(DesiredState(maximum_setpoint=self.maximum_setpoint))
+
+    async def _async_start(self) -> None:
+        """Start the backend's own subscriptions and listeners; by default there are none."""
 
     async def async_will_remove_from_hass(self) -> None:
-        """Run when an entity is removed from hass."""
-        pass
+        """Tear down for good: release the flame listener and a pending listener notification.
+
+        Backends call this first, then release their own resources. Safe to call more than once.
+        """
+        self._torn_down = True
+
+        if self._flame_listener_unsub is not None:
+            self._flame_listener_unsub()
+            self._flame_listener_unsub = None
+
+        if self._listeners_unsub is not None:
+            self._listeners_unsub()
+            self._listeners_unsub = None
 
     def snapshot(self) -> BoilerSnapshot:
         """Read the device and derived values once; take it right after the update step of the cycle. The last one is kept for `async_submit`."""
@@ -627,7 +660,13 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
     @callback
     def async_set_updated_data(self, data: dict, *, restored: bool = False) -> None:
-        """Update the stored data and notify listeners if changes are detected; `restored` marks values loaded from storage."""
+        """Update the stored data and notify listeners if changes are detected; `restored` marks values loaded from storage.
+
+        A torn-down coordinator ignores the data, e.g. serial data queued before the teardown.
+        """
+        if self._torn_down:
+            return
+
         # Update the internal data store with new values
         self.data.update(data, restored=restored)
 

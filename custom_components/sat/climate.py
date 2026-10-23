@@ -28,13 +28,14 @@ from homeassistant.components.climate import (
     DOMAIN as CLIMATE_DOMAIN,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE, STATE_UNKNOWN, ATTR_ENTITY_ID, STATE_ON, STATE_OFF, EVENT_HOMEASSISTANT_STARTED
+from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE, STATE_UNKNOWN, ATTR_ENTITY_ID, STATE_ON, STATE_OFF
 from homeassistant.core import HomeAssistant, ServiceCall, Event, CoreState, EventStateChangedData, HassJob, callback
 from homeassistant.helpers import entity_registry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval, async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.start import async_at_started
 
 from .area import Areas, SENSOR_TEMPERATURE_ID
 from .boiler import BoilerState
@@ -218,8 +219,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self.heating_curve.update(self.target_temperature, self.current_outside_temperature)
 
         if self.hass.state is not CoreState.running:
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self._register_event_listeners)
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.async_control_heating_loop)
+            self.async_on_remove(async_at_started(self.hass, self._async_at_started))
         else:
             await self._register_event_listeners()
             await self.async_control_heating_loop()
@@ -233,7 +233,24 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Let the coordinator know we are ready
         await self._coordinator.async_added_to_hass()
 
-    async def _register_event_listeners(self, _time: Optional[datetime] = None):
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel a pending control loop run and a pending window-open wait."""
+        if self._control_heating_loop_unsub is not None:
+            self._control_heating_loop_unsub()
+            self._control_heating_loop_unsub = None
+
+        if self._window_sensor_handle is not None:
+            self._window_sensor_handle.cancel()
+            self._window_sensor_handle = None
+
+        await super().async_will_remove_from_hass()
+
+    async def _async_at_started(self, _hass: HomeAssistant) -> None:
+        """Register the event listeners and run the first control loop once Home Assistant has started."""
+        await self._register_event_listeners()
+        await self.async_control_heating_loop()
+
+    async def _register_event_listeners(self) -> None:
         """Register event listeners."""
         self.async_on_remove(
             async_track_time_interval(
@@ -759,19 +776,36 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             if self.preset_mode == PRESET_ACTIVITY:
                 return
 
+            # A new wait replaces one that is still running
+            if self._window_sensor_handle is not None:
+                self._window_sensor_handle.cancel()
+
+            wait = asyncio.create_task(asyncio.sleep(self._window_minimum_open_time))
+            self._window_sensor_handle = wait
+            self._pre_activity_temperature = self.target_temperature or self.min_temp
+
             try:
-                self._window_sensor_handle = asyncio.create_task(asyncio.sleep(self._window_minimum_open_time))
-                self._pre_activity_temperature = self.target_temperature or self.min_temp
-
-                await self._window_sensor_handle
-                await self.async_set_preset_mode(PRESET_ACTIVITY)
+                await wait
             except asyncio.CancelledError:
-                _LOGGER.debug("Window closed before minimum open time.")
+                # Propagate the cancellation of this handler; a cancelled wait (window closed,
+                # newer wait or entity removed) just ends it
+                if (task := asyncio.current_task()) is not None and task.cancelling():
+                    raise
 
+                return
+
+            # The window closed, or a newer wait started, after the wait ended but before this resumed
+            if self._window_sensor_handle is not wait:
+                return
+
+            await self.async_set_preset_mode(PRESET_ACTIVITY)
             return
 
         if new_state.state == STATE_OFF:
             if self._window_sensor_handle is not None:
+                if not self._window_sensor_handle.done():
+                    _LOGGER.debug("Window closed before minimum open time.")
+
                 self._window_sensor_handle.cancel()
                 self._window_sensor_handle = None
 

@@ -1,6 +1,7 @@
 from __future__ import annotations, annotations
 
 import logging
+from collections.abc import Callable
 from typing import Mapping, Any
 
 from homeassistant.components import mqtt, binary_sensor, esphome, number, sensor, switch
@@ -50,6 +51,7 @@ class SatEspHomeCoordinator(SatDataUpdateCoordinator, SatEntityCoordinator):
 
         self._entity_registry: EntityRegistry = entity_registry.async_get(hass)
         self._entities: list[RegistryEntry] = entity_registry.async_entries_for_device(self._entity_registry, self._device.id)
+        self._state_change_unsub: Callable[[], None] | None = None
 
     @property
     def device_id(self) -> str:
@@ -135,8 +137,12 @@ class SatEspHomeCoordinator(SatDataUpdateCoordinator, SatEntityCoordinator):
     def member_id(self) -> int | None:
         return int_value(self.get(sensor.DOMAIN, DATA_SLAVE_MEMBERID))
 
-    async def async_added_to_hass(self) -> None:
+    async def _async_start(self) -> None:
+        """Track the ESPHome entities, unless torn down while waiting for the MQTT client."""
         await mqtt.async_wait_for_mqtt_client(self.hass)
+
+        if self._torn_down:
+            return
 
         # Create a list of entities that we track
         entities = list(filter(lambda entity: entity is not None, [
@@ -158,9 +164,15 @@ class SatEspHomeCoordinator(SatDataUpdateCoordinator, SatEntityCoordinator):
         ]))
 
         # Track those entities so the coordinator can be updated when something changes
-        async_track_state_change_event(self.hass, entities, self.async_state_change_event)
+        self._state_change_unsub = async_track_state_change_event(self.hass, entities, self.async_state_change_event)
 
-        await super().async_added_to_hass()
+    async def async_will_remove_from_hass(self) -> None:
+        """Release the base resources and stop tracking the ESPHome entities; safe to call more than once."""
+        await super().async_will_remove_from_hass()
+
+        if self._state_change_unsub is not None:
+            self._state_change_unsub()
+            self._state_change_unsub = None
 
     async def async_state_change_event(self, _event: Event[EventStateChangedData]):
         await self.async_notify_listeners()

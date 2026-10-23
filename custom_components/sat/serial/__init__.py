@@ -170,6 +170,8 @@ class SatSerialCoordinator(SatDataUpdateCoordinator):
         await self.async_connect()
 
     async def async_will_remove_from_hass(self) -> None:
+        await super().async_will_remove_from_hass()
+
         if self._publish_callback is not None:
             try:
                 self._api.unsubscribe(self._publish_callback)

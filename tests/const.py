@@ -23,6 +23,9 @@ from custom_components.sat.const import (
     MODE_MQTT_OPENTHERM,
 )
 
+# Storage key of the EMS coordinator on device `ems`
+STORE_KEY = "sat_ems_mqtt_coordinator_ems"
+
 DEFAULT_USER_DATA = {
     CONF_MODE: MODE_FAKE,
     CONF_NAME: "Test",

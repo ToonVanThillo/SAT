@@ -1,6 +1,6 @@
-import asyncio
 import logging
 import traceback
+from copy import deepcopy
 
 from homeassistant.components import binary_sensor, climate, number, sensor
 from homeassistant.config_entries import ConfigEntry
@@ -11,9 +11,9 @@ from sentry_sdk import Client, Hub
 
 from .const import (
     DOMAIN,
-    CLIMATE,
     SENTRY,
     COORDINATOR,
+    SETUP_CONFIG,
     OPTIONS_DEFAULTS,
     CONF_MODE,
     CONF_DEVICE,
@@ -38,9 +38,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Make sure we have our default domain property
     hass.data.setdefault(DOMAIN, {})
 
-    # Create a new dictionary for this entry
-    hass.data[DOMAIN][entry.entry_id] = {}
-
     try:
         # Setup error monitoring (if enabled)
         if entry.options.get(CONF_ERROR_MONITORING, OPTIONS_DEFAULTS[CONF_ERROR_MONITORING]):
@@ -49,15 +46,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         _LOGGER.error("Error during Sentry initialization: %s", str(ex))
 
     # Resolve the coordinator by using the factory according to the mode
-    hass.data[DOMAIN][entry.entry_id][COORDINATOR] = SatDataUpdateCoordinatorFactory().resolve(
+    coordinator = SatDataUpdateCoordinatorFactory().resolve(
         hass=hass, data=entry.data, options=entry.options, mode=entry.data.get(CONF_MODE), device=entry.data.get(CONF_DEVICE), config_entry=entry
     )
 
-    # Making sure everything is loaded
-    await hass.data[DOMAIN][entry.entry_id][COORDINATOR].async_setup()
+    # Store the coordinator with the data and options this setup starts with
+    hass.data[DOMAIN][entry.entry_id] = {
+        COORDINATOR: coordinator,
+        SETUP_CONFIG: (deepcopy(dict(entry.data)), deepcopy(dict(entry.options))),
+    }
 
-    # Forward entry setup for used platforms
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        # Making sure everything is loaded
+        await coordinator.async_setup()
+
+        # Forward entry setup for used platforms
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except BaseException:
+        # HA doesn't unload a failed setup. Forwarding only raises before any platform is set
+        # up, so only the coordinator is torn down; a failing teardown doesn't mask the error.
+        try:
+            await coordinator.async_will_remove_from_hass()
+        except Exception:
+            _LOGGER.exception("Error tearing down the coordinator after a failed setup")
+        finally:
+            hass.data[DOMAIN].pop(entry.entry_id, None)
+
+        raise
 
     # Register the services
     await async_register_services(hass)
@@ -73,17 +88,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     Handle removal of an entry.
 
     This function is called by Home Assistant when the integration is being removed.
+    The platforms are unloaded first; only if that succeeds, the coordinator is torn down.
     """
-
-    _climate = hass.data[DOMAIN][entry.entry_id][CLIMATE]
-    _coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
-
-    await _coordinator.async_will_remove_from_hass()
-
-    unloaded = all(
-        # Forward entry unload for used platforms
-        await asyncio.gather(hass.config_entries.async_unload_platforms(entry, PLATFORMS))
-    )
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     try:
         if SENTRY in hass.data[DOMAIN]:
@@ -93,8 +100,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as ex:
         _LOGGER.error("Error during Sentry cleanup: %s", str(ex))
 
-    # Remove the entry from the data dictionary if all components are unloaded successfully
+    # Tear down the coordinator and remove the entry from the data dictionary if all platforms
+    # are unloaded successfully
     if unloaded:
+        await hass.data[DOMAIN][entry.entry_id][COORDINATOR].async_will_remove_from_hass()
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unloaded
@@ -102,12 +111,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """
-    Reload config entry.
+    Reload the config entry if its data or options differ from those its setup started with.
 
-    This function is called by Home Assistant when the integration configuration is updated.
+    This function is called by Home Assistant on every update of the entry; other updates
+    (such as MQTT discovery keys, the unique ID or the title) don't reload it.
     """
-    # Unload the entry and its dependent components
-    hass.config_entries.async_schedule_reload(entry.entry_id)
+    if (dict(entry.data), dict(entry.options)) != hass.data[DOMAIN][entry.entry_id][SETUP_CONFIG]:
+        hass.config_entries.async_schedule_reload(entry.entry_id)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

@@ -3,12 +3,14 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from _pytest.logging import LogCaptureFixture
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.core import HomeAssistant
+from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -17,8 +19,15 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
+from custom_components.sat.boiler import BoilerState
 from custom_components.sat.climate import SatClimate
-from custom_components.sat.const import CLIMATE, CONF_MQTT_TOPIC, COORDINATOR, DOMAIN
+from custom_components.sat.const import (
+    CLIMATE,
+    CONF_MQTT_TOPIC,
+    COORDINATOR,
+    DOMAIN,
+    BoilerStatus,
+)
 from custom_components.sat.coordinator import SatDataUpdateCoordinator
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
 from custom_components.sat.mqtt.opentherm import SatOpenThermMqttCoordinator
@@ -70,6 +79,42 @@ def no_publish_delay() -> Iterator[None]:
         yield
 
 
+def current(hass: HomeAssistant, entry: MockConfigEntry) -> SatDataUpdateCoordinator:
+    """Return the entry's coordinator of its current setup."""
+    return hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+
+
+def flame_transitions(caplog: LogCaptureFixture) -> list[str]:
+    """Return the messages logged by the flame tracking."""
+    return [record.getMessage() for record in caplog.records if record.name == "custom_components.sat.flame"]
+
+
+async def otgw_flame_on(hass: HomeAssistant) -> None:
+    """Report the flame on through the OpenTherm MQTT topic of device `gw1`."""
+    async_fire_mqtt_message(hass, "otgw/value/gw1/flame", "ON")
+    await hass.async_block_till_done()
+
+
+def pm_commands(published: Callable[[], list[tuple]]) -> list[str]:
+    """Return the OpenTherm gateway `PM=` commands published so far (sent when the coordinator boots)."""
+    return [payload for _topic, payload, *_ in published() if payload.startswith("PM=")]
+
+
+def listen(coordinator: SatDataUpdateCoordinator) -> MagicMock:
+    """Add a listener to the coordinator and return the mock it calls when notified."""
+    notified = MagicMock()
+    coordinator.async_add_listener(callback(notified))
+    return notified
+
+
+def boiler(flame_active: bool) -> BoilerState:
+    """Return a heating boiler state with the given flame state."""
+    return BoilerState(
+        is_active=True, is_inactive=False, status=BoilerStatus.HEATING_UP, flame_active=flame_active, hot_water_active=False,
+        setpoint=50.0, flow_temperature=45.0, return_temperature=40.0, relative_modulation_level=50.0,
+    )
+
+
 async def advance(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float) -> None:
     """Advance the frozen clock and fire the timers that are due."""
     freezer.tick(timedelta(seconds=seconds))
@@ -77,10 +122,35 @@ async def advance(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: 
     await hass.async_block_till_done()
 
 
+async def settle() -> None:
+    """Let pending callbacks and eagerly started tasks run, without waiting for hass jobs to finish."""
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+async def tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float) -> None:
+    """Advance the frozen clock and fire the due timers, without waiting for hass jobs to finish.
+
+    Unlike `advance`, this doesn't hang while a job waits for a later timer (e.g. the window wait).
+    """
+    freezer.tick(timedelta(seconds=seconds))
+    async_fire_time_changed(hass)
+    await settle()
+
+
 @pytest.fixture
 def published(mqtt_mock) -> Callable[[], list[tuple]]:
     """Return the (topic, payload, qos, retain) tuples published through the MQTT mock so far."""
     return lambda: [call.args for call in mqtt_mock.async_publish.call_args_list]
+
+
+@pytest.fixture
+def window_sensor_registered(hass: HomeAssistant) -> None:
+    """Register SAT's window sensor before setup.
+
+    On a fresh install the climate fails to add (see docs/known-issues.md).
+    """
+    er.async_get(hass).async_get_or_create(BINARY_SENSOR_DOMAIN, DOMAIN, "test-window-sensor")
 
 
 @pytest.fixture

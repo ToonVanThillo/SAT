@@ -139,6 +139,13 @@ setting reads back as sent). Whether the boiler acts on it is out of scope.
   confirmed device state.
 - Backends supply channel definitions. Backends not yet migrated keep their
   current `async_set_*` path.
+- On unload the platforms are unloaded first; then the coordinator releases its
+  subscriptions, listeners and timers. When setup fails, no platform has been
+  set up, so only the coordinator releases them. A torn-down coordinator is
+  not started again; a reload creates a new one. Only one coordinator per
+  config entry receives device data.
+- The entry reloads only when its data or options change; other entry updates
+  (such as MQTT discovery bookkeeping) don't reload it.
 
 ## Diagnostics
 Each channel gets a diagnostic entity, "<Quantity> Synchro", for

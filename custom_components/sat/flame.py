@@ -80,6 +80,8 @@ class Flame:
         self._last_cycle_duration_seconds: Optional[float] = None
 
         self._has_completed_first_cycle: bool = False
+        # The current burn was already on at the first observation, so its duration is unknown
+        self._is_partial_burn: bool = False
         self._flame_on_monotonic: Optional[float] = None
         self._flame_off_monotonic: Optional[float] = None
 
@@ -166,6 +168,7 @@ class Flame:
         # Accumulate duty time since the last tick when the previous flame state was ON
         currently_active = bool(boiler_state.flame_active)
         previously_active = self._is_flame_active_internal()
+        is_first_observation = self._last_boiler_state is None
         elapsed = max(0.0, now - self._last_update_monotonic)
 
         # Update internal state tracking
@@ -177,14 +180,16 @@ class Flame:
 
         self._prune_duty_window(now)
 
-        # OFF -> ON
+        # OFF -> ON, or ON at the first observation, which only seeds the state
         if currently_active and not previously_active:
             self._flame_on_monotonic = now
             self._flame_off_monotonic = None
+            self._is_partial_burn = is_first_observation
             self._last_update_monotonic = now
             self._recompute_health(now)
 
-            _LOGGER.debug("Flame transition OFF->ON")
+            if not is_first_observation:
+                _LOGGER.debug("Flame transition OFF->ON")
 
             return
 
@@ -209,22 +214,28 @@ class Flame:
 
             self._flame_on_monotonic = None
             self._flame_off_monotonic = now
-            self._last_cycle_duration_seconds = duration
-
-            self._prune_cycles_window(now)
-            self._prune_median_window(now)
-            self._cycle_end_times_window.append(now)
-            self._on_durations_window.append((now, duration))
-
-            self._has_completed_first_cycle = True
             self._last_update_monotonic = now
 
-            _LOGGER.debug(
-                "Flame transition ON->OFF: duration=%.1fs, cycles_last_hour=%.1f, samples_4h=%d",
-                duration,
-                self._cycles_per_hour(now),
-                self.sample_count_4h,
-            )
+            # A partial burn adds no cycle and no duration sample
+            if self._is_partial_burn:
+                self._is_partial_burn = False
+                _LOGGER.debug("Flame transition ON->OFF: burn started before the first observation, not counted")
+            else:
+                self._last_cycle_duration_seconds = duration
+
+                self._prune_cycles_window(now)
+                self._prune_median_window(now)
+                self._cycle_end_times_window.append(now)
+                self._on_durations_window.append((now, duration))
+
+                self._has_completed_first_cycle = True
+
+                _LOGGER.debug(
+                    "Flame transition ON->OFF: duration=%.1fs, cycles_last_hour=%.1f, samples_4h=%d",
+                    duration,
+                    self._cycles_per_hour(now),
+                    self.sample_count_4h,
+                )
 
             self._recompute_health(now)
             return
