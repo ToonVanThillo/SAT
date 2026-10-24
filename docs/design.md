@@ -21,9 +21,11 @@ Each cycle has three phases, in this order:
    which write what is needed.
 
 In HVAC mode OFF the decide phase requests heater OFF and releases the control
-setpoint. In HEAT, when it requests heater OFF (the PWM off phase, a calculated
-setpoint that is too cold, or a PWM minimum setpoint at or below the cold
-threshold), it releases the control setpoint only on backends that switch
+setpoint. In HEAT, when no valve is open, it resets PWM and requests the
+minimum setpoint (10 °C), whatever the calculated setpoint; without radiators
+configured, the valves count as open. When it requests heater OFF in HEAT (no
+valve open, the PWM off phase, a calculated setpoint that is too cold, or a PWM
+minimum setpoint at or below the cold threshold), it releases the control setpoint only on backends that switch
 heating off with a separate command, and only once the heater channel has
 confirmed heating off; until then, and on a backend whose boiler is kept off by
 a low setpoint, it requests the computed setpoint (10 °C, or the PWM minimum
@@ -233,12 +235,14 @@ at the start of each cycle.
   invalid, the defaults apply and an error is logged.
 - N sets the cycle timing: the normal period 3600/N, the duty ranges in which
   the on-time is held at 180 s or the off-time at 180 s, the duty below which
-  no pulse starts, and the maximum number of pulses started per hour.
+  no pulse starts, and the maximum number of pulses started per hour (a PWM
+  reset restarts the count).
 - N is latched when a pulse starts and holds for that pulse and the off phase
   after it, until the next pulse starts or the off phase exceeds twice the
   latched normal period.
-- A started pulse lasts at least 180 s; only a reset, a disable, missing
-  values or an HVAC mode other than HEAT end it earlier.
+- A started pulse lasts at least 180 s; only a reset (also when no valve is
+  open), a disable, missing values or an HVAC mode other than HEAT end it
+  earlier.
 - Below the minimum duty no pulse starts, also when the flame is on: PWM does
   not take over burns it did not start.
 - No pulse starts while the boiler is producing hot water, nor within the
@@ -333,12 +337,17 @@ including burns SAT did not request.
     180 s.
 11. Timeline logging: traced boiler values on arrival, channel writes and edges
     at info, one cycle line per cycle at debug.
+<<<<<<< HEAD
 12. PWM starts no pulse below the minimum duty, also with the flame on.
 13. Burns classified as hot water or heating; flame statistics count heating
     burns only.
 14. Follow-ups to burns: last burn duration counts heating burns only, the
     setpoint adjuster pauses during hot water, PWM waits for hot water and the
     hot water delay.
+=======
+12. In HEAT, no open valve resets PWM and requests the minimum setpoint, so the
+    heater is OFF.
+>>>>>>> e7a3a7d (Turn the boiler off when no valve is open)
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the

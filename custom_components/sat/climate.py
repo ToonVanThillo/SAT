@@ -868,8 +868,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         self.async_write_ha_state()
 
-    def _control_setpoint(self, pwm_state: PWMState) -> tuple[float, str]:
-        """Decide the setpoint of the heating system based on the current mode and PWM state; returns the control setpoint to request and which rule applied."""
+    def _control_setpoint(self, pwm_state: PWMState, valves_open: bool) -> tuple[float, str]:
+        """Decide the control setpoint and the rule that applied, from the HVAC mode, the captured valve state and the PWM state."""
 
         # Check if the system is in HEAT mode
         if self.hvac_mode != HVACMode.HEAT:
@@ -877,6 +877,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self._calculated_setpoint = None
             self._setpoint = MINIMUM_SETPOINT
             reason = "hvac not heat"
+
+        elif not valves_open:
+            # No valve open, so no heat demand
+            self._setpoint = MINIMUM_SETPOINT
+            reason = "valves closed"
 
         elif not self.pulse_width_modulation_enabled or pwm_state.status == PWMStatus.IDLE:
             # Normal cycle without PWM
@@ -1037,7 +1042,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self.pwm.enable()
 
         # Pulse Width Modulation
-        if not self.pulse_width_modulation_enabled:
+        if not inputs.valves_open:
+            self.pwm.reset("valves closed")
+        elif not self.pulse_width_modulation_enabled:
             self.pwm.reset("not enabled")
         else:
             await self.pwm.update(flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint)
@@ -1046,7 +1053,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         # Control setpoint to request, unless released below once heater off is confirmed
         control_setpoint: float | Release
-        control_setpoint, setpoint_reason = self._control_setpoint(self.pwm.state)
+        control_setpoint, setpoint_reason = self._control_setpoint(self.pwm.state, inputs.valves_open)
 
         # Request the relative modulation value, if supported
         relative_modulation = await self._async_control_relative_modulation(snapshot)
@@ -1068,7 +1075,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             # Calculate the dynamic minimum setpoint
             self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.status)
 
-        heater_state = self._heater_state(self._setpoint, inputs.valves_open)
+        heater_state = self._heater_state(self._setpoint)
         if heater_state == DeviceState.OFF and self._coordinator.releases_control_setpoint_when_heater_off and self._coordinator.confirmed_value(Quantity.HEATER_STATE) == DeviceState.OFF:
             control_setpoint = RELEASE
 
@@ -1126,14 +1133,10 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         ]
 
     @staticmethod
-    def _heater_state(setpoint: float | None, valves_open: bool) -> DeviceState | None:
-        """Request OFF unless the setpoint is above COLD_SETPOINT; above it, ON if a valve is open, else None to keep the current target."""
+    def _heater_state(setpoint: float | None) -> DeviceState:
+        """Request OFF if the setpoint is missing or at most COLD_SETPOINT, else ON."""
         if setpoint is None or setpoint <= COLD_SETPOINT:
             return DeviceState.OFF
-
-        if not valves_open:
-            _LOGGER.debug("No valves open; keeping the heater state.")
-            return None
 
         return DeviceState.ON
 

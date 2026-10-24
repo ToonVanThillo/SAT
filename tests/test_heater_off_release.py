@@ -137,19 +137,27 @@ async def test_heater_on_after_release_is_a_first_write(hass: HomeAssistant, ent
 
 
 @pytest.mark.parametrize(*with_data({CONF_RADIATORS: [RADIATOR]}))
-async def test_no_open_valve_keeps_publishing_the_setpoint(hass: HomeAssistant, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
+async def test_no_open_valve_releases_the_setpoint(hass: HomeAssistant, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
     caplog.set_level(logging.INFO)
     await boiler_data(**IDLE | {"heatingoff": "on"})
     hass.states.async_set(RADIATOR, "heat", {"hvac_action": "idle", "hvac_modes": ["heat", "off"]})
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
-    for _ in range(3):
-        calls = await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
-        assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 35}')]
-        assert not any('"heatingoff"' in c[1] for c in calls)
-
+    # Cycle 1: the minimum setpoint is requested; the heater setting already reads as disabled, so it is taken as sent
+    calls = await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
+    assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
+    assert not any('"heatingoff"' in c[1] for c in calls)
     assert not logged(caplog, RELEASED)
+
+    # Next cycles: heater off is confirmed, so the setpoint is released
+    for _ in range(2):
+        calls = await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
+        assert selflowtemp(calls) == []
+        assert not any('"heatingoff"' in c[1] for c in calls)
+        assert setpoint_status(coordinator) == ChannelStatus.IDLE
+
+    assert logged(caplog, RELEASED)
 
 
 @pytest.mark.parametrize(*ems_entry())

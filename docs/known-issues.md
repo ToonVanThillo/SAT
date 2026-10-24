@@ -12,14 +12,13 @@ known bug".
 - `boiler_temperature_filtered` is not a filtered temperature but the mean
   absolute change between samples of the last 60 s. It is passed to the PIDs,
   which store it but never use it.
-- Closing all valves doesn't stop an active boiler; valves only gate turning
-  the heater on.
 - For OpenTherm over MQTT, the heater check compares with whether the boiler
   is heating (`device_active`), not with its heating-enabled setting. ON is
   resent every cycle while the boiler is enabled but idle and a valve is open.
-  In HVAC OFF, OFF is resent every cycle while the boiler is heating, but never
-  sent while it is enabled but idle. EMS-ESP compares with the `heatingoff`
-  setting. Plan step 8 addresses this.
+  Whenever heater OFF is requested (HVAC OFF, no valve open, the PWM off
+  phase), OFF is resent every cycle while the boiler is heating, but never sent
+  while it is enabled but idle. EMS-ESP compares with the `heatingoff` setting.
+  Plan step 8 addresses this.
 - The heating loop doesn't re-check the HVAC mode after its awaits, so a cycle
   that is running when the HVAC mode changes can still submit the previous
   mode's desired state afterwards; the next cycle corrects it.
@@ -40,7 +39,9 @@ known bug".
   cycle still decides from that read-back and keeps the maximum; the next
   requests 0 (or the floor) again. The max relative modulation is written twice
   per PWM cycle, and the boiler starts each ON phase at the maximum. Observed
-  on EMS-ESP. Plan step 6 addresses this.
+  on EMS-ESP. The same happens after the valves reopen: the boiler reads back
+  ≤ 10, so the first heating cycle requests the configured maximum. Plan step 6
+  addresses this.
 - Flame health stores no average on-time when a cycle completes: the ON→OFF
   transition doesn't record the duration, and the next ON phase seeds the
   average from its first seconds. PWM treats a missing or short (< 60 s)
@@ -49,7 +50,9 @@ known bug".
 - The boiler's anti-cycle period (burner min period, minimum 3 min) appears to
   start when heating is re-enabled, not when the flame goes out. In a field
   test the flame relit 3:13 after `heatingoff` was switched off, 6:20 after it
-  went out. PWM counts the wait as ON time. Needs further testing.
+  went out. PWM counts the wait as ON time. Needs further testing. On EMS-ESP,
+  valves closing and reopening toggle `heatingoff`, so if this holds, each
+  reopen may wait about 3 min before the flame lights.
 - The temperature tracker skips only a boiler setpoint of exactly
   `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
   heating off counts as a setpoint decrease and starts stabilisation mode.
@@ -82,6 +85,11 @@ known bug".
   flame health's PWM_SHORT check cannot fire then. With a fixed
   duty cycle the on time can read small but non-zero, and PWM_SHORT can still
   fire although the pulse runs 180 s. Follows from the minimum-pulse rule.
+- The "valves closed" PWM reset, like the other PWM resets, restarts the hourly
+  pulse count and disables PWM. Valves that open and close quickly can start
+  more than N pulses per hour: each reopen can start a pulse at once from
+  IDLE. With the dynamic minimum setpoint (version 2), PWM stays disabled
+  after the valves reopen until overshoot handling enables it again.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with
@@ -93,7 +101,9 @@ known bug".
   unavailable and only reported by a log warning, once per unreadable period of
   that entity; the next outside entity is used if one is readable. A radiator or
   room with a non-numeric target or current temperature is skipped by
-  `valves_open` without a log.
+  `valves_open` without a log. With every radiator unavailable or off,
+  `valves_open` is False, so the boiler is switched off (accepted; without
+  radiators configured the valves count as open).
 - With thermal comfort, `current_temperature` is None when the humidity sensor
   is unreadable, unavailable or not configured (the config flow allows thermal
   comfort without one), so HEAT stops after the snapshot phase although the
@@ -116,6 +126,12 @@ known bug".
   temperature sensors are no longer tracked: their listeners are released on
   removal, but `_sensors` keeps their IDs, so `async_track_sensor_temperature`
   returns early on re-add.
+- A radiator change that only touches its attributes, such as `hvac_action`
+  (a valve opening or closing), doesn't schedule the control loop:
+  `_async_main_climate_changed` only reacts to a change of the radiator's
+  state. The boiler follows the valves on the next 30 s tick, so at most 40 s
+  later; other triggers, such as a room or sensor change, can run the loop
+  sooner.
 
 ## Device communication
 - EMS-ESP on/off values are only recognised as "on"/"off"; with EMS-ESP's

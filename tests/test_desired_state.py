@@ -360,8 +360,8 @@ async def test_submit_uses_the_snapshot_not_later_data(hass, otgw, published):
     (COLD_SETPOINT, "heating", DeviceState.OFF),
     (COLD_SETPOINT - 5, "idle", DeviceState.OFF),
     (COLD_SETPOINT + 0.1, "heating", DeviceState.ON),
-    # Current behaviour, known bug: closing all valves doesn't stop an active boiler
-    (50.0, "idle", None),
+    # No valve open: heater OFF, whatever the setpoint
+    (50.0, "idle", DeviceState.OFF),
 ])
 async def test_cycle_heater_decision_table(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, spy, setpoint, hvac_action, expected):
     await boiler_data(**IDLE)
