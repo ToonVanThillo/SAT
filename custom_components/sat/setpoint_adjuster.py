@@ -39,9 +39,7 @@ class SetpointAdjuster:
         elif self._current > target_setpoint:
             self._current = max(self._current - DECREASE_STEP, target_setpoint)
 
-        _LOGGER.info(
-            "Setpoint updated: %.1f°C -> %.1f°C (Target: %.1f°C)",
-            previous_setpoint, self._current, target_setpoint
-        )
+        if self._current != previous_setpoint:
+            _LOGGER.info("Setpoint updated: %.1f°C -> %.1f°C (Target: %.1f°C)", previous_setpoint, self._current, target_setpoint)
 
         return self._current

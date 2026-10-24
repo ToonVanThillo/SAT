@@ -39,7 +39,8 @@ async def test_publish_failure_is_swallowed_and_setter_completes(hass, mqtt_mock
         await coordinator.async_set_control_setpoint(55)
 
     assert "Failed to publish MQTT command. Error: broker down" in caplog.text
-    assert "Set control boiler setpoint to 55" in caplog.text
+    # The setter went on to its second command after the first one failed
+    assert [call.args[1] for call in mqtt_mock.async_publish.call_args_list] == ["CS=55", "PM=25"]
 
 
 async def test_publish_in_simulation_publishes_nothing(hass, mqtt_mock, no_publish_delay):

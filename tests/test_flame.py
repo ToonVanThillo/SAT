@@ -12,10 +12,8 @@ from homeassistant.core import callback
 from custom_components.sat.const import CONF_MQTT_TOPIC
 from custom_components.sat.flame import Flame
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
-from tests.conftest import advance, boiler, current, flame_transitions
+from tests.conftest import TIMELINE, advance, boiler, current, flame_transitions
 from tests.const import IDLE, ems_entry
-
-LOGGER = "custom_components.sat.flame"
 
 
 def observe(flame: Flame, freezer: FrozenDateTimeFactory, seconds: float, flame_active: bool) -> None:
@@ -25,7 +23,7 @@ def observe(flame: Flame, freezer: FrozenDateTimeFactory, seconds: float, flame_
 
 @pytest.fixture
 def flame(caplog) -> Flame:
-    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     return Flame()
 
 
@@ -53,7 +51,7 @@ def test_a_burn_on_at_the_first_observation_adds_no_cycle(flame, freezer, caplog
     assert flame.sample_count_4h == 0
     assert flame.median_on_duration_seconds_4h is None
     assert flame.last_cycle_duration_seconds is None
-    assert flame_transitions(caplog) == ["Flame transition ON->OFF: burn started before the first observation, not counted"]
+    assert flame_transitions(caplog) == ["flame off (burn started before the first observation, not counted)"]
 
 
 def test_cycles_after_a_partial_burn_count_normally(flame, freezer, caplog):
@@ -68,8 +66,8 @@ def test_cycles_after_a_partial_burn_count_normally(flame, freezer, caplog):
     assert flame.sample_count_4h == 1
     assert flame.last_cycle_duration_seconds == 120
     assert flame_transitions(caplog) == [
-        "Flame transition OFF->ON",
-        "Flame transition ON->OFF: duration=120.0s, cycles_last_hour=1.0, samples_4h=1",
+        "flame on",
+        "flame off after 120.0s (cycles_last_hour=1.0, samples_4h=1)",
     ]
 
     # Completing a full cycle starts the average on time with the next burn
@@ -105,8 +103,8 @@ def test_a_cycle_after_flame_off_at_the_first_observation_counts(flame, freezer,
     assert flame.cycles_last_hour == 1
     assert flame.last_cycle_duration_seconds == 90
     assert flame_transitions(caplog) == [
-        "Flame transition OFF->ON",
-        "Flame transition ON->OFF: duration=90.0s, cycles_last_hour=1.0, samples_4h=1",
+        "flame on",
+        "flame off after 90.0s (cycles_last_hour=1.0, samples_4h=1)",
     ]
 
 
@@ -131,7 +129,7 @@ async def test_the_flame_is_updated_before_listeners_added_before_the_start(hass
 async def test_a_reload_restores_a_stored_burn_without_logging_a_transition(hass, entry, boiler_data, freezer, caplog):
     await boiler_data(**IDLE | {"burngas": "on"})
     await advance(hass, freezer, 10)
-    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     caplog.clear()
 
     await hass.config_entries.async_reload(entry.entry_id)
@@ -139,5 +137,5 @@ async def test_a_reload_restores_a_stored_burn_without_logging_a_transition(hass
     await boiler_data(**IDLE | {"burngas": "off"})
     await advance(hass, freezer, 10)
 
-    assert flame_transitions(caplog) == ["Flame transition ON->OFF: burn started before the first observation, not counted"]
+    assert flame_transitions(caplog) == ["flame off (burn started before the first observation, not counted)"]
     assert current(hass, entry).flame_active is False

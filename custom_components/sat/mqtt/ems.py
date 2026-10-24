@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Mapping
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -26,6 +26,9 @@ DATA_RETURN_TEMPERATURE = "rettemp"
 
 DATA_TAP_WATER_ACTIVE = "tapwateractive"
 DATA_CENTRAL_HEATING = "heatingactive"
+DATA_HEATING_PUMP = "heatingpump"
+DATA_SELECTED_BURNER_POWER = "selburnpow"
+DATA_SERVICE_CODE = "servicecode"
 DATA_BOILER_CAPACITY = "nompower"
 
 DATA_REL_MIN_MOD_LEVEL = "burnminpower"
@@ -52,6 +55,11 @@ def _encode_control_setpoint(value: float) -> int:
 
 class SatEmsMqttCoordinator(SatMqttCoordinator):
     """Class to manage to fetch data from the OTGW Gateway using MQTT."""
+
+    traced_keys: ClassVar[frozenset[str]] = frozenset({
+        DATA_HEATING_PUMP, DATA_CENTRAL_HEATING, DATA_TAP_WATER_ACTIVE, DATA_FLAME_ACTIVE,
+        DATA_CONTROL_SETPOINT, DATA_SELECTED_BURNER_POWER, DATA_SERVICE_CODE, DATA_HEATING_OFF,
+    })
 
     def __init__(self, hass: HomeAssistant, device_id: str, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
         super().__init__(hass, device_id, config_data, options, config_entry=config_entry)

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.util import dt as dt_util
 
+from . import timeline
 from .const import DIAGNOSTIC_WINDOW, WAITING_CYCLES_BEFORE_WARNING
 
 if TYPE_CHECKING:
@@ -57,6 +58,32 @@ class ChannelStatus(str, Enum):
     DRIFTED = "drifted"
     WRITE_ONLY = "write_only"
     READ_ONLY = "read_only"
+
+
+# Statuses whose transitions are logged on the timeline
+_PROBLEM_STATUSES: Final = frozenset({ChannelStatus.DRIFTED, ChannelStatus.OUT_OF_SYNC})
+
+
+class WriteKind(str, Enum):
+    SEND = "send"  # a value different from the last sent one
+    RESEND = "resend"  # the same value, because this cycle's verify found a mismatch
+    REWRITE = "rewrite"  # the same value, because the channel writes every cycle
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WriteRecord:
+    """A value written to the device in a reconcile, and why."""
+    quantity: Quantity
+    value: Any
+    kind: WriteKind
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StatusChange:
+    """A channel status change found by a verify."""
+    quantity: Quantity
+    previous: ChannelStatus
+    current: ChannelStatus
 
 
 def _identity(value: Any) -> Any:
@@ -193,24 +220,28 @@ class _Channel:
 
         self.state = state
 
-    async def async_write(self, requested: Any) -> None:
+    async def async_write(self, requested: Any) -> WriteRecord | None:
+        """Apply `requested` and write if needed; return the successful write, if any."""
         if self.definition.write is None:
             if requested not in (None, RELEASE) and not self._warned_read_only:
                 _LOGGER.warning("Channel %s is read-only; ignoring requested value %s", self.name, requested)
                 self._warned_read_only = True
-            return
+            return None
 
         rewrite, self._mismatch = self._mismatch, False
         if requested is RELEASE:
+            if self.state.target is not None:
+                timeline.release(self.name)
+
             # Without a sent value verify only records read-backs, so the next request is a first write against the latest one.
             self.state = replace(self.state, status=ChannelStatus.IDLE, target=None, sent=None, sent_at=None)
-            return
+            return None
 
         if requested is not None:
             self.state = replace(self.state, target=requested)
 
         if self.state.target is None:
-            return
+            return None
 
         write_only = self.definition.read is None
         # Before the first send, wait for a live read-back (recorded by verify); a matching one is taken as sent.
@@ -221,32 +252,45 @@ class _Channel:
             self._held_back += 1
             if self._held_back == WAITING_CYCLES_BEFORE_WARNING + 1:
                 _LOGGER.warning("Channel %s is waiting for a live read-back before its first write", self.name)
-            return
+            return None
 
         try:
             value = self.definition.encode(self.state.target)
             adopt = first_send and self._matches(self.state.read_back, value)
             changed = value != self.state.sent
-            needs_write = not adopt and (write_only or changed or rewrite or self.definition.write_every_cycle)
-            if needs_write:
+            kind: WriteKind | None = None
+            if not adopt:
+                if write_only or changed:
+                    kind = WriteKind.SEND if changed else WriteKind.REWRITE
+                elif rewrite:
+                    kind = WriteKind.RESEND
+                elif self.definition.write_every_cycle:
+                    kind = WriteKind.REWRITE
+
+            if kind is not None:
+                # Logged before the write, so the timeline shows the send before the backend's post-publish wait.
+                if kind == WriteKind.SEND:
+                    timeline.send(self.name, value, self.state.target)
+                elif kind == WriteKind.RESEND:
+                    timeline.resend(self.name, value, self.state.read_back)
+
                 await self.definition.write(value)
         except Exception as err:  # noqa: BLE001
             # A failed encode or write must never stop the other channels; the sent value stays as it was.
             _log_failure(self._write_failing, err, "Failed to write target %s to channel %s", self.state.target, self.name)
             self._write_failing = True
             self.state = replace(self.state, status=ChannelStatus.WRITE_ONLY if write_only else ChannelStatus.OUT_OF_SYNC)
-            return
+            return None
 
         self._write_failing = False
         if adopt:
             # Dated at the read-back, so only read-backs received after it verify the adopted value.
             self.state = replace(self.state, status=ChannelStatus.IN_SYNC, sent=value, sent_at=self.state.read_back_at)
-            return
+            return None
 
-        if not needs_write:
-            return
+        if kind is None:
+            return None
 
-        _LOGGER.debug("Wrote %s to channel %s", value, self.name)
         if write_only:
             status = ChannelStatus.WRITE_ONLY
         elif changed:
@@ -255,6 +299,13 @@ class _Channel:
             status = self.state.status
 
         self.state = replace(self.state, status=status, sent=value, sent_at=dt_util.utcnow())
+        return WriteRecord(quantity=self.definition.quantity, value=value, kind=kind)
+
+    def log_problem_transition(self, previous: ChannelStatus) -> None:
+        """Log on the timeline a status change from `previous` into or out of a problem status."""
+        current = self.state.status
+        if current != previous and (current in _PROBLEM_STATUSES or previous in _PROBLEM_STATUSES):
+            timeline.channel_status(self.name, previous, current, self.state.sent, self.state.read_back)
 
     def _matches(self, read_back: Any, sent: Any) -> bool:
         if isinstance(read_back, Real) and isinstance(sent, Real):
@@ -285,14 +336,27 @@ class Channels:
         """Read the channel's device setting; None if write-only (warns once) or if the read fails (logged)."""
         return self._channels[quantity].read(snapshot)
 
-    def verify(self, snapshot: BoilerSnapshot) -> None:
-        """Compare each channel's read-back with its last sent value; run right after the snapshot."""
-        for channel in self._channels.values():
+    def verify(self, snapshot: BoilerSnapshot) -> list[StatusChange]:
+        """Compare each channel's read-back with its last sent value; run right after the snapshot. Returns the status changes."""
+        changes: list[StatusChange] = []
+        for quantity, channel in self._channels.items():
+            previous = channel.state.status
             channel.verify(snapshot)
             channel.record_seen()
+            channel.log_problem_transition(previous)
+            if channel.state.status != previous:
+                changes.append(StatusChange(quantity=quantity, previous=previous, current=channel.state.status))
 
-    async def async_write(self, desired: DesiredState) -> None:
-        """Update targets from `desired` and write what is needed, channel by channel in definition order."""
+        return changes
+
+    async def async_write(self, desired: DesiredState) -> list[WriteRecord]:
+        """Update targets from `desired` and write what is needed, channel by channel in definition order. Returns the successful writes."""
+        records: list[WriteRecord] = []
         for quantity, channel in self._channels.items():
-            await channel.async_write(getattr(desired, quantity.value))
+            previous = channel.state.status
+            if (record := await channel.async_write(getattr(desired, quantity.value))) is not None:
+                records.append(record)
             channel.record_seen()
+            channel.log_problem_transition(previous)
+
+        return records

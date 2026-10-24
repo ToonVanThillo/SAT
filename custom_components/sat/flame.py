@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import logging
 from collections import deque
 from dataclasses import dataclass
 from statistics import median
 from time import monotonic
 from typing import Deque, Optional, Tuple, Iterable, TYPE_CHECKING
 
+from . import timeline
 from .const import BoilerStatus, FlameStatus, PWMStatus
 
 if TYPE_CHECKING:
     from .pwm import PWMState
     from .boiler import BoilerState
-
-_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,7 +187,7 @@ class Flame:
             self._recompute_health(now)
 
             if not is_first_observation:
-                _LOGGER.debug("Flame transition OFF->ON")
+                timeline.LOGGER.info("flame on")
 
             return
 
@@ -219,7 +217,7 @@ class Flame:
             # A partial burn adds no cycle and no duration sample
             if self._is_partial_burn:
                 self._is_partial_burn = False
-                _LOGGER.debug("Flame transition ON->OFF: burn started before the first observation, not counted")
+                timeline.LOGGER.info("flame off (burn started before the first observation, not counted)")
             else:
                 self._last_cycle_duration_seconds = duration
 
@@ -230,12 +228,7 @@ class Flame:
 
                 self._has_completed_first_cycle = True
 
-                _LOGGER.debug(
-                    "Flame transition ON->OFF: duration=%.1fs, cycles_last_hour=%.1f, samples_4h=%d",
-                    duration,
-                    self._cycles_per_hour(now),
-                    self.sample_count_4h,
-                )
+                timeline.LOGGER.info("flame off after %.1fs (cycles_last_hour=%.1f, samples_4h=%d)", duration, self._cycles_per_hour(now), self.sample_count_4h)
 
             self._recompute_health(now)
             return

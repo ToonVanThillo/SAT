@@ -201,9 +201,9 @@ def test_unchanged_n_is_not_logged(clock, caplog):
 async def test_pulse_start_logs_latched_n(clock, caplog):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(20)
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.pwm"):
+    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
         await start_pulse(pwm, clock)
-    assert "Starting new duty cycle (ON state) at 2 cycles per hour." in caplog.text
+    assert "pwm ON (pulse 1 this hour, 2 cycles/h)" in caplog.text
 
 
 async def test_n_change_mid_on_is_latched(clock):
@@ -438,10 +438,10 @@ async def test_cap_blocks_fifth_pulse_at_n4(clock, caplog):
     await run_pulses(pwm, clock, 0.5, 450, 7)  # t=3150, four pulses started at 0, 900, 1800, 2700
     assert pwm.status == PWMStatus.OFF
 
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.pwm"):
+    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
         await step(pwm, clock, 0.5, 450)  # t=3600, still inside the rolling hour
         assert pwm.status == PWMStatus.OFF
-        assert "Reached max cycles per hour (4)" in caplog.text
+        assert "pwm cycles cap reached (4/h)" in caplog.text
         await step(pwm, clock, 0.5, 1)  # new rolling hour
     assert pwm.status == PWMStatus.ON
 
@@ -456,10 +456,10 @@ async def test_cap_blocks_third_pulse_at_n2(clock, caplog):
     await run_pulses(pwm, clock, 0.5, 900, 1)  # OFF at t=2700
     assert pwm.status == PWMStatus.OFF
 
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.pwm"):
+    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
         await step(pwm, clock, 0.5, 900)  # t=3600, still inside the rolling hour
     assert pwm.status == PWMStatus.OFF
-    assert "Reached max cycles per hour (2)" in caplog.text
+    assert "pwm cycles cap reached (2/h)" in caplog.text
 
 
 async def test_cap_allows_third_pulse_at_n4(clock):
@@ -478,10 +478,10 @@ async def test_cap_uses_latched_n_not_the_new_one(clock, caplog):
     pwm.update_cycles_per_hour(-5)  # would allow N=4, but the latched N=2 governs this off phase
     assert pwm.cycles_per_hour == 2
 
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.pwm"):
+    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
         await step(pwm, clock, 0.5, 900)
     assert pwm.status == PWMStatus.OFF
-    assert "Reached max cycles per hour (2)" in caplog.text
+    assert "pwm cycles cap reached (2/h)" in caplog.text
 
 
 # Characterization with hard-coded values
@@ -529,10 +529,10 @@ async def test_idle_after_missing_values_uses_current_n(clock, caplog):
     assert pwm.status == PWMStatus.IDLE
     assert pwm.cycles_per_hour == 2
 
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.pwm"):
+    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
         await step(pwm, clock, 0.5, 5)
     assert pwm.status == PWMStatus.ON
-    assert "Starting new duty cycle (ON state) at 2 cycles per hour." in caplog.text
+    assert ", 2 cycles/h)" in caplog.text
 
 
 async def test_cap_uses_current_n_after_the_latch_expired(clock, caplog):
@@ -545,13 +545,13 @@ async def test_cap_uses_current_n_after_the_latch_expired(clock, caplog):
     pwm.update_cycles_per_hour(20)
     assert pwm.cycles_per_hour == 4
 
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.pwm"):
+    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
         await step(pwm, clock, 0.5, 200)  # t=1600, latched N=4 caps
-        assert "Reached max cycles per hour (4)" in caplog.text
+        assert "pwm cycles cap reached (4/h)" in caplog.text
         assert pwm.status == PWMStatus.OFF
         await step(pwm, clock, 0.5, 1600)  # off phase of exactly 2 * 3600 / 4 s: the latch still holds
         assert pwm.status == PWMStatus.OFF
         assert pwm.cycles_per_hour == 4
         await step(pwm, clock, 0.5, 1)  # latch expired, the current N=6 applies
     assert pwm.status == PWMStatus.ON
-    assert "Starting new duty cycle (ON state) at 6 cycles per hour." in caplog.text
+    assert ", 6 cycles/h)" in caplog.text

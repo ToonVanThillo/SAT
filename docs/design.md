@@ -43,6 +43,7 @@ supports the hot water setpoint, it keeps its direct write path.
   coordinator's update step (flame state, temperature history, tracker). It is a
   frozen dataclass filled from the coordinator's public properties and its raw
   device values (`readings`, by device key), so backends need no changes.
+- Each snapshot carries a cycle number, incremented per snapshot.
 - It holds the device and derived values the control logic reads (boiler state
   including device status, flame state) and the manufacturer, each read once per
   cycle. Capabilities (such as `supports_*`) and configured setpoint limits stay
@@ -131,9 +132,12 @@ setting reads back as sent). Whether the boiler acts on it is out of scope.
 
 ## Coordinator responsibilities
 - Store raw device data, build snapshots, own the channel set.
-- `async_submit(desired: DesiredState)` runs reconciliation.
-- `verify(snapshot)` runs right after the cycle's snapshot; backends with channels
-  verify the previous cycle's writes, others do nothing.
+- `async_submit(desired: DesiredState)` runs reconciliation and returns the
+  writes it made, each marked as a new value, a rewrite after a mismatch, or a
+  routine rewrite.
+- `verify(snapshot)` runs right after the cycle's snapshot; backends with
+  channels verify the previous cycle's writes and return the status changes,
+  others do nothing.
 - `confirmed_value(quantity)` gives a channel's sent value while the device has
   confirmed it (`IN_SYNC`), else None; the decide phase uses it to act only on
   confirmed device state.
@@ -171,6 +175,39 @@ are in the integration's diagnostics download, together with the config entry
 values with their receive times.
 
 Backends without channels have no synchro diagnostics until they migrate.
+
+## Timeline
+The logger `custom_components.sat.timeline` records what the boiler and SAT
+did, in order, so a run can be reconstructed from the log alone.
+- At info, as they happen: changes of the device values each backend declares
+  as traced (EMS-ESP: `heatingpump`, `heatingactive`, `tapwateractive`,
+  `burngas`, `selflowtemp`, `selburnpow`, `servicecode`, `heatingoff`), logged
+  on arrival and only on change, never for values restored from storage;
+  channel writes, logged before the backend sends: a new value (`send`, with
+  the requested value when encoding changed it), a rewrite after a mismatch
+  (`resend`, with the read-back) and a release; channel transitions into or
+  out of `DRIFTED` and `OUT_OF_SYNC`; PWM switching on, off or to idle (idle
+  with the reason); a pulse held on for the minimum pulse length beyond its
+  duty cycle; overshoot handling starting and ending (evaluated in HEAT cycles
+  with all temperatures); the PWM cycles-per-hour cap being reached and
+  lifted; flame on and off; the control setpoint released or requested again,
+  with the reason, on backends that release it (those with a control-setpoint
+  channel), also across HVAC mode changes; coordinator setup and removal.
+  Neither a release before the first request nor the first request itself is
+  logged. Rewrites of a channel that rewrites every cycle, or of a write-only
+  channel, are not logged at info.
+- At debug, one line per cycle after reconciliation, numbered with the
+  snapshot's cycle number: the inputs, boiler values, PWM state, duty and duty
+  rule, the setpoint rule, the desired state as requested, the writes as
+  encoded, and the verify transitions.
+- Flame lines come from the coordinator's debounced flame listener or its
+  update step, whichever runs first, so they can follow the matching `burngas`
+  line by up to the listener debounce.
+- Backends without channels log every write of the control setpoint, heater
+  state, max relative modulation and max setpoint as `send`, since they keep
+  no sent value until they migrate; the thermostat setpoint is not logged.
+- A failure to build a log line is caught and logged; it never stops the
+  control loop.
 
 ## Calculated setpoint sensor
 A "Calculated Setpoint" sensor shows the flow temperature the control loop
@@ -255,6 +292,8 @@ at the start of each cycle.
    requesting the minimum.
 10. PWM cycles per hour from the outside temperature, and a minimum pulse of
     180 s.
+11. Timeline logging: traced boiler values on arrival, channel writes and edges
+    at info, one cycle line per cycle at debug.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
@@ -276,4 +315,6 @@ at the start of each cycle.
 - Whether measurements (e.g. `curflowtemp`) need a freshness check or
   diagnostic based on their receive time.
 - MQTT backends record the send time after the 1 s wait that follows a
-  publish, so a read-back within that second is ignored.
+  publish, so a read-back within that second is ignored. The timeline logs
+  the send before that wait, so a read-back echo can follow a `send` line and
+  still be ignored.

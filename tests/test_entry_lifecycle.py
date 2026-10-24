@@ -30,6 +30,7 @@ from custom_components.sat.const import (
 from custom_components.sat.coordinator import SatDataUpdateCoordinatorFactory
 from custom_components.sat.fake import SatFakeCoordinator
 from tests.conftest import (
+    TIMELINE,
     advance,
     current,
     flame_transitions,
@@ -83,7 +84,7 @@ async def test_two_reloads_in_a_row_leave_one_receiving_coordinator(hass, entry,
     first = current(hass, entry)
     await hass.config_entries.async_reload(entry.entry_id)
     last = current(hass, entry)
-    caplog.set_level(logging.DEBUG, logger="custom_components.sat.flame")
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     caplog.clear()
 
     await boiler_data(**IDLE | {"burngas": "on"})
@@ -92,7 +93,7 @@ async def test_two_reloads_in_a_row_leave_one_receiving_coordinator(hass, entry,
     assert last.flame_active is True
     assert first.flame_active is False
     assert coordinator.flame_active is False
-    assert flame_transitions(caplog) == ["Flame transition OFF->ON"]
+    assert flame_transitions(caplog) == ["flame on"]
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -100,7 +101,7 @@ async def test_two_reloads_in_a_row_leave_one_receiving_coordinator(hass, entry,
 async def test_unload_then_setup_again_subscribes_once(hass, entry, coordinator, boiler_data, freezer, caplog):
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert await hass.config_entries.async_setup(entry.entry_id)
-    caplog.set_level(logging.DEBUG, logger="custom_components.sat.flame")
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     caplog.clear()
 
     await boiler_data(**IDLE | {"burngas": "on"})
@@ -108,7 +109,7 @@ async def test_unload_then_setup_again_subscribes_once(hass, entry, coordinator,
 
     assert current(hass, entry).flame_active is True
     assert coordinator.flame_active is False
-    assert flame_transitions(caplog) == ["Flame transition OFF->ON"]
+    assert flame_transitions(caplog) == ["flame on"]
 
 
 @pytest.mark.usefixtures("loop_entry")

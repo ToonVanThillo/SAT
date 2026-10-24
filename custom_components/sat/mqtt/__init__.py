@@ -128,14 +128,10 @@ class SatMqttCoordinator(SatDataUpdateCoordinator):
 
     async def _async_publish(self, payload: str, wait_time: float = 1.0) -> None:
         """Publish a command to the MQTT topic and give the device `wait_time` seconds to process it; raises if publishing fails. Publishes nothing in simulation."""
-        topic = self._get_topic_for_publishing()
-
-        _LOGGER.debug("Publishing MQTT command: payload='%s', topic='%s', simulation='%s'", payload, topic, self._simulation)
-
         if self._simulation:
             return
 
-        await mqtt.async_publish(hass=self.hass, topic=topic, payload=payload, qos=1)
+        await mqtt.async_publish(hass=self.hass, topic=self._get_topic_for_publishing(), payload=payload, qos=1)
 
         # Add a small delay to allow processing of the message
         await asyncio.sleep(wait_time)

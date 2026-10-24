@@ -51,12 +51,7 @@ class MinimumSetpoint:
             new_value=boiler_state.relative_modulation_level,
         )
 
-        if self._base_return_temperature.value is None:
-            _LOGGER.debug("Skip calculation: base return temperature is not set.")
-            return
-
-        if boiler_state.return_temperature is None:
-            _LOGGER.debug("Skip calculation: boiler return temperature is not available.")
+        if self._base_return_temperature.value is None or boiler_state.return_temperature is None:
             return
 
         if self._is_running_normal_mode(boiler_state, pwm_state):
@@ -68,8 +63,10 @@ class MinimumSetpoint:
             minimum_setpoint_candidate = self._configured_minimum_setpoint + adjustment
             new_minimum = clamp(minimum_setpoint_candidate, 30.0)
 
-        self._current_minimum_setpoint = update_state(previous=self._current_minimum_setpoint, new_value=new_minimum)
-        _LOGGER.debug("Calculated new minimum setpoint: %.1f°C.", self._current_minimum_setpoint.value)
+        previous = self._current_minimum_setpoint
+        self._current_minimum_setpoint = update_state(previous=previous, new_value=new_minimum)
+        if self._current_minimum_setpoint is not previous:
+            _LOGGER.debug("Calculated new minimum setpoint: %.1f°C.", self._current_minimum_setpoint.value)
 
     @property
     def current(self) -> float:

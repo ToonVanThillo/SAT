@@ -41,12 +41,15 @@ async def test_snapshot_copies_the_coordinator_values_and_is_immutable(hass, ent
     snapshot = coordinator.snapshot()
 
     assert snapshot == BoilerSnapshot(
+        cycle=snapshot.cycle,
         boiler=coordinator.boiler,
         flame=coordinator.flame,
         maximum_relative_modulation_value=coordinator.maximum_relative_modulation_value,
         manufacturer=coordinator.manufacturer,
         readings=coordinator.data.readings(),
     )
+    assert snapshot.cycle >= 1
+    assert coordinator.snapshot().cycle == snapshot.cycle + 1
     assert snapshot.boiler.is_active
     with pytest.raises(FrozenInstanceError):
         snapshot.boiler = None  # type: ignore[misc]

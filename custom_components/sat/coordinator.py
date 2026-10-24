@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 from abc import abstractmethod
+from collections.abc import Awaitable, Collection
 from dataclasses import dataclass
 from datetime import datetime
 from time import monotonic
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Mapping, Any, Optional, Callable
+from typing import TYPE_CHECKING, ClassVar, Mapping, Any, Optional, Callable
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -17,7 +18,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
-from .channels import RELEASE, Channels, ChannelState, ChannelStatus, DesiredState, Quantity
+from . import timeline
+from .channels import RELEASE, Channels, ChannelState, ChannelStatus, DesiredState, Quantity, StatusChange, WriteKind, WriteRecord
 from .const import *
 from .flame import Flame, FlameState
 from .helpers import calculate_default_maximum_setpoint, seconds_since
@@ -52,7 +54,8 @@ class Reading:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BoilerSnapshot:
-    """Immutable view of the boiler that the control logic reads during one cycle."""
+    """Immutable view of the boiler that the control logic reads during one cycle; `cycle` counts the coordinator's snapshots from 1."""
+    cycle: int
     boiler: BoilerState
     flame: FlameState
     maximum_relative_modulation_value: float | None
@@ -61,10 +64,12 @@ class BoilerSnapshot:
 
 
 class SatData(dict):
-    def __init__(self) -> None:
+    def __init__(self, traced_keys: Collection[str] = ()) -> None:
+        """`traced_keys` are the keys whose live changes are logged on the timeline on arrival."""
         super().__init__()
         self._is_dirty: bool = False
         self._received_at: dict[str, datetime | None] = {}
+        self._traced_keys: frozenset[str] = frozenset(traced_keys)
 
     def __setitem__(self, key, value):
         self.update({key: value})
@@ -74,8 +79,15 @@ class SatData(dict):
         received_at = None if restored else dt_util.utcnow()
 
         for key, value in other.items():
-            if self.get(key) != value:
+            previous = self.get(key)
+            if previous != value:
                 self._is_dirty = True
+
+            # Restored values aren't logged; a live value is when it changed or follows a missing or restored one, shown as unknown.
+            if received_at is not None and key in self._traced_keys:
+                previous_is_live = self._received_at.get(key) is not None
+                if previous != value or not previous_is_live:
+                    timeline.boiler_change(key, previous if previous_is_live else None, value)
 
             super().__setitem__(key, value)
             self._received_at[key] = received_at
@@ -131,10 +143,13 @@ class SatDataUpdateCoordinatorFactory:
 
 
 class SatDataUpdateCoordinator(DataUpdateCoordinator):
+    # Raw device keys whose changes are logged on the timeline on arrival
+    traced_keys: ClassVar[frozenset[str]] = frozenset()
+
     def __init__(self, hass: HomeAssistant, config_data: Mapping[str, Any], options: Mapping[str, Any] | None = None, *, config_entry: ConfigEntry | None) -> None:
         """Initialize."""
         super().__init__(hass, _LOGGER, config_entry=config_entry, name=DOMAIN)
-        self.data: SatData = SatData()
+        self.data: SatData = SatData(self.traced_keys)
 
         self._boiler_temperature_cold: Optional[float] = None
         self._boiler_temperatures: list[tuple[float, float]] = []
@@ -142,11 +157,14 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
         self._flame: Flame = Flame()
         self._snapshot: BoilerSnapshot | None = None
+        self._snapshot_count: int = 0
         # Set by backends migrated to channels; the others keep the `async_set_*` path.
         self._channels: Channels | None = None
         self._device_on_since: Optional[float] = None
         self._listeners_unsub: Optional[Callable[[], None]] = None
         self._started: bool = False
+        # Whether "coordinator set up" was logged on the timeline, so "coordinator removed" pairs with it
+        self._set_up_logged: bool = False
         self._torn_down: bool = False
 
         self._options: Mapping[str, Any] = options or {}
@@ -494,6 +512,8 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             return
 
         if not self._torn_down:
+            timeline.LOGGER.info("coordinator set up (%s)", self.device_type)
+            self._set_up_logged = True
             await self.async_submit(DesiredState(maximum_setpoint=self.maximum_setpoint))
 
     async def _async_start(self) -> None:
@@ -504,6 +524,10 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
         Backends call this first, then release their own resources. Safe to call more than once.
         """
+        if self._set_up_logged:
+            timeline.LOGGER.info("coordinator removed (%s)", self.device_type)
+            self._set_up_logged = False
+
         self._torn_down = True
 
         if self._flame_listener_unsub is not None:
@@ -516,7 +540,9 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
     def snapshot(self) -> BoilerSnapshot:
         """Read the device and derived values once; take it right after the update step of the cycle. The last one is kept for `async_submit`."""
+        self._snapshot_count += 1
         self._snapshot = BoilerSnapshot(
+            cycle=self._snapshot_count,
             boiler=self.boiler,
             flame=self.flame,
             maximum_relative_modulation_value=self.maximum_relative_modulation_value,
@@ -537,11 +563,14 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         return state.sent if state is not None and state.status == ChannelStatus.IN_SYNC else None
 
     @callback
-    def verify(self, snapshot: BoilerSnapshot) -> None:
-        """Verify the previous cycle's writes against `snapshot`; backends without channels have nothing to verify."""
-        if self._channels is not None:
-            self._channels.verify(snapshot)
-            self._async_send_channels_updated()
+    def verify(self, snapshot: BoilerSnapshot) -> list[StatusChange]:
+        """Verify the previous cycle's writes against `snapshot` and return the channel status changes; backends without channels have nothing to verify."""
+        if self._channels is None:
+            return []
+
+        changes = self._channels.verify(snapshot)
+        self._async_send_channels_updated()
+        return changes
 
     @callback
     def _async_send_channels_updated(self) -> None:
@@ -597,38 +626,46 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         elif self._boiler_temperature_cold is not None:
             self._boiler_temperature_cold = min(self.boiler_temperature, self._boiler_temperature_cold)
 
-    async def async_submit(self, desired: DesiredState) -> None:
+    async def async_submit(self, desired: DesiredState) -> list[WriteRecord]:
         """Reconcile `desired` through the channels, if the backend has them; fields without a channel are ignored.
 
         Otherwise apply every requested field through the matching setter, in a fixed order; None and RELEASE fields are skipped. The max
         relative modulation and heater state are skipped when the last snapshot shows them already applied; without a snapshot they are always written.
+        Returns the writes made; without channels, those of supported quantities (logged as sent), each as a `WriteKind.SEND`.
         """
         if self._channels is not None:
-            await self._channels.async_write(desired)
+            records = await self._channels.async_write(desired)
             self._async_send_channels_updated()
-            return
+            return records
 
         snapshot = self._snapshot
+        records = []
+
+        async def apply(quantity: Quantity, value: Any, setter: Callable[[Any], Awaitable[None]], supported: bool) -> None:
+            if supported:
+                timeline.send(quantity.value, value, value)
+                records.append(WriteRecord(quantity=quantity, value=value, kind=WriteKind.SEND))
+
+            await setter(value)
 
         if desired.control_setpoint is not None and desired.control_setpoint is not RELEASE:
-            await self.async_set_control_setpoint(desired.control_setpoint)
+            await apply(Quantity.CONTROL_SETPOINT, desired.control_setpoint, self.async_set_control_setpoint, self.supports_setpoint_management)
         if desired.maximum_relative_modulation is not None and (snapshot is None or snapshot.maximum_relative_modulation_value != desired.maximum_relative_modulation):
-            await self.async_set_control_max_relative_modulation(desired.maximum_relative_modulation)
+            await apply(Quantity.MAXIMUM_RELATIVE_MODULATION, desired.maximum_relative_modulation, self.async_set_control_max_relative_modulation, self.supports_relative_modulation_management)
         if desired.heater_state is not None and (snapshot is None or snapshot.boiler.is_active != (desired.heater_state == DeviceState.ON)):
-            await self.async_set_heater_state(desired.heater_state)
+            await apply(Quantity.HEATER_STATE, desired.heater_state, self.async_set_heater_state, True)
         if desired.maximum_setpoint is not None:
-            await self.async_set_control_max_setpoint(desired.maximum_setpoint)
+            await apply(Quantity.MAXIMUM_SETPOINT, desired.maximum_setpoint, self.async_set_control_max_setpoint, self.supports_maximum_setpoint_management)
         if desired.thermostat_setpoint is not None:
             await self.async_set_control_thermostat_setpoint(desired.thermostat_setpoint)
 
+        return records
+
     async def async_set_heater_state(self, state: DeviceState) -> None:
         """Set the state of the device heater."""
-        _LOGGER.info("Set central heater state %s", state)
 
     async def async_set_control_setpoint(self, value: float) -> None:
         """Control the boiler setpoint temperature for the device."""
-        if self.supports_setpoint_management:
-            _LOGGER.info("Set control boiler setpoint to %d°C", value)
 
     async def async_set_control_hot_water_setpoint(self, value: float) -> None:
         """Control the DHW setpoint temperature for the device."""
@@ -637,13 +674,9 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def async_set_control_max_setpoint(self, value: float) -> None:
         """Control the maximum setpoint temperature for the device."""
-        if self.supports_maximum_setpoint_management:
-            _LOGGER.info("Set maximum setpoint to %d°C", value)
 
     async def async_set_control_max_relative_modulation(self, value: int) -> None:
         """Control the maximum relative modulation for the device."""
-        if self.supports_relative_modulation_management:
-            _LOGGER.info("Set maximum relative modulation to %d%%", value)
 
     async def async_set_control_thermostat_setpoint(self, value: float) -> None:
         """Control the setpoint temperature for the thermostat."""

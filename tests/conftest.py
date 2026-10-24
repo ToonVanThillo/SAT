@@ -33,6 +33,8 @@ from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
 from custom_components.sat.mqtt.opentherm import SatOpenThermMqttCoordinator
 from tests.const import DEFAULT_USER_DATA
 
+TIMELINE = "custom_components.sat.timeline"
+
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
@@ -85,8 +87,8 @@ def current(hass: HomeAssistant, entry: MockConfigEntry) -> SatDataUpdateCoordin
 
 
 def flame_transitions(caplog: LogCaptureFixture) -> list[str]:
-    """Return the messages logged by the flame tracking."""
-    return [record.getMessage() for record in caplog.records if record.name == "custom_components.sat.flame"]
+    """Return the flame transitions logged on the timeline."""
+    return [message for record in caplog.records if record.name == TIMELINE and (message := record.getMessage()).startswith("flame ")]
 
 
 async def otgw_flame_on(hass: HomeAssistant) -> None:
