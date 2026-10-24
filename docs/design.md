@@ -190,7 +190,8 @@ did, in order, so a run can be reconstructed from the log alone.
   with the reason); a pulse held on for the minimum pulse length beyond its
   duty cycle; overshoot handling starting and ending (evaluated in HEAT cycles
   with all temperatures); the PWM cycles-per-hour cap being reached and
-  lifted; flame on and off; the control setpoint released or requested again,
+  lifted; flame on and off, the flame-off line with the burn's kind and the
+  hot-water signals seen; the control setpoint released or requested again,
   with the reason, on backends that release it (those with a control-setpoint
   channel), also across HVAC mode changes; coordinator setup and removal.
   Neither a release before the first request nor the first request itself is
@@ -236,9 +237,37 @@ at the start of each cycle.
   latched normal period.
 - A started pulse lasts at least 180 s; only a reset, a disable, missing
   values or an HVAC mode other than HEAT end it earlier.
+- Below the minimum duty no pulse starts, also when the flame is on: PWM does
+  not take over burns it did not start.
 - N is updated every cycle, also in HVAC mode OFF and when a temperature is
   missing. A diagnostic "PWM Cycles Per Hour" sensor (measurement, unit
   cycles/h, no attributes) shows the N in effect.
+
+## Burns
+A burn lasts from flame on to flame off. It is hot water if a hot-water signal
+is seen at any moment during it; otherwise it is heating, including burns SAT
+did not request.
+- Hot-water signals; any one suffices:
+  - the backend's hot water active flag (EMS-ESP: `tapwateractive`);
+  - EMS-ESP: `selburnpow` equal to the configured hot water burner power;
+  - EMS-ESP: `selflowtemp` equal to the configured hot water flow temperature
+    while it differs from the control setpoint SAT last sent.
+
+  None catches every short draw on its own; together they catch most.
+- The last two depend on boiler settings. Their configured values are unset by
+  default, and an unset value disables its signal. The burner power signal
+  holds only while SAT never writes that power itself: if the configured
+  maximum relative modulation is at or above it, a warning is logged and the
+  signal is not used. The flow temperature signal holds only while the
+  boiler's own heating temperature differs from the hot water flow
+  temperature.
+- Burns and their signals are tracked from device data as it arrives, not per
+  control cycle, so a burn shorter than a cycle is still seen and classified.
+- While a hot water burn is on, SAT treats the boiler as producing hot water,
+  also after the hot water active flag has gone off.
+- Flame statistics count heating burns only: cycles in the last hour, the 4 h
+  median on-time, the average on-time and the 15 min duty ratio. Flame health
+  and the setpoint adjuster read these.
 
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
@@ -294,6 +323,9 @@ at the start of each cycle.
     180 s.
 11. Timeline logging: traced boiler values on arrival, channel writes and edges
     at info, one cycle line per cycle at debug.
+12. PWM starts no pulse below the minimum duty, also with the flame on.
+13. Burns classified as hot water or heating; flame statistics count heating
+    burns only.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
@@ -318,3 +350,7 @@ at the start of each cycle.
   publish, so a read-back within that second is ignored. The timeline logs
   the send before that wait, so a read-back echo can follow a `send` line and
   still be ignored.
+- What flame health's `PWM_SHORT` should detect; a candidate is the boiler
+  ending a heating burn while a PWM pulse is still on.
+- After hot water the pump does not run, so the flow temperature stays high
+  and stale while the boiler sits idle; PWM computes its duty from it.

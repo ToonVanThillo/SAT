@@ -201,7 +201,7 @@ class PWM:
             self._lift_cycles_cap()
 
         thresholds = CycleThresholds.from_cycles_per_hour(cycles_per_hour)
-        self._duty_cycle = self._calculate_duty_cycle(requested_setpoint, boiler, thresholds)
+        self._duty_cycle = self._calculate_duty_cycle(requested_setpoint, thresholds)
 
         # Update boiler temperature if heater has just started up
         if self._status == PWMStatus.ON:
@@ -272,12 +272,12 @@ class PWM:
             self._cycles_capped = False
             timeline.LOGGER.info("pwm cycles cap lifted")
 
-    def _calculate_duty_cycle(self, requested_setpoint: float, boiler: "BoilerState", thresholds: CycleThresholds) -> Tuple[int, int]:
+    def _calculate_duty_cycle(self, requested_setpoint: float, thresholds: CycleThresholds) -> Tuple[int, int]:
         """Calculate the duty cycle in seconds based on the output of a PID controller and a heating curve value; records the branch that applied."""
-        on_time, off_time, self._duty_cycle_branch = self._duty_cycle_times(requested_setpoint, boiler, thresholds)
+        on_time, off_time, self._duty_cycle_branch = self._duty_cycle_times(requested_setpoint, thresholds)
         return int(on_time), int(off_time)
 
-    def _duty_cycle_times(self, requested_setpoint: float, boiler: "BoilerState", thresholds: CycleThresholds) -> tuple[float, float, str]:
+    def _duty_cycle_times(self, requested_setpoint: float, thresholds: CycleThresholds) -> tuple[float, float, str]:
         """Return the on and off times in seconds and a short name of the duty cycle branch that applied."""
         base_offset = self._heating_curve.base_offset
         boiler_temperature = self._last_boiler_temperature
@@ -293,12 +293,9 @@ class PWM:
         if not self._automatic_duty_cycle:
             return self._last_duty_cycle_percentage * self._cycles.maximum_time, (1 - self._last_duty_cycle_percentage) * self._cycles.maximum_time, "manual"
 
-        # Handle special low-duty cycle cases
+        # Below the minimum duty no pulse starts, whatever the flame state
         if self._last_duty_cycle_percentage < thresholds.duty_cycle_min:
-            if boiler.flame_active and not boiler.hot_water_active:
-                return thresholds.on_time_lower, thresholds.on_time_max - thresholds.on_time_lower, "low-duty, flame"
-
-            return 0, thresholds.on_time_max, "low-duty, no flame"
+            return 0, thresholds.on_time_max, "low-duty"
 
         # Mapping duty cycle ranges to on/off times
         if self._last_duty_cycle_percentage <= thresholds.duty_cycle_lower:
@@ -348,7 +345,7 @@ class PWM:
 
     @property
     def duty_cycle_branch(self) -> str | None:
-        """Short name of the duty cycle branch that applied in the last calculation, e.g. `mid` or `low-duty, no flame`; None after a reset."""
+        """Short name of the duty cycle branch that applied in the last calculation, e.g. `mid` or `low-duty`; None after a reset."""
         return self._duty_cycle_branch
 
     @property

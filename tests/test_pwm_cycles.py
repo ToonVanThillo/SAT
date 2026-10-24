@@ -410,18 +410,57 @@ async def test_no_heat_floor_in_pwm(clock, n, floor):
     assert pwm.state.duty_cycle[0] == 180  # type: ignore[index]
 
 
-async def test_low_duty_with_flame_active(clock):
+# Minimum duty: no pulse starts below it, whatever the flame state
+
+@pytest.mark.parametrize("flame_active", [False, True])
+@pytest.mark.parametrize("hot_water", [False, True])
+async def test_below_minimum_duty_never_starts_a_pulse(clock, flame_active, hot_water):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(20)  # N=2
-    await step(pwm, clock, 0.01, flame_active=True)
-    assert pwm.state.duty_cycle == (180, 3600 - 180)
+    pwm.update_cycles_per_hour(20)  # N=2, minimum duty 0.05
+    for _ in range(3):
+        await step(pwm, clock, 0.04, 4000, flame_active=flame_active, hot_water=hot_water)
+        assert pwm.status == PWMStatus.OFF
+        assert pwm.state.duty_cycle == (0, 3600)
+        assert pwm.duty_cycle_branch == "low-duty"
 
 
-async def test_low_duty_with_flame_active_and_hot_water(clock):
+@pytest.mark.parametrize("flame_active", [False, True])
+@pytest.mark.parametrize("hot_water", [False, True])
+async def test_just_above_minimum_duty_starts_a_pulse(clock, flame_active, hot_water):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(20)
-    await step(pwm, clock, 0.01, flame_active=True, hot_water=True)
-    assert pwm.state.duty_cycle == (0, 3600)
+    await step(pwm, clock, 0.06, flame_active=flame_active, hot_water=hot_water)
+    assert pwm.status == PWMStatus.ON
+    assert pwm.duty_cycle_branch == "low"
+
+
+async def test_tap_closed_flame_on_zero_duty_starts_no_pulse(clock):
+    pwm = make_pwm()
+    await step(pwm, clock, 0.0, flame_active=True, hot_water=False)
+    assert pwm.status == PWMStatus.OFF
+    assert pwm.duty_cycle_branch == "low-duty"
+
+    await step(pwm, clock, 0.0, 7200, flame_active=True, hot_water=False)
+    assert pwm.status == PWMStatus.OFF
+
+
+@pytest.mark.parametrize("flame_active", [False, True])
+async def test_running_pulse_held_to_180s_when_duty_falls_below_minimum(clock, flame_active):
+    pwm = make_pwm()
+    await start_pulse(pwm, clock, 0.5)
+
+    await step(pwm, clock, 0.0, 10, flame_active=flame_active)
+    assert pwm.status == PWMStatus.ON
+    assert pwm.duty_cycle_branch == "low-duty"
+    await step(pwm, clock, 0.0, 169, flame_active=flame_active)  # 179 s
+    assert pwm.status == PWMStatus.ON
+    await step(pwm, clock, 0.0, 1, flame_active=flame_active)  # 180 s
+    assert pwm.status == PWMStatus.OFF
+
+    # No new pulse while the duty stays below the minimum
+    for _ in range(3):
+        await step(pwm, clock, 0.0, 1000, flame_active=flame_active)
+        assert pwm.status == PWMStatus.OFF
 
 
 # Hourly cap
@@ -498,7 +537,7 @@ def test_thresholds_hard_coded(n, expected):
 
 @pytest.mark.parametrize(("temperature", "duty", "flame_active", "expected"), [
     (-5, 0.05, False, (0, 1800)),
-    (-5, 0.05, True, (180, 1620)),
+    (-5, 0.05, True, (0, 1800)),
     (-5, 0.15, False, (180, 1020)),
     (-5, 0.5, False, (450, 450)),
     (-5, 0.85, False, (1020, 180)),

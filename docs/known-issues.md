@@ -56,8 +56,8 @@ known bug".
 
 - A started PWM pulse is held ON for at least 180 s, while the exposed PWM
   duty cycle keeps following the recalculated on time. With automatic duty
-  cycle it can read 0 s on while the status is ON (the low-duty case without
-  flame), and flame health's PWM_SHORT check cannot fire then. With a fixed
+  cycle it can read 0 s on while the status is ON (the low-duty case), and
+  flame health's PWM_SHORT check cannot fire then. With a fixed
   duty cycle the on time can read small but non-zero, and PWM_SHORT can still
   fire although the pulse runs 180 s. Follows from the minimum-pulse rule.
 
