@@ -154,6 +154,10 @@ class SatSerialCoordinator(SatDataUpdateCoordinator):
     def flame_active(self) -> bool:
         return bool(self.get(DATA_SLAVE_FLAME_ON))
 
+    def _live_flame_active(self) -> bool | None:
+        # The gateway defaults stored on creation have no flame value; serial data is never restored
+        return None if (value := self.get(gw_vars.DATA_SLAVE_FLAME_ON)) is None else bool(value)
+
     def get(self, key: str) -> Optional[Any]:
         """Get the value for the given `key` from the boiler data."""
         return self.data[BOILER].get(key)

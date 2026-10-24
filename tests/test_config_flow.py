@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import voluptuous as vol
 from homeassistant.components import climate, mqtt
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -19,6 +20,8 @@ from custom_components.sat.config_flow import SatFlowHandler, SatOptionsFlowHand
 from custom_components.sat.const import (
     CONF_DEVICE,
     CONF_HEATING_SYSTEM,
+    CONF_HOT_WATER_BURNER_POWER,
+    CONF_HOT_WATER_FLOW_TEMPERATURE,
     CONF_INSIDE_SENSOR_ENTITY_ID,
     CONF_MAXIMUM_RELATIVE_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
@@ -86,6 +89,48 @@ async def test_maximum_relative_modulation_allows_above_100_only_for_ems(hass, m
     result = await options_flow(mode).async_step_advanced()
 
     assert selector_max(result, CONF_MAXIMUM_RELATIVE_MODULATION) == maximum
+
+
+HOT_WATER_OPTIONS = (CONF_HOT_WATER_BURNER_POWER, CONF_HOT_WATER_FLOW_TEMPERATURE)
+
+
+@pytest.mark.parametrize("mode, shown", [(MODE_MQTT_EMS, True), (MODE_MQTT_OPENTHERM, False)])
+async def test_advanced_shows_the_hot_water_options_only_for_ems(hass, mode, shown):
+    schema = (await options_flow(mode).async_step_advanced())["data_schema"].schema
+
+    for key in HOT_WATER_OPTIONS:
+        assert (key in schema) is shown
+
+
+async def test_the_hot_water_options_are_optional_and_unset_by_default(hass):
+    schema = (await options_flow(MODE_MQTT_EMS).async_step_advanced())["data_schema"].schema
+
+    for key in HOT_WATER_OPTIONS:
+        marker = next(marker for marker in schema if marker == key)
+        assert isinstance(marker, vol.Optional)
+        assert marker.description == {"suggested_value": None}
+
+
+async def test_a_cleared_hot_water_option_is_stored_unset(hass):
+    flow = SatOptionsFlowHandler(MockConfigEntry(domain=DOMAIN, data={CONF_MODE: MODE_MQTT_EMS, CONF_NAME: "Test"}, options={CONF_HOT_WATER_BURNER_POWER: 134, CONF_HOT_WATER_FLOW_TEMPERATURE: 45}))
+    assert {marker: marker.description for marker in (await flow.async_step_advanced())["data_schema"].schema if marker in HOT_WATER_OPTIONS} == {
+        CONF_HOT_WATER_BURNER_POWER: {"suggested_value": 134},
+        CONF_HOT_WATER_FLOW_TEMPERATURE: {"suggested_value": 45},
+    }
+
+    result = await flow.async_step_advanced({CONF_HOT_WATER_FLOW_TEMPERATURE: 50})
+
+    assert result["data"][CONF_HOT_WATER_BURNER_POWER] is None
+    assert result["data"][CONF_HOT_WATER_FLOW_TEMPERATURE] == 50
+
+
+@pytest.mark.parametrize("language", ["en", "de", "es", "fr", "it", "nl", "pt", "sk"])
+async def test_translations_hot_water_options_in_advanced(language):
+    steps = json.loads((Path(__file__).parent.parent / "custom_components/sat/translations" / f"{language}.json").read_text(encoding="utf-8"))["options"]["step"]
+
+    for section in ("data", "data_description"):
+        for key in HOT_WATER_OPTIONS:
+            assert key in steps["advanced"][section]
 
 
 @pytest.mark.parametrize("language", ["en", "de", "es", "fr", "it", "nl", "pt", "sk"])

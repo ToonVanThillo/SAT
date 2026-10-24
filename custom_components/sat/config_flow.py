@@ -724,6 +724,10 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_advanced(self, _user_input: dict[str, Any] | None = None):
         if _user_input is not None:
+            if self._config_entry.data.get(CONF_MODE) == MODE_MQTT_EMS:
+                # A cleared optional field is absent from the input; store it as unset
+                _user_input = {CONF_HOT_WATER_BURNER_POWER: None, CONF_HOT_WATER_FLOW_TEMPERATURE: None} | _user_input
+
             return await self.update_options(_user_input)
 
         options = await self.get_options()
@@ -762,6 +766,14 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
         if self._config_entry.data.get(CONF_MODE) == MODE_MQTT_EMS:
             schema[vol.Required(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, default=options[CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR])] = selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0, max=EMS_MAXIMUM_RELATIVE_MODULATION, step=1, unit_of_measurement="%")
+            )
+
+            # Optional and clearable: unset disables the hot-water signal
+            schema[vol.Optional(CONF_HOT_WATER_BURNER_POWER, description={"suggested_value": options[CONF_HOT_WATER_BURNER_POWER]})] = selector.NumberSelector(
+                selector.NumberSelectorConfig(min=1, max=EMS_MAXIMUM_RELATIVE_MODULATION, step=1, unit_of_measurement="%")
+            )
+            schema[vol.Optional(CONF_HOT_WATER_FLOW_TEMPERATURE, description={"suggested_value": options[CONF_HOT_WATER_FLOW_TEMPERATURE]})] = selector.NumberSelector(
+                selector.NumberSelectorConfig(min=30, max=90, step=1, unit_of_measurement="°C")
             )
 
         schema[vol.Required(CONF_SAMPLE_TIME, default=options[CONF_SAMPLE_TIME])] = selector.TimeSelector()

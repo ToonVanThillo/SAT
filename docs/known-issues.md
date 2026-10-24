@@ -54,6 +54,21 @@ known bug".
   `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
   heating off counts as a setpoint decrease and starts stabilisation mode.
 
+- On EMS-ESP, the hot water flow temperature signal can classify a heating burn
+  as hot water from a stale `selflowtemp`: while SAT's control setpoint equals
+  the configured hot water flow temperature and the flame is on, a payload that
+  still shows that `selflowtemp` after the channel's sent value has changed
+  counts as the signal. This happens when SAT moves its setpoint away from that
+  value (until the boiler reads back the new one) and when SAT releases the
+  setpoint on heater OFF (the sent value becomes none). The burn then counts as
+  hot water: it is left out of the flame statistics and SAT treats the boiler
+  as producing hot water until the flame goes off. Accepted.
+- `Flame.latest_on_time_seconds` returns the previous burn's on time until the
+  second update (listener or control cycle) of a new burn, because the first
+  update only starts the burn. It feeds the setpoint adjuster's `> 6` check in
+  PWM and flame health's STUCK_ON rule. Since burns are tracked on arrival, the
+  flame reports on before any update has run, so the stale value is visible
+  from the moment the flame goes on.
 - A started PWM pulse is held ON for at least 180 s, while the exposed PWM
   duty cycle keeps following the recalculated on time. With automatic duty
   cycle it can read 0 s on while the status is ON (the low-duty case), and
@@ -108,8 +123,11 @@ known bug".
   (10 °C, or the minimum setpoint); the simulator never heats towards the
   setpoint.
 - Device data that changes more often than every 5 s never notifies listeners,
-  because each update restarts the debounce. See the open question on cycle
-  triggering in the design doc.
+  because each update restarts the debounce. Burns are tracked as data arrives
+  (backends that store data per message: MQTT and serial), so their count,
+  durations and kind are not affected; the average on time and flame health
+  are only updated by the listener and the control cycle. See the open
+  question on cycle triggering in the design doc.
 - On EMS-ESP, a configured maximum relative modulation or floor above the
   boiler's own `burnmaxpower` maximum is never confirmed: the boiler reads
   back its own value, so the configured value is resent after every new

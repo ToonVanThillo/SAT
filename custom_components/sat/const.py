@@ -61,6 +61,8 @@ CONF_MINIMUM_SETPOINT = "minimum_setpoint"
 CONF_MAXIMUM_SETPOINT = "maximum_setpoint"
 CONF_MAXIMUM_RELATIVE_MODULATION = "maximum_relative_modulation"
 CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR = "maximum_relative_modulation_floor"
+CONF_HOT_WATER_BURNER_POWER = "hot_water_burner_power"
+CONF_HOT_WATER_FLOW_TEMPERATURE = "hot_water_flow_temperature"
 CONF_ROOMS = "secondary_climates"
 CONF_MQTT_TOPIC = "mqtt_topic"
 CONF_RADIATORS = "main_climates"
@@ -151,6 +153,9 @@ OPTIONS_DEFAULTS = {
     CONF_MINIMUM_SETPOINT: 10,
     CONF_MAXIMUM_RELATIVE_MODULATION: 100,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 0,
+    # EMS-ESP hot water signals; unset (None) disables the signal
+    CONF_HOT_WATER_BURNER_POWER: None,
+    CONF_HOT_WATER_FLOW_TEMPERATURE: None,
     CONF_FORCE_PULSE_WIDTH_MODULATION: False,
 
     CONF_MINIMUM_CONSUMPTION: 0,

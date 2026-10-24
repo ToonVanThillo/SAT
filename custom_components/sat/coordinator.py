@@ -21,7 +21,7 @@ from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
 from . import timeline
 from .channels import RELEASE, Channels, ChannelState, ChannelStatus, DesiredState, Quantity, StatusChange, WriteKind, WriteRecord
 from .const import *
-from .flame import Flame, FlameState
+from .flame import Flame, FlameState, HotWaterSignal
 from .helpers import calculate_default_maximum_setpoint, seconds_since
 from .manufacturer import Manufacturer, ManufacturerFactory
 from .manufacturers.geminox import Geminox
@@ -96,6 +96,10 @@ class SatData(dict):
         self._is_dirty = True
         super().__delitem__(key)
         self._received_at.pop(key, None)
+
+    def live_value(self, key: str) -> Any:
+        """Return the value of `key` if it was received live; None if it is missing or restored from storage."""
+        return self.get(key) if self._received_at.get(key) is not None else None
 
     def readings(self) -> Mapping[str, Reading]:
         """Return a read-only copy of the current values with their receive times."""
@@ -177,7 +181,9 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         if config_data.get(CONF_MANUFACTURER) is not None:
             self._manufacturer = ManufacturerFactory.resolve_by_name(config_data.get(CONF_MANUFACTURER))
 
-        self._flame_listener_unsub: Callable[[], None] | None = self.async_add_listener(lambda: self._flame.update(boiler_state=self.boiler))
+        self._flame_listener_unsub: Callable[[], None] | None = self.async_add_listener(
+            lambda: self._flame.update(boiler_state=self.boiler, hot_water_signals=self._hot_water_signals())
+        )
 
     @property
     @abstractmethod
@@ -195,7 +201,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         if self.boiler_temperature is None:
             return BoilerStatus.INSUFFICIENT_DATA
 
-        if self.hot_water_active:
+        if self.producing_hot_water:
             return BoilerStatus.HOT_WATER
 
         if self.setpoint is None or self.setpoint <= MINIMUM_SETPOINT:
@@ -249,7 +255,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
     def boiler(self) -> BoilerState:
         return BoilerState(
             flame_active=self.flame_active,
-            hot_water_active=self.hot_water_active,
+            hot_water_active=self.producing_hot_water,
 
             status=self.device_status,
             is_active=self.device_active,
@@ -307,7 +313,26 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
     @property
     def hot_water_active(self) -> bool:
+        """The backend's hot water active flag as the device reports it; the control logic reads `producing_hot_water`."""
         return False
+
+    @property
+    def producing_hot_water(self) -> bool:
+        """Whether SAT treats the boiler as producing hot water: the hot water active flag is on, or the flame is on in a burn
+        classified as hot water, also after the flag has gone off. `device_status` and `boiler` use this."""
+        return self.hot_water_active or self._flame.hot_water_burn
+
+    def _live_flame_active(self) -> bool | None:
+        """The flame state in the live device data; None while it is unknown (missing, or restored from storage), so arrival
+        tracking skips the update. By default unknown: backends that store device data per message override this."""
+        return None
+
+    def _hot_water_signals(self) -> frozenset[HotWaterSignal]:
+        """The hot-water signals the device data shows now, from live values only; by default the hot water active flag.
+
+        Backends that restore values from storage or have more signals override this.
+        """
+        return frozenset({HotWaterSignal.FLAG}) if self.hot_water_active else frozenset()
 
     @property
     def hot_water_setpoint(self) -> Optional[float]:
@@ -581,7 +606,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
     async def async_control_heating_loop(self, climate: Optional[SatClimate] = None, pwm_state: Optional[PWMState] = None, _time=None) -> None:
         """Control the heating loop for the device."""
         # Update Flame State
-        self._flame.update(boiler_state=self.boiler, pwm_state=pwm_state)
+        self._flame.update(boiler_state=self.boiler, pwm_state=pwm_state, hot_water_signals=self._hot_water_signals())
 
         # Update Device State
         if not self.device_active:
@@ -702,6 +727,11 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Update the internal data store with new values
         self.data.update(data, restored=restored)
+
+        # Burns are tracked from live data as it arrives, so a burn shorter than the listener debounce or a cycle is still seen and classified.
+        # Only once the flame itself is known: a missing flame is no observation, so a burn running at startup stays partial.
+        if not restored and (flame_active := self._live_flame_active()) is not None:
+            self._flame.observe(flame_active, self._hot_water_signals())
 
         if self.data.is_dirty():
             # Cancel previous scheduled run, if any

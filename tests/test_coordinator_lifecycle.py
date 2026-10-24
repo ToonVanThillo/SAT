@@ -126,7 +126,8 @@ async def test_a_torn_down_coordinator_ignores_data_and_arms_no_notification(has
 
 
 async def test_a_torn_down_coordinator_no_longer_updates_the_flame_on_notify(hass, ems):
-    ems.async_set_updated_data({"burngas": "on"})
+    # Stored past the arrival path, which tracks the flame itself, so only the flame listener could see it
+    ems.data.update({"burngas": "on"})
     await ems.async_will_remove_from_hass()
 
     ems.async_update_listeners()

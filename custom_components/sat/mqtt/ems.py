@@ -9,8 +9,15 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from ..channels import ChannelDefinition, Channels, Quantity
-from ..const import CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS
+from ..const import (
+    CONF_HOT_WATER_BURNER_POWER,
+    CONF_HOT_WATER_FLOW_TEMPERATURE,
+    CONF_MAXIMUM_RELATIVE_MODULATION,
+    CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
+    OPTIONS_DEFAULTS,
+)
 from ..coordinator import BoilerSnapshot, DeviceState, Reading
+from ..flame import HotWaterSignal
 from ..helpers import float_value
 from . import SatMqttCoordinator
 
@@ -67,13 +74,29 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         floor = int(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR]))
         heater_states = {DATA_OFF: DeviceState.ON, DATA_ON: DeviceState.OFF}
 
+        # Hot-water signal values from the boiler's configuration; None disables the signal
+        self._hot_water_burner_power: float | None = float_value(self._options.get(CONF_HOT_WATER_BURNER_POWER))
+        self._hot_water_flow_temperature: float | None = float_value(self._options.get(CONF_HOT_WATER_FLOW_TEMPERATURE))
+        # The control setpoints being published, one entry per write in progress; the channel records a value as sent only after
+        # the wait that follows its publish
+        self._control_setpoints_publishing: list[int] = []
+
+        # The highest max relative modulation SAT writes: the configured maximum, or the floor it raises lower values to
+        maximum_relative_modulation = max(float(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION])), floor)
+        if self._hot_water_burner_power is not None and maximum_relative_modulation >= self._hot_water_burner_power:
+            _LOGGER.warning(
+                "The hot water burner power (%g%%) is not used to detect hot water: SAT may write a maximum relative modulation of %g%% (the configured maximum or floor), so heating can run at that power too",
+                self._hot_water_burner_power, maximum_relative_modulation,
+            )
+            self._hot_water_burner_power = None
+
         self._channels = Channels([
             # While heating is enabled, EMS-ESP falls back to the panel value about a minute after the last write; under `heatingoff` it sends 0 itself.
             ChannelDefinition(
                 quantity=Quantity.CONTROL_SETPOINT,
                 read=lambda snapshot: _reading(snapshot, DATA_CONTROL_SETPOINT, float_value),
                 encode=_encode_control_setpoint,
-                write=lambda value: self._async_write_command(DATA_CONTROL_SETPOINT, value),
+                write=self._async_write_control_setpoint,
                 write_every_cycle=True,
             ),
             ChannelDefinition(
@@ -172,6 +195,36 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
 
     def get_tracked_entities(self) -> list[str]:
         return [DATA_BOILER_DATA]
+
+    def _live_flame_active(self) -> bool | None:
+        return None if (value := self.data.live_value(DATA_FLAME_ACTIVE)) is None else value == DATA_ON
+
+    def _hot_water_signals(self) -> frozenset[HotWaterSignal]:
+        """The hot-water signals in the live boiler data: `tapwateractive` on; `selburnpow` at the configured hot water burner power;
+        `selflowtemp` at the configured hot water flow temperature while that is not the control setpoint SAT last sent or is sending."""
+        signals: set[HotWaterSignal] = set()
+
+        if self.data.live_value(DATA_TAP_WATER_ACTIVE) == DATA_ON:
+            signals.add(HotWaterSignal.FLAG)
+
+        if self._hot_water_burner_power is not None and float_value(self.data.live_value(DATA_SELECTED_BURNER_POWER)) == self._hot_water_burner_power:
+            signals.add(HotWaterSignal.BURNER_POWER)
+
+        if self._hot_water_flow_temperature is not None:
+            flow_temperature = float_value(self.data.live_value(DATA_CONTROL_SETPOINT))
+            sent = (self.channel_states[Quantity.CONTROL_SETPOINT].sent, *self._control_setpoints_publishing)
+            if flow_temperature == self._hot_water_flow_temperature and flow_temperature not in sent:
+                signals.add(HotWaterSignal.FLOW_TEMPERATURE)
+
+        return frozenset(signals)
+
+    async def _async_write_control_setpoint(self, value: int) -> None:
+        """Publish the control setpoint; raises if publishing fails."""
+        self._control_setpoints_publishing.append(value)
+        try:
+            await self._async_write_command(DATA_CONTROL_SETPOINT, value)
+        finally:
+            self._control_setpoints_publishing.remove(value)
 
     async def _async_write_command(self, command: str, value: Any) -> None:
         """Publish an EMS-ESP boiler command; raises if publishing fails."""

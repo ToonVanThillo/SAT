@@ -201,9 +201,10 @@ did, in order, so a run can be reconstructed from the log alone.
   snapshot's cycle number: the inputs, boiler values, PWM state, duty and duty
   rule, the setpoint rule, the desired state as requested, the writes as
   encoded, and the verify transitions.
-- Flame lines come from the coordinator's debounced flame listener or its
-  update step, whichever runs first, so they can follow the matching `burngas`
-  line by up to the listener debounce.
+- Flame lines are logged as device data arrives, right after the matching
+  `burngas` line. Backends without a per-arrival update (ESPHome, switch) log
+  them from the coordinator's flame listener or its update step, whichever
+  runs first.
 - Backends without channels log every write of the control setpoint, heater
   state, max relative modulation and max setpoint as `send`, since they keep
   no sent value until they migrate; the thermostat setpoint is not logged.
@@ -239,19 +240,23 @@ at the start of each cycle.
   values or an HVAC mode other than HEAT end it earlier.
 - Below the minimum duty no pulse starts, also when the flame is on: PWM does
   not take over burns it did not start.
+- No pulse starts while the boiler is producing hot water, nor within the
+  configured hot water delay after a hot water burn ends (default 0 s). A
+  pulse that is already on is not affected.
 - N is updated every cycle, also in HVAC mode OFF and when a temperature is
   missing. A diagnostic "PWM Cycles Per Hour" sensor (measurement, unit
   cycles/h, no attributes) shows the N in effect.
 
 ## Burns
 A burn lasts from flame on to flame off. It is hot water if a hot-water signal
-is seen at any moment during it; otherwise it is heating, including burns SAT
-did not request.
+is seen in any device update while the flame is on, including the update that
+switches it on but not the one that switches it off; otherwise it is heating,
+including burns SAT did not request.
 - Hot-water signals; any one suffices:
   - the backend's hot water active flag (EMS-ESP: `tapwateractive`);
   - EMS-ESP: `selburnpow` equal to the configured hot water burner power;
   - EMS-ESP: `selflowtemp` equal to the configured hot water flow temperature
-    while it differs from the control setpoint SAT last sent.
+    while it differs from the control setpoint SAT last sent or is sending.
 
   None catches every short draw on its own; together they catch most.
 - The last two depend on boiler settings. Their configured values are unset by
@@ -266,8 +271,9 @@ did not request.
 - While a hot water burn is on, SAT treats the boiler as producing hot water,
   also after the hot water active flag has gone off.
 - Flame statistics count heating burns only: cycles in the last hour, the 4 h
-  median on-time, the average on-time and the 15 min duty ratio. Flame health
-  and the setpoint adjuster read these.
+  median on-time, the average on-time, the 15 min duty ratio and the last
+  burn's duration. Flame health and the setpoint adjuster read these; the
+  setpoint adjuster does not adjust during a hot water burn.
 
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
@@ -326,6 +332,9 @@ did not request.
 12. PWM starts no pulse below the minimum duty, also with the flame on.
 13. Burns classified as hot water or heating; flame statistics count heating
     burns only.
+14. Follow-ups to burns: last burn duration counts heating burns only, the
+    setpoint adjuster pauses during hot water, PWM waits for hot water and the
+    hot water delay.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the

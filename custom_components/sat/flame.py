@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from collections.abc import Collection
+from dataclasses import dataclass, field
+from enum import Enum
 from statistics import median
 from time import monotonic
 from typing import Deque, Optional, Tuple, Iterable, TYPE_CHECKING
@@ -30,8 +32,39 @@ class FlameState:
     median_on_duration_seconds_4h: Optional[float]
 
 
+class HotWaterSignal(str, Enum):
+    """A sign in the device data that the boiler produces hot water; the value is its name on the timeline."""
+    FLAG = "flag"  # the backend's hot water active flag (EMS-ESP: `tapwateractive`)
+    BURNER_POWER = "burner_power"  # EMS-ESP: `selburnpow` at the configured hot water burner power
+    FLOW_TEMPERATURE = "flow_temperature"  # EMS-ESP: `selflowtemp` at the configured hot water flow temperature, not sent by SAT
+
+
+@dataclass(slots=True)
+class _Burn:
+    """The burn in progress: from flame on to flame off. It is hot water once a hot-water signal is seen while it is on, else heating."""
+    started: float  # monotonic time the flame went on
+    partial: bool  # already on at the first observation, so its duration is unknown
+    average_before: float | None  # the average on time when it started, restored if it turns out to be hot water
+    signals: set[HotWaterSignal] = field(default_factory=set)
+    ticked: bool = False  # whether `update` has seen it; the first update only starts it
+
+    @property
+    def hot_water(self) -> bool:
+        return bool(self.signals)
+
+    def describe(self) -> str:
+        """Its kind for the timeline: `heating`, or `hot water` with the signals seen, e.g. `hot water (flag, burner_power)`."""
+        if not self.signals:
+            return "heating"
+
+        return "hot water (" + ", ".join(signal.value for signal in HotWaterSignal if signal in self.signals) + ")"
+
+
 class Flame:
-    """Tracks boiler flame on/off, maintains rolling statistics, and classifies health."""
+    """Tracks boiler flame on/off and its burns, maintains rolling statistics of heating burns, and classifies health.
+
+    `observe` tracks burns from device data as it arrives; `update` does the same and also updates the average on time and the health.
+    """
 
     # Thresholds
     MAX_CYCLES_PER_HOUR_PWM: float = 8.0
@@ -78,9 +111,10 @@ class Flame:
         self._last_cycle_duration_seconds: Optional[float] = None
 
         self._has_completed_first_cycle: bool = False
-        # The current burn was already on at the first observation, so its duration is unknown
-        self._is_partial_burn: bool = False
-        self._flame_on_monotonic: Optional[float] = None
+        # The observed flame state; None before the first observation
+        self._flame_active: bool | None = None
+        # The burn in progress, while the flame is on
+        self._burn: _Burn | None = None
         self._flame_off_monotonic: Optional[float] = None
 
         # Stored states
@@ -102,32 +136,31 @@ class Flame:
 
     @property
     def is_active(self) -> bool:
-        return self._is_flame_active_internal()
+        return bool(self._flame_active)
 
     @property
     def is_inactive(self) -> bool:
-        return not self._is_flame_active_internal()
+        return not self._flame_active
+
+    @property
+    def hot_water_burn(self) -> bool:
+        """Whether the flame is on in a burn classified as hot water."""
+        return self._burn is not None and self._burn.hot_water
 
     @property
     def on_since(self) -> Optional[float]:
-        if self._is_flame_active_internal() and self._flame_on_monotonic is not None:
-            return self._flame_on_monotonic
-
-        return None
+        return self._burn.started if self._burn is not None else None
 
     @property
     def off_since(self) -> Optional[float]:
-        if not self._is_flame_active_internal() and self._flame_off_monotonic is not None:
+        if not self._flame_active and self._flame_off_monotonic is not None:
             return self._flame_off_monotonic
 
         return None
 
     @property
     def latest_on_time_seconds(self) -> Optional[float]:
-        if self._is_flame_active_internal() and self._flame_on_monotonic is not None:
-            return self._latest_on_time_seconds
-
-        return None
+        return self._latest_on_time_seconds if self._burn is not None else None
 
     @property
     def average_on_time_seconds(self) -> Optional[float]:
@@ -155,92 +188,119 @@ class Flame:
         _, count = self._median_on_duration(monotonic())
         return count
 
-    def update(self, boiler_state: BoilerState, pwm_state: Optional[PWMState] = None) -> None:
+    def observe(self, flame_active: bool, hot_water_signals: Collection[HotWaterSignal] = ()) -> None:
+        """Track burns from device data as it arrives, live values only: `hot_water_signals` are the signals the data shows now.
 
+        Opens a burn when the flame goes on, classifies it as hot water once a signal is seen while it is on (including in the
+        data that switches it on), and records it when the flame goes off; heating burns only count in the statistics.
+        """
+        self._observe(monotonic(), flame_active, hot_water_signals)
+
+    def update(self, boiler_state: BoilerState, pwm_state: Optional[PWMState] = None, hot_water_signals: Collection[HotWaterSignal] = ()) -> None:
+        """Observe the flame of `boiler_state` as `observe` does, update the average on time of a heating burn in progress and recompute the health.
+
+        `boiler_state.hot_water_active` is only read by the health; the classification uses `hot_water_signals`.
+        """
         now = monotonic()
 
-        # Initialize the last update time if this is the first update
-        if self._last_update_monotonic is None:
-            self._last_update_monotonic = now
-
-        # Accumulate duty time since the last tick when the previous flame state was ON
-        currently_active = bool(boiler_state.flame_active)
-        previously_active = self._is_flame_active_internal()
-        is_first_observation = self._last_boiler_state is None
-        elapsed = max(0.0, now - self._last_update_monotonic)
-
-        # Update internal state tracking
         self._last_boiler_state = boiler_state
         self._last_pulse_width_modulation_state = pwm_state or self._last_pulse_width_modulation_state
 
-        if previously_active and elapsed > 0.0:
-            self._on_deltas_window.append((now, elapsed))
+        self._observe(now, bool(boiler_state.flame_active), hot_water_signals)
+
+        if (burn := self._burn) is not None:
+            # The first update of a burn only starts it
+            if not burn.ticked:
+                burn.ticked = True
+            else:
+                self._latest_on_time_seconds = now - burn.started
+
+                if self._has_completed_first_cycle and not burn.hot_water:
+                    self._average_on_time_seconds = (
+                        self._latest_on_time_seconds
+                        if self._average_on_time_seconds is None
+                        else (1.0 - self._smoothing_alpha) * self._average_on_time_seconds + self._smoothing_alpha * self._latest_on_time_seconds
+                    )
+
+        self._recompute_health(now)
+
+    def _observe(self, now: float, flame_active: bool, hot_water_signals: Collection[HotWaterSignal]) -> None:
+        """Apply the flame state and hot-water signals seen at `now`: open or close a burn when the flame switches, classify the burn in
+        progress, and add a heating burn's on time since the previous observation to the duty window."""
+        previously_active = self._flame_active
+        elapsed = 0.0 if self._last_update_monotonic is None else max(0.0, now - self._last_update_monotonic)
+
+        self._flame_active = flame_active
+        self._last_update_monotonic = now
+
+        # OFF -> ON, or ON at the first observation, which only seeds the state
+        if flame_active and not previously_active:
+            self._burn = _Burn(started=now, partial=previously_active is None, average_before=self._average_on_time_seconds)
+            self._flame_off_monotonic = None
+
+            if previously_active is not None:
+                timeline.LOGGER.info("flame on")
+
+        if (burn := self._burn) is not None:
+            if flame_active:
+                self._classify(burn, hot_water_signals)
+
+            if previously_active and elapsed > 0.0 and not burn.hot_water:
+                self._on_deltas_window.append((now, elapsed))
 
         self._prune_duty_window(now)
 
-        # OFF -> ON, or ON at the first observation, which only seeds the state
-        if currently_active and not previously_active:
-            self._flame_on_monotonic = now
-            self._flame_off_monotonic = None
-            self._is_partial_burn = is_first_observation
-            self._last_update_monotonic = now
-            self._recompute_health(now)
-
-            if not is_first_observation:
-                timeline.LOGGER.info("flame on")
-
-            return
-
-        # ON -> ON
-        if currently_active and self._flame_on_monotonic is not None:
-            self._latest_on_time_seconds = now - self._flame_on_monotonic
-
-            if self._has_completed_first_cycle:
-                self._average_on_time_seconds = (
-                    self._latest_on_time_seconds
-                    if self._average_on_time_seconds is None
-                    else (1.0 - self._smoothing_alpha) * self._average_on_time_seconds + self._smoothing_alpha * self._latest_on_time_seconds
-                )
-
-            self._last_update_monotonic = now
-            self._recompute_health(now)
-            return
-
         # ON -> OFF
-        if not currently_active and previously_active:
-            duration = (now - self._flame_on_monotonic) if self._flame_on_monotonic is not None else 0.0
+        if not flame_active and previously_active:
+            self._close_burn(now)
 
-            self._flame_on_monotonic = None
+        # OFF -> OFF, or OFF at the first observation
+        elif not flame_active and self._flame_off_monotonic is None:
             self._flame_off_monotonic = now
-            self._last_update_monotonic = now
 
-            # A partial burn adds no cycle and no duration sample
-            if self._is_partial_burn:
-                self._is_partial_burn = False
-                timeline.LOGGER.info("flame off (burn started before the first observation, not counted)")
-            else:
-                self._last_cycle_duration_seconds = duration
-
-                self._prune_cycles_window(now)
-                self._prune_median_window(now)
-                self._cycle_end_times_window.append(now)
-                self._on_durations_window.append((now, duration))
-
-                self._has_completed_first_cycle = True
-
-                timeline.LOGGER.info("flame off after %.1fs (cycles_last_hour=%.1f, samples_4h=%d)", duration, self._cycles_per_hour(now), self.sample_count_4h)
-
-            self._recompute_health(now)
+    def _classify(self, burn: _Burn, hot_water_signals: Collection[HotWaterSignal]) -> None:
+        """Add the signals seen while `burn` is on; a heating burn that turns hot water takes back its average on time and duty."""
+        if burn.signals.issuperset(hot_water_signals):
             return
 
-        # OFF -> OFF
-        if not currently_active:
-            if self._flame_off_monotonic is None:
-                self._flame_off_monotonic = now
+        was_heating = not burn.hot_water
+        burn.signals.update(hot_water_signals)
 
-            self._last_update_monotonic = now
-            self._recompute_health(now)
+        if was_heating:
+            self._average_on_time_seconds = burn.average_before
+            # Its on-time samples are the ones recorded after it started
+            self._on_deltas_window = deque(entry for entry in self._on_deltas_window if entry[0] <= burn.started)
+
+    def _close_burn(self, now: float) -> None:
+        """End the burn in progress at `now` and log it with its kind; a heating burn is recorded in the statistics, unless it is partial."""
+        burn = self._burn
+        self._burn = None
+        self._flame_off_monotonic = now
+
+        if burn is None:
             return
+
+        # A partial burn adds no cycle and no duration sample
+        if burn.partial:
+            timeline.LOGGER.info("flame off, %s (burn started before the first observation, not counted)", burn.describe())
+            return
+
+        duration = now - burn.started
+        self._last_cycle_duration_seconds = duration
+
+        # The statistics count heating burns only
+        if burn.hot_water:
+            timeline.LOGGER.info("flame off after %.1fs, %s, not counted", duration, burn.describe())
+            return
+
+        self._prune_cycles_window(now)
+        self._prune_median_window(now)
+        self._cycle_end_times_window.append(now)
+        self._on_durations_window.append((now, duration))
+
+        self._has_completed_first_cycle = True
+
+        timeline.LOGGER.info("flame off after %.1fs, heating (cycles_last_hour=%.1f, samples_4h=%d)", duration, self._cycles_per_hour(now), self.sample_count_4h)
 
     def _recompute_health(self, now: float) -> None:
         state = self._last_boiler_state
@@ -248,7 +308,7 @@ class Flame:
             self._health_status = FlameStatus.INSUFFICIENT_DATA
             return
 
-        last_on_seconds = self._latest_on_time_seconds if (state.flame_active and self._flame_on_monotonic) else 0.0
+        last_on_seconds = self._latest_on_time_seconds if (state.flame_active and self._burn is not None) else 0.0
         last_off_seconds = (now - self._flame_off_monotonic) if (not state.flame_active and self._flame_off_monotonic) else 0.0
 
         cycles_per_hour = self._cycles_per_hour(now)
@@ -362,6 +422,3 @@ class Flame:
 
         durations = [duration for _, duration in self._on_durations_window]
         return float(median(durations)), len(durations)
-
-    def _is_flame_active_internal(self) -> bool:
-        return bool(self._last_boiler_state.flame_active) if self._last_boiler_state else False
