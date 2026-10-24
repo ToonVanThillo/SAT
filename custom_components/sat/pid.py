@@ -73,19 +73,17 @@ class PID:
         self._last_error: float = 0.0
         self._previous_error: float = 0.0
         self._last_heating_curve_value: float = 0.0
-        self._last_boiler_temperature: float | None = None
 
         # Reset integral and derivative
         self._integral: float = 0.0
         self._raw_derivative: float = 0.0
 
-    def update(self, error: Error, heating_curve_value: float, boiler_temperature: float) -> None:
+    def update(self, error: Error, heating_curve_value: float) -> None:
         """
         Update the PID controller with the current error and heating curve value.
 
         :param error: The max error between all the target temperatures and the current temperatures.
         :param heating_curve_value: The current heating curve value.
-        :param boiler_temperature: The current boiler temperature.
         """
         time_elapsed = seconds_since(self._last_updated)
 
@@ -107,7 +105,6 @@ class PID:
         self._previous_error = self._last_error
         self._last_error = error.value
 
-        self._last_boiler_temperature = boiler_temperature
         self._last_heating_curve_value = heating_curve_value
 
     def update_reset(self, error: Error, heating_curve_value: Optional[float]) -> None:

@@ -358,20 +358,6 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         return None
 
     @property
-    def boiler_temperature_filtered(self) -> Optional[float]:
-        # Not able to use if we do not have at least two values
-        if len(self._boiler_temperatures) < 2:
-            return self.boiler_temperature
-
-        # Some noise filtering on the boiler temperature
-        difference_boiler_temperature_sum = sum(
-            abs(j[1] - i[1]) for i, j in zip(self._boiler_temperatures, self._boiler_temperatures[1:])
-        )
-
-        # Average it and return it
-        return round(difference_boiler_temperature_sum / (len(self._boiler_temperatures) - 1), 2)
-
-    @property
     def boiler_temperature_derivative(self) -> Optional[float]:
         if len(self._boiler_temperatures) <= 1:
             return None

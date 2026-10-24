@@ -9,9 +9,8 @@ known bug".
   2); in the default config `pwm.reset()` undoes it in the same cycle.
 - `schedule_control_heating_loop(force=True)` only runs the loop immediately if
   a run is already pending; otherwise it waits the normal 10 s.
-- `boiler_temperature_filtered` is not a filtered temperature but the mean
-  absolute change between samples of the last 60 s. It is passed to the PIDs,
-  which store it but never use it.
+- Closing all valves doesn't stop an active boiler; valves only gate turning
+  the heater on.
 - For OpenTherm over MQTT, the heater check compares with whether the boiler
   is heating (`device_active`), not with its heating-enabled setting. ON is
   resent every cycle while the boiler is enabled but idle and a valve is open.

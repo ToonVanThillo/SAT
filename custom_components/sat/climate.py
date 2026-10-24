@@ -852,11 +852,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 )
 
             # Update our PID controllers if we have valid values
-            if self._coordinator.boiler_temperature_filtered is not None:
-                self.areas.pids.update(self._coordinator.boiler_temperature_filtered)
+            if self._coordinator.boiler_temperature is not None:
+                self.areas.pids.update()
 
                 if self.heating_curve.value is not None:
-                    self.pid.update(max_error, self.heating_curve.value, self._coordinator.boiler_temperature_filtered)
+                    self.pid.update(max_error, self.heating_curve.value)
 
         elif max_error.value != self.pid.last_error:
             _LOGGER.info(f"Updating error to {max_error.value} from {max_error.entity_id} (Reset: True)")

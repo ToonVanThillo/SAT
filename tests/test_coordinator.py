@@ -195,32 +195,35 @@ async def test_loop_without_temperature_returns_early(ems, boiler_data, freezer)
 async def test_loop_ignores_duplicate_samples(ems, boiler_data, freezer):
     await boiler_data(curflowtemp=30)
     await ems.async_control_heating_loop()
+
+    # Same timestamp: this sample is not stored
+    await boiler_data(curflowtemp=31)
     await ems.async_control_heating_loop()
 
     freezer.tick(10)
     await boiler_data(curflowtemp=32)
     await ems.async_control_heating_loop()
 
-    # Mean absolute difference of the samples (30, 32), a duplicate 30 would give 1.0
-    assert ems.boiler_temperature_filtered == 2.0
+    # Derivative over the samples (30, 32), a stored duplicate 31 would give 0.1
+    assert ems.boiler_temperature_derivative == 0.2
 
 
 async def test_loop_prunes_samples_older_than_max_age(ems, boiler_data, freezer):
-    await boiler_data(curflowtemp=30)
-    await ems.async_control_heating_loop()
-
-    # A sample of exactly MAX_BOILER_TEMPERATURE_AGE seconds old is kept
-    freezer.tick(60)
     await boiler_data(curflowtemp=40)
     await ems.async_control_heating_loop()
 
-    assert ems.boiler_temperature_filtered == 10.0
+    # A sample of exactly MAX_BOILER_TEMPERATURE_AGE seconds old is kept: the cold temperature is the maximum of the samples
+    freezer.tick(60)
+    await boiler_data(curflowtemp=30)
+    await ems.async_control_heating_loop()
 
-    # Now the first sample is pruned, otherwise the result would be 5.0
+    assert ems.boiler_temperature_cold == 40
+
+    # Now the first sample is pruned, otherwise the cold temperature would still be 40
     freezer.tick(0.5)
     await ems.async_control_heating_loop()
 
-    assert ems.boiler_temperature_filtered == 0.0
+    assert ems.boiler_temperature_cold == 30
 
 
 async def test_loop_tracks_cold_temperature(ems, boiler_data, freezer):
@@ -277,24 +280,3 @@ async def test_loop_tracks_device_on_since(ems, boiler_data, freezer):
 
     assert ems.heater_on_since is None
 
-
-# boiler_temperature_filtered
-
-async def test_filtered_returns_raw_temperature_with_fewer_than_two_samples(ems, boiler_data):
-    assert ems.boiler_temperature_filtered is None
-
-    await boiler_data(curflowtemp=48.5)
-    assert ems.boiler_temperature_filtered == 48.5
-
-    await ems.async_control_heating_loop()
-    assert ems.boiler_temperature_filtered == 48.5
-
-
-async def test_filtered_is_mean_absolute_difference_of_samples(ems, boiler_data, freezer):
-    # Observation: the filtered temperature is not a smoothed temperature but a noise metric
-    for temperature in [30, 32, 31, 36]:
-        await boiler_data(curflowtemp=temperature)
-        await ems.async_control_heating_loop()
-        freezer.tick(1)
-
-    assert ems.boiler_temperature_filtered == 2.67
