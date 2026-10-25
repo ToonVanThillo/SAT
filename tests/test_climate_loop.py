@@ -123,10 +123,12 @@ async def test_pwm_on_with_cold_minimum_setpoint_stops_heater(entry, climate, bo
 async def test_hot_water_does_not_raise_pwm_modulation(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE | {"tapwateractive": "on"})
 
-    # burnmaxpower does not limit hot water power on EMS-ESP, so hot water does not raise it to the maximum
+    # burnmaxpower does not limit hot water power on EMS-ESP, so hot water does not raise it to the maximum.
+    # No pulse starts while the boiler produces hot water, so PWM holds in its off phase and switches heating off.
     assert await run_loop(climate, mqtt_mock, published) == [
-        message('{"cmd": "selflowtemp", "value": 30}'),
+        message('{"cmd": "selflowtemp", "value": 0}'),
         message('{"cmd": "burnmaxpower", "value": 0}'),
+        message('{"cmd": "heatingoff", "value": "on"}'),
     ]
 
 

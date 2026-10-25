@@ -230,6 +230,7 @@
       "system_configuration": {
         "data": {
           "automatic_duty_cycle": "Ciclo de trabajo automático",
+          "hot_water_delay": "Retardo tras ACS",
           "sync_climates_with_mode": "Sincronizar climas con el modo",
           "overshoot_protection": "Protección contra Sobrepasos (con PWM)",
           "sensor_max_value_age": "Edad máxima del valor del sensor de temperatura",
@@ -237,6 +238,7 @@
         },
         "data_description": {
           "automatic_duty_cycle": "Habilitar o deshabilitar el ciclo de trabajo automático para la Modulación de Ancho de Pulso (PWM).",
+          "hot_water_delay": "Segundos tras un encendido de agua caliente durante los cuales PWM no inicia ningún pulso, p. ej. el bloqueo de calefacción de la caldera tras el agua caliente (300 para una Junkers Cerapur que bloquea la calefacción 5 minutos). Tampoco se inicia ningún pulso mientras la caldera produce agua caliente; un pulso ya en curso no se ve afectado. 0 desactiva el retardo.",
           "overshoot_protection": "Habilitar protección contra sobrepasos con Modulación de Ancho de Pulso (PWM) para prevenir excesos de temperatura de la caldera.",
           "sensor_max_value_age": "La edad máxima del valor del sensor de temperatura antes de considerarlo como obsoleto.",
           "window_minimum_open_time": "El tiempo mínimo que una ventana debe estar abierta antes de que el sistema reaccione."

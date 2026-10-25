@@ -229,6 +229,7 @@
       "system_configuration": {
         "data": {
           "automatic_duty_cycle": "Automatischer Tastgrad",
+          "hot_water_delay": "Warmwasser-Verzögerung",
           "overshoot_protection": "Überschwingungsschutz (mit PWM)",
           "sync_climates_with_mode": "Klimazonen mit Modus synchronisieren",
           "sensor_max_value_age": "Maximales Alter des Temperatursensorwerts",
@@ -236,6 +237,7 @@
         },
         "data_description": {
           "automatic_duty_cycle": "Automatischen Tastgrad für Pulsweitenmodulation (PWM) aktivieren oder deaktivieren.",
+          "hot_water_delay": "Sekunden nach einem Warmwasser-Brennvorgang, in denen PWM keinen Puls startet, z. B. die Heizsperre des Kessels nach Warmwasser (300 für einen Junkers Cerapur, der die Heizung 5 Minuten sperrt). Solange der Kessel Warmwasser bereitet, startet ebenfalls kein Puls; ein bereits laufender Puls ist nicht betroffen. 0 deaktiviert die Verzögerung.",
           "overshoot_protection": "Überschwingungsschutz mit Pulsweitenmodulation (PWM) aktivieren, um die Temperaturüberschreitung des Kessels zu verhindern.",
           "sensor_max_value_age": "Das maximale Alter des Temperatursensorwerts, bevor er als gestoppt betrachtet wird.",
           "window_minimum_open_time": "Die Mindestzeit, die ein Fenster geöffnet sein muss, bevor das System reagiert."

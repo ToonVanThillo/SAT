@@ -81,13 +81,10 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         # the wait that follows its publish
         self._control_setpoints_publishing: list[int] = []
 
-        # The highest max relative modulation SAT writes: the configured maximum, or the floor it raises lower values to
-        maximum_relative_modulation = max(float(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION])), floor)
-        if self._hot_water_burner_power is not None and maximum_relative_modulation >= self._hot_water_burner_power:
-            _LOGGER.warning(
-                "The hot water burner power (%g%%) is not used to detect hot water: SAT may write a maximum relative modulation of %g%% (the configured maximum or floor), so heating can run at that power too",
-                self._hot_water_burner_power, maximum_relative_modulation,
-            )
+        # The highest max relative modulation SAT writes: the configured maximum, or the floor it raises lower values to.
+        # At or above it, the burner power is no hot-water signal; the coordinator warns when it starts.
+        self._maximum_relative_modulation_written: float = max(float(self._options.get(CONF_MAXIMUM_RELATIVE_MODULATION, OPTIONS_DEFAULTS[CONF_MAXIMUM_RELATIVE_MODULATION])), floor)
+        if self._hot_water_burner_power is not None and self._maximum_relative_modulation_written >= self._hot_water_burner_power:
             self._hot_water_burner_power = None
 
         self._channels = Channels([
@@ -190,8 +187,15 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         return None
 
     async def boot(self) -> None:
-        # Nothing needs to be booted (yet)
-        pass
+        """Warn that the configured hot water burner power is not used, if SAT may write it itself.
+
+        Runs once, when the coordinator of the config entry starts; temporary coordinators of the config flow are never started.
+        """
+        if (burner_power := float_value(self._options.get(CONF_HOT_WATER_BURNER_POWER))) is not None and self._hot_water_burner_power is None:
+            _LOGGER.warning(
+                "The hot water burner power (%g%%) is not used to detect hot water: SAT may write a maximum relative modulation of %g%% (the configured maximum or floor), so heating can run at that power too",
+                burner_power, self._maximum_relative_modulation_written,
+            )
 
     def get_tracked_entities(self) -> list[str]:
         return [DATA_BOILER_DATA]
@@ -199,12 +203,15 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
     def _live_flame_active(self) -> bool | None:
         return None if (value := self.data.live_value(DATA_FLAME_ACTIVE)) is None else value == DATA_ON
 
+    def _live_hot_water_active(self) -> bool:
+        return self.data.live_value(DATA_TAP_WATER_ACTIVE) == DATA_ON
+
     def _hot_water_signals(self) -> frozenset[HotWaterSignal]:
         """The hot-water signals in the live boiler data: `tapwateractive` on; `selburnpow` at the configured hot water burner power;
         `selflowtemp` at the configured hot water flow temperature while that is not the control setpoint SAT last sent or is sending."""
         signals: set[HotWaterSignal] = set()
 
-        if self.data.live_value(DATA_TAP_WATER_ACTIVE) == DATA_ON:
+        if self._live_hot_water_active():
             signals.add(HotWaterSignal.FLAG)
 
         if self._hot_water_burner_power is not None and float_value(self.data.live_value(DATA_SELECTED_BURNER_POWER)) == self._hot_water_burner_power:

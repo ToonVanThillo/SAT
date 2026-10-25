@@ -61,8 +61,15 @@ known bug".
   counts as the signal. This happens when SAT moves its setpoint away from that
   value (until the boiler reads back the new one) and when SAT releases the
   setpoint on heater OFF (the sent value becomes none). The burn then counts as
-  hot water: it is left out of the flame statistics and SAT treats the boiler
-  as producing hot water until the flame goes off. Accepted.
+  hot water: it is left out of the flame statistics, SAT treats the boiler as
+  producing hot water until the flame goes off, and PWM starts no pulse until
+  the hot water delay has passed after it. Accepted.
+- The hot water delay is timed from the end of the last hot water burn as the
+  flame tracking saw it, which is kept in memory only. A reload or restart
+  forgets it: saving any option reloads the entry, so saved 60 s after a hot
+  water burn, PWM can start a pulse inside the boiler's heating lockout. A hot
+  water burn that ends during a reload or restart is never observed at all.
+  Accepted for now.
 - `Flame.latest_on_time_seconds` returns the previous burn's on time until the
   second update (listener or control cycle) of a new burn, because the first
   update only starts the burn. It feeds the setpoint adjuster's `> 6` check in
@@ -103,7 +110,8 @@ known bug".
   already duplicated as sensors.
 - Flame Health is unavailable while the flame status is INSUFFICIENT_DATA. In
   HA, unavailable means the device can't be reached; missing data should be
-  unknown.
+  unknown. On backends that store device data (MQTT, serial) the status stays
+  INSUFFICIENT_DATA until the first live flame value arrives.
 - After the climate is renamed (HA removes and re-adds the entity), room
   temperature sensors are no longer tracked: their listeners are released on
   removal, but `_sensors` keeps their IDs, so `async_track_sensor_temperature`
@@ -137,16 +145,24 @@ known bug".
 - When HA is already running (reload or new entry), the first control loop runs
   before the MQTT subscription; on a cold start it waits for HA to start, after
   subscribing. Either way the control logic doesn't wait for live data or check
-  the stored values' age. A stored EMS-ESP `tapwateractive: "on"` (HA stopped
-  during a draw) keeps hot water active until the first live message. In HVAC
-  OFF the first loop can send heater OFF based on stored values, except on
-  EMS-ESP, whose channel writes wait for a live read-back.
+  the stored values' age. A stored hot water active flag (EMS-ESP
+  `tapwateractive`, OpenTherm MQTT `domestichotwater`) is ignored by SAT's
+  view of hot water, so after a restart during a draw the boiler counts as
+  producing hot water only from the first live flag (or another live
+  hot-water signal) on. In HVAC OFF the first loop can send heater OFF based on
+  stored values, except on EMS-ESP, whose channel writes wait for a live
+  read-back.
 - EMS-ESP values are stored only on unload, so after an HA restart the restored
   values can be much older than the restart. In a field test the first cycle
   decided on a restored flow temperature of 48.7 °C and flame on (actual: about
   27 °C, flame off). The temperature tracker starts inactive and only activates
   when the flame goes off, so after a restart a heat-up shows as
-  OVERSHOOT_HANDLING until the first flame-off.
+  OVERSHOOT_HANDLING until the first flame-off. Flame tracking (burns, flame
+  statistics, flame health) ignores a restored flame and starts with the first
+  live one. `device_status`, `BoilerState.flame_active` and the temperature
+  tracker still read the restored flame, while PWM reads the flame tracking,
+  where an unknown flame is inactive: until the first live flame value the
+  setpoint adjuster runs its force step on the restored flow temperature.
 - The config flow's manufacturer step reads `member_id` from stored data
   without subscribing to MQTT. On a fresh install there is no stored
   `member_id`, so no manufacturer is preselected.

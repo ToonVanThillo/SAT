@@ -205,7 +205,7 @@ async def test_fallback_keeps_the_duty_cycle_maximum_time():
     assert pwm is not None
 
     boiler = SimpleNamespace(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water_active=False, flow_temperature=50.0)
-    flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100)
+    flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     duty = 0.25
     await pwm.update(boiler, flame, 20.0 + duty * 30.0)  # type: ignore[arg-type]
 

@@ -1112,6 +1112,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             pwm = f"pwm {fmt(controller.status)}"
             if (duty := controller.last_duty_cycle_percentage) is not None and (times := controller.duty_cycle) is not None:
                 pwm += f" duty={duty}% {times[0]}/{times[1]}s ({controller.duty_cycle_branch})"
+            if controller.hold is not None:
+                pwm += f" hold={controller.hold}"
 
         return [
             f"in target={fmt(inputs.target_temperature)} inside={fmt(inputs.current_temperature)} out={fmt(inputs.outside_temperature)} valves={'open' if inputs.valves_open else 'closed'}",

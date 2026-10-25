@@ -711,6 +711,9 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required(CONF_CYCLES_PER_HOUR_COLD, default=options[CONF_CYCLES_PER_HOUR_COLD]): cycles_per_hour,
             vol.Required(CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE, default=options[CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE]): temperature,
             vol.Required(CONF_CYCLES_PER_HOUR_MILD, default=options[CONF_CYCLES_PER_HOUR_MILD]): cycles_per_hour,
+            vol.Required(CONF_HOT_WATER_DELAY, default=options[CONF_HOT_WATER_DELAY]): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, max=3600, step=1, unit_of_measurement="s", mode=selector.NumberSelectorMode.BOX)
+            ),
         }
 
         schema[vol.Required(CONF_SENSOR_MAX_VALUE_AGE, default=options[CONF_SENSOR_MAX_VALUE_AGE])] = selector.TimeSelector()

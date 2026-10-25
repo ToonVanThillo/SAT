@@ -31,6 +31,9 @@ class FlameState:
     duty_ratio_last_15m: float
     median_on_duration_seconds_4h: Optional[float]
 
+    # Seconds since the last hot water burn ended; None if none has ended yet
+    seconds_since_hot_water_burn: float | None
+
 
 class HotWaterSignal(str, Enum):
     """A sign in the device data that the boiler produces hot water; the value is its name on the timeline."""
@@ -116,6 +119,7 @@ class Flame:
         # The burn in progress, while the flame is on
         self._burn: _Burn | None = None
         self._flame_off_monotonic: Optional[float] = None
+        self._hot_water_burn_end_monotonic: float | None = None
 
         # Stored states
         self._last_boiler_state: Optional[BoilerState] = None
@@ -146,6 +150,11 @@ class Flame:
     def hot_water_burn(self) -> bool:
         """Whether the flame is on in a burn classified as hot water."""
         return self._burn is not None and self._burn.hot_water
+
+    @property
+    def seconds_since_hot_water_burn(self) -> float | None:
+        """Seconds since the last hot water burn ended, partial ones included; None if none has ended yet."""
+        return None if self._hot_water_burn_end_monotonic is None else monotonic() - self._hot_water_burn_end_monotonic
 
     @property
     def on_since(self) -> Optional[float]:
@@ -280,18 +289,22 @@ class Flame:
         if burn is None:
             return
 
+        if burn.hot_water:
+            self._hot_water_burn_end_monotonic = now
+
         # A partial burn adds no cycle and no duration sample
         if burn.partial:
             timeline.LOGGER.info("flame off, %s (burn started before the first observation, not counted)", burn.describe())
             return
 
         duration = now - burn.started
-        self._last_cycle_duration_seconds = duration
 
         # The statistics count heating burns only
         if burn.hot_water:
             timeline.LOGGER.info("flame off after %.1fs, %s, not counted", duration, burn.describe())
             return
+
+        self._last_cycle_duration_seconds = duration
 
         self._prune_cycles_window(now)
         self._prune_median_window(now)

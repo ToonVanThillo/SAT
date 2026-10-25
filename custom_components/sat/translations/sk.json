@@ -246,6 +246,7 @@
           "cycles_per_hour_mild_temperature": "Mierna vonkajšia teplota",
           "cycles_per_hour_mild": "Pracovné cykly za hodinu pri miernom počasí",
           "automatic_duty_cycle": "Automatický pracovný cyklus",
+          "hot_water_delay": "Oneskorenie po TÚV",
           "sync_climates_with_mode": "Synchronizujte klímu s režimom",
           "overshoot_protection": "Ochrana proti prekročeniu (s PWM)",
           "sensor_max_value_age": "Vek maximálnej hodnoty snímača teploty",
@@ -257,6 +258,7 @@
           "cycles_per_hour_mild_temperature": "Vonkajšia teplota druhého bodu priamky cyklov za hodinu. Musí sa líšiť od teploty prvého bodu.",
           "cycles_per_hour_mild": "Počet cyklov za hodinu pri teplote druhého bodu.",
           "automatic_duty_cycle": "Povoliť alebo zakázať automatický pracovný cyklus pre moduláciu šírky impulzu (PWM).",
+          "hot_water_delay": "Sekundy po horení pre teplú vodu, počas ktorých PWM nespustí žiadny impulz, napr. blokovanie vykurovania kotla po teplej vode (300 pre Junkers Cerapur, ktorý blokuje vykurovanie na 5 minút). Kým kotol pripravuje teplú vodu, impulz sa tiež nespustí; už bežiaci impulz nie je ovplyvnený. 0 oneskorenie vypne.",
           "overshoot_protection": "Aktivujte ochranu proti prekročeniu pomocou modulácie šírky impulzov (PWM), aby ste zabránili prekročeniu teploty kotla.",
           "sensor_max_value_age": "Maximálny vek hodnoty teplotného snímača pred tým, než sa považuje za prerušenie.",
           "window_minimum_open_time": "Minimálny čas, počas ktorého musí byť okno otvorené, kým systém zareaguje."

@@ -90,6 +90,7 @@ def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulat
     automatic_duty_cycle = bool(config_options.get(CONF_AUTOMATIC_DUTY_CYCLE))
     max_cycle_time = int(convert_time_str_to_seconds(config_options.get(CONF_DUTY_CYCLE)))
     force = bool(config_data.get(CONF_MODE) == MODE_SWITCH) or bool(config_options.get(CONF_FORCE_PULSE_WIDTH_MODULATION))
+    hot_water_delay = float(config_options.get(CONF_HOT_WATER_DELAY, OPTIONS_DEFAULTS[CONF_HOT_WATER_DELAY]))
 
     # Invalid mapping options fall back to the defaults, so heating keeps running
     try:
@@ -100,7 +101,10 @@ def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulat
         cycles = _create_cycle_config(OPTIONS_DEFAULTS, max_cycle_time)
 
     # Return a new PWM controller instance with the given configuration options
-    return PWM(heating_curve=heating_curve, cycles=cycles, automatic_duty_cycle=automatic_duty_cycle, supports_relative_modulation_management=supports_relative_modulation_management, force=force)
+    return PWM(
+        heating_curve=heating_curve, cycles=cycles, automatic_duty_cycle=automatic_duty_cycle,
+        supports_relative_modulation_management=supports_relative_modulation_management, force=force, hot_water_delay=hot_water_delay,
+    )
 
 
 def get_climate_entities(hass: "HomeAssistant", entity_ids: list[str]) -> list["SatClimate"]:

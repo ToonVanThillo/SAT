@@ -87,6 +87,8 @@ async def test_two_reloads_in_a_row_leave_one_receiving_coordinator(hass, entry,
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
     caplog.clear()
 
+    # The first live flame value is off, so the burn is a full one
+    await boiler_data(**IDLE)
     await boiler_data(**IDLE | {"burngas": "on"})
     await advance(hass, freezer, 10)
 
@@ -104,6 +106,8 @@ async def test_unload_then_setup_again_subscribes_once(hass, entry, coordinator,
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
     caplog.clear()
 
+    # The first live flame value is off, so the burn is a full one
+    await boiler_data(**IDLE)
     await boiler_data(**IDLE | {"burngas": "on"})
     await advance(hass, freezer, 10)
 

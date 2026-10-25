@@ -187,7 +187,8 @@ did, in order, so a run can be reconstructed from the log alone.
   the requested value when encoding changed it), a rewrite after a mismatch
   (`resend`, with the read-back) and a release; channel transitions into or
   out of `DRIFTED` and `OUT_OF_SYNC`; PWM switching on, off or to idle (idle
-  with the reason); a pulse held on for the minimum pulse length beyond its
+  with the reason); a pulse start held for hot water or the hot water delay,
+  and the hold ending; a pulse held on for the minimum pulse length beyond its
   duty cycle; overshoot handling starting and ending (evaluated in HEAT cycles
   with all temperatures); the PWM cycles-per-hour cap being reached and
   lifted; flame on and off, the flame-off line with the burn's kind and the
@@ -242,7 +243,8 @@ at the start of each cycle.
   not take over burns it did not start.
 - No pulse starts while the boiler is producing hot water, nor within the
   configured hot water delay after a hot water burn ends (default 0 s). A
-  pulse that is already on is not affected.
+  pulse that is already on is not affected. A held start moves PWM from idle
+  to off, so the climate does not heat continuously meanwhile.
 - N is updated every cycle, also in HVAC mode OFF and when a temperature is
   missing. A diagnostic "PWM Cycles Per Hour" sensor (measurement, unit
   cycles/h, no attributes) shows the N in effect.
@@ -270,6 +272,8 @@ including burns SAT did not request.
   control cycle, so a burn shorter than a cycle is still seen and classified.
 - While a hot water burn is on, SAT treats the boiler as producing hot water,
   also after the hot water active flag has gone off.
+- The hot water active flag counts for SAT's view of hot water only once it is
+  live; a value restored from storage does not.
 - Flame statistics count heating burns only: cycles in the last hour, the 4 h
   median on-time, the average on-time, the 15 min duty ratio and the last
   burn's duration. Flame health and the setpoint adjuster read these; the

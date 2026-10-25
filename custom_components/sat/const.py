@@ -63,6 +63,7 @@ CONF_MAXIMUM_RELATIVE_MODULATION = "maximum_relative_modulation"
 CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR = "maximum_relative_modulation_floor"
 CONF_HOT_WATER_BURNER_POWER = "hot_water_burner_power"
 CONF_HOT_WATER_FLOW_TEMPERATURE = "hot_water_flow_temperature"
+CONF_HOT_WATER_DELAY = "hot_water_delay"
 CONF_ROOMS = "secondary_climates"
 CONF_MQTT_TOPIC = "mqtt_topic"
 CONF_RADIATORS = "main_climates"
@@ -156,6 +157,8 @@ OPTIONS_DEFAULTS = {
     # EMS-ESP hot water signals; unset (None) disables the signal
     CONF_HOT_WATER_BURNER_POWER: None,
     CONF_HOT_WATER_FLOW_TEMPERATURE: None,
+    # Seconds after a hot water burn in which PWM starts no pulse
+    CONF_HOT_WATER_DELAY: 0,
     CONF_FORCE_PULSE_WIDTH_MODULATION: False,
 
     CONF_MINIMUM_CONSUMPTION: 0,

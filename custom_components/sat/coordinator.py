@@ -181,9 +181,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         if config_data.get(CONF_MANUFACTURER) is not None:
             self._manufacturer = ManufacturerFactory.resolve_by_name(config_data.get(CONF_MANUFACTURER))
 
-        self._flame_listener_unsub: Callable[[], None] | None = self.async_add_listener(
-            lambda: self._flame.update(boiler_state=self.boiler, hot_water_signals=self._hot_water_signals())
-        )
+        self._flame_listener_unsub: Callable[[], None] | None = self.async_add_listener(self._update_flame)
 
     @property
     @abstractmethod
@@ -282,6 +280,8 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             cycles_last_hour=self._flame.cycles_last_hour,
             duty_ratio_last_15m=self._flame.duty_ratio_last_15m,
             median_on_duration_seconds_4h=self._flame.median_on_duration_seconds_4h,
+
+            seconds_since_hot_water_burn=self._flame.seconds_since_hot_water_burn,
         )
 
     @property
@@ -313,26 +313,37 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
     @property
     def hot_water_active(self) -> bool:
-        """The backend's hot water active flag as the device reports it; the control logic reads `producing_hot_water`."""
+        """The backend's hot water active flag as the device data holds it, restored values included; the control logic reads
+        `producing_hot_water`."""
         return False
 
     @property
     def producing_hot_water(self) -> bool:
-        """Whether SAT treats the boiler as producing hot water: the hot water active flag is on, or the flame is on in a burn
+        """Whether SAT treats the boiler as producing hot water: the live hot water active flag is on, or the flame is on in a burn
         classified as hot water, also after the flag has gone off. `device_status` and `boiler` use this."""
-        return self.hot_water_active or self._flame.hot_water_burn
+        return self._live_hot_water_active() or self._flame.hot_water_burn
+
+    def _live_hot_water_active(self) -> bool:
+        """The hot water active flag from live device data only; a value restored from storage counts as off.
+
+        By default `hot_water_active`: backends that restore device data from storage override this.
+        """
+        return self.hot_water_active
 
     def _live_flame_active(self) -> bool | None:
-        """The flame state in the live device data; None while it is unknown (missing, or restored from storage), so arrival
-        tracking skips the update. By default unknown: backends that store device data per message override this."""
-        return None
+        """The flame state in the live device data; None while it is unknown, so no flame tracking path observes it.
+
+        By default `flame_active`, always known. Backends that store device data (MQTT, serial) override this to return None while
+        the flame value is missing or restored from storage, so a burn running at startup is partial when the first live value arrives.
+        """
+        return self.flame_active
 
     def _hot_water_signals(self) -> frozenset[HotWaterSignal]:
-        """The hot-water signals the device data shows now, from live values only; by default the hot water active flag.
+        """The hot-water signals the device data shows now, from live values only; by default the live hot water active flag.
 
-        Backends that restore values from storage or have more signals override this.
+        Backends with more signals override this.
         """
-        return frozenset({HotWaterSignal.FLAG}) if self.hot_water_active else frozenset()
+        return frozenset({HotWaterSignal.FLAG}) if self._live_hot_water_active() else frozenset()
 
     @property
     def hot_water_setpoint(self) -> Optional[float]:
@@ -606,7 +617,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
     async def async_control_heating_loop(self, climate: Optional[SatClimate] = None, pwm_state: Optional[PWMState] = None, _time=None) -> None:
         """Control the heating loop for the device."""
         # Update Flame State
-        self._flame.update(boiler_state=self.boiler, pwm_state=pwm_state, hot_water_signals=self._hot_water_signals())
+        self._update_flame(pwm_state)
 
         # Update Device State
         if not self.device_active:
@@ -650,6 +661,15 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             self._boiler_temperature_cold = boiler_temperature_cold
         elif self._boiler_temperature_cold is not None:
             self._boiler_temperature_cold = min(self.boiler_temperature, self._boiler_temperature_cold)
+
+    @callback
+    def _update_flame(self, pwm_state: PWMState | None = None) -> None:
+        """Update the flame from the current device data (the flame listener and the update step); skipped while the flame value
+        is unknown, so a restored or missing flame never seeds the first observation."""
+        if self._live_flame_active() is None:
+            return
+
+        self._flame.update(boiler_state=self.boiler, pwm_state=pwm_state, hot_water_signals=self._hot_water_signals())
 
     async def async_submit(self, desired: DesiredState) -> list[WriteRecord]:
         """Reconcile `desired` through the channels, if the backend has them; fields without a channel are ignored.

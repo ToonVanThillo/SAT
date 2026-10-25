@@ -261,7 +261,8 @@ async def test_flame_timing_attribute_is_the_average_on_time(hass, entry, climat
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
-    # No average until the first flame cycle has completed
+    # No average until the first flame cycle has completed; the first live flame value is off, so the first burn is a full one
+    assert await step("off", 0) is None
     assert await step("on", 0) is None
     assert await step("on", 60) is None
     assert await step("off", 10) is None

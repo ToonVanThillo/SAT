@@ -21,6 +21,7 @@ from custom_components.sat.const import (
     CONF_DEVICE,
     CONF_HEATING_SYSTEM,
     CONF_HOT_WATER_BURNER_POWER,
+    CONF_HOT_WATER_DELAY,
     CONF_HOT_WATER_FLOW_TEMPERATURE,
     CONF_INSIDE_SENSOR_ENTITY_ID,
     CONF_MAXIMUM_RELATIVE_MODULATION,
@@ -122,6 +123,24 @@ async def test_a_cleared_hot_water_option_is_stored_unset(hass):
 
     assert result["data"][CONF_HOT_WATER_BURNER_POWER] is None
     assert result["data"][CONF_HOT_WATER_FLOW_TEMPERATURE] == 50
+
+
+@pytest.mark.parametrize("mode", [MODE_MQTT_EMS, MODE_MQTT_OPENTHERM, MODE_FAKE])
+async def test_system_configuration_has_the_hot_water_delay_for_every_backend(hass, mode):
+    result = await options_flow(mode).async_step_system_configuration()
+    marker, value = next((marker, value) for marker, value in result["data_schema"].schema.items() if marker == CONF_HOT_WATER_DELAY)
+
+    assert marker.default() == 0
+    assert value.config["min"] == 0
+    assert value.config["unit_of_measurement"] == "s"
+
+
+@pytest.mark.parametrize("language", ["en", "de", "es", "fr", "it", "nl", "pt", "sk"])
+async def test_translations_hot_water_delay_in_system_configuration(language):
+    steps = json.loads((Path(__file__).parent.parent / "custom_components/sat/translations" / f"{language}.json").read_text(encoding="utf-8"))["options"]["step"]
+
+    for section in ("data", "data_description"):
+        assert "hot_water_delay" in steps["system_configuration"][section]
 
 
 @pytest.mark.parametrize("language", ["en", "de", "es", "fr", "it", "nl", "pt", "sk"])

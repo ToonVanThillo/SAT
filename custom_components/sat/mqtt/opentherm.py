@@ -5,7 +5,6 @@ from typing import Optional
 
 from . import SatMqttCoordinator
 from ..coordinator import DeviceState
-from ..flame import HotWaterSignal
 from ..manufacturers.ideal import Ideal
 from ..manufacturers.immergas import Immergas
 from ..manufacturers.intergas import Intergas
@@ -71,9 +70,8 @@ class SatOpenThermMqttCoordinator(SatMqttCoordinator):
     def _live_flame_active(self) -> bool | None:
         return None if (value := self.data.live_value(DATA_FLAME_ACTIVE)) is None else value == STATE_ON
 
-    def _hot_water_signals(self) -> frozenset[HotWaterSignal]:
-        """The hot water active flag, from live data only."""
-        return frozenset({HotWaterSignal.FLAG}) if self.data.live_value(DATA_DHW_ENABLE) == STATE_ON else frozenset()
+    def _live_hot_water_active(self) -> bool:
+        return self.data.live_value(DATA_DHW_ENABLE) == STATE_ON
 
     @property
     def setpoint(self) -> Optional[float]:

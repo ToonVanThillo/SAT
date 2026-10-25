@@ -152,7 +152,28 @@ async def test_the_flame_is_updated_before_listeners_added_before_the_start(hass
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_a_reload_restores_a_stored_burn_without_logging_a_transition(hass, entry, boiler_data, freezer, caplog):
+async def test_a_burn_running_across_a_reload_is_partial(hass, entry, boiler_data, freezer, caplog):
+    await boiler_data(**IDLE | {"burngas": "on"})
+    await advance(hass, freezer, 10)
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
+    caplog.clear()
+
+    # The stored flame doesn't seed the flame after the reload; the first live value does
+    await hass.config_entries.async_reload(entry.entry_id)
+    await advance(hass, freezer, 10)
+    await boiler_data(**IDLE | {"burngas": "on"})
+    await advance(hass, freezer, 60)
+    await boiler_data(**IDLE | {"burngas": "off"})
+    await advance(hass, freezer, 10)
+
+    assert flame_transitions(caplog) == ["flame off, heating (burn started before the first observation, not counted)"]
+    assert current(hass, entry).flame_active is False
+    assert current(hass, entry).flame.cycles_last_hour == 0
+
+
+@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.parametrize(*ems_entry())
+async def test_a_stored_burn_that_ended_during_a_reload_logs_nothing(hass, entry, boiler_data, freezer, caplog):
     await boiler_data(**IDLE | {"burngas": "on"})
     await advance(hass, freezer, 10)
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
@@ -163,5 +184,5 @@ async def test_a_reload_restores_a_stored_burn_without_logging_a_transition(hass
     await boiler_data(**IDLE | {"burngas": "off"})
     await advance(hass, freezer, 10)
 
-    assert flame_transitions(caplog) == ["flame off, heating (burn started before the first observation, not counted)"]
+    assert flame_transitions(caplog) == []
     assert current(hass, entry).flame_active is False

@@ -96,10 +96,11 @@ class PWMState:
 class PWM:
     """Implements Pulse Width Modulation (PWM) control for managing boiler operations."""
 
-    def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, supports_relative_modulation_management: bool, automatic_duty_cycle: bool, force: bool = False):
-        """Initialize the PWM control."""
+    def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, supports_relative_modulation_management: bool, automatic_duty_cycle: bool, force: bool = False, hot_water_delay: float = 0):
+        """Initialize the PWM control; no pulse starts within `hot_water_delay` seconds after a hot water burn ends."""
         self._alpha: float = 0.2
         self._force: bool = force
+        self._hot_water_delay: float = hot_water_delay
         self._last_boiler_temperature: float | None = None
 
         self._cycles: CycleConfig = cycles
@@ -124,12 +125,15 @@ class PWM:
         self._cycles_capped: bool = False
         self._values_missing: bool = False
         self._minimum_pulse_held: bool = False
+        # Why a due pulse start is held (logged on change); it is due again as soon as the hold ends
+        self._held: str | None = None
         self.reset()
 
     def reset(self, reason: str = "reset") -> None:
         """Reset the PWM control; leaving ON or OFF is logged on the timeline with `reason`."""
         self._go_idle(reason)
         self._lift_cycles_cap()
+        self._set_held(None)
         # A missing-values episode ends with the reset, so the next one is warned about again
         self._values_missing = False
 
@@ -142,6 +146,7 @@ class PWM:
         self._first_duty_cycle_start: float | None = None
         self._last_duty_cycle_percentage: float | None = None
         self._duty_cycle_branch: str | None = None
+        self._hold: str | None = None
 
     def restore(self, state: State) -> None:
         """Restore the PWM controller from a saved state."""
@@ -176,6 +181,8 @@ class PWM:
             # Only shown in the timeline's cycle line, which shouldn't show a stale duty next to IDLE
             self._last_duty_cycle_percentage = None
             self._duty_cycle_branch = None
+            self._hold = None
+            self._set_held(None)
             self._last_boiler_temperature = boiler.flow_temperature
 
             if not self._values_missing:
@@ -210,8 +217,8 @@ class PWM:
             else:
                 self._last_boiler_temperature = boiler.flow_temperature
 
-        # Control the adjusted setpoint
-        if flame.is_active and boiler.status not in (BoilerStatus.PUMP_STARTING, BoilerStatus.OVERSHOOT_HANDLING) and flame.latest_on_time_seconds is not None and flame.latest_on_time_seconds > 6:
+        # Control the adjusted setpoint; a hot water burn says nothing about heating, so it doesn't adjust
+        if flame.is_active and not boiler.hot_water_active and boiler.status not in (BoilerStatus.PUMP_STARTING, BoilerStatus.OVERSHOOT_HANDLING) and flame.latest_on_time_seconds is not None and flame.latest_on_time_seconds > 6:
             target = boiler.flow_temperature - 3
             self._setpoint = self._setpoint_adjuster.adjust(target_setpoint=target)
         elif flame.is_inactive and (flame.average_on_time_seconds is None or flame.average_on_time_seconds < 60):
@@ -229,8 +236,25 @@ class PWM:
             self.disable("setpoint stabilization")
             return
 
+        # A pulse that is on is not affected by a hold
+        self._hold = None if self._status == PWMStatus.ON else self._hot_water_hold(boiler, flame)
+
         # State transitions for PWM
-        if self._status != PWMStatus.ON and self._duty_cycle[0] >= HEATER_STARTUP_TIMEFRAME and (elapsed >= self._duty_cycle[1] or self._status == PWMStatus.IDLE):
+        start_due = self._status != PWMStatus.ON and self._duty_cycle[0] >= HEATER_STARTUP_TIMEFRAME and (
+            elapsed >= self._duty_cycle[1] or self._status == PWMStatus.IDLE or self._held is not None
+        )
+
+        # A held pulse starts nothing: it isn't counted, latches no N and isn't capped; the next cycle decides again
+        self._set_held(self._hold if start_due else None)
+        if self._held is not None:
+            # Held in the off phase: IDLE would have the climate heat without PWM
+            if self._status == PWMStatus.IDLE:
+                self._status = PWMStatus.OFF
+                self._last_update = monotonic()
+                timeline.LOGGER.info("pwm OFF")
+            return
+
+        if start_due:
             if self._current_cycle >= cycles_per_hour:
                 if not self._cycles_capped:
                     self._cycles_capped = True
@@ -260,8 +284,31 @@ class PWM:
             timeline.LOGGER.info("pwm OFF")
             return
 
+    def _hot_water_hold(self, boiler: "BoilerState", flame: "FlameState") -> str | None:
+        """Why no pulse may start: the boiler produces hot water, or the hot water delay after a hot water burn runs; None if none applies."""
+        if boiler.hot_water_active:
+            return "hot water"
+
+        if (since := flame.seconds_since_hot_water_burn) is not None and since < self._hot_water_delay:
+            return "hot water delay"
+
+        return None
+
+    def _set_held(self, reason: str | None) -> None:
+        """Record why a due pulse start is held, None if none is; a change is logged on the timeline."""
+        if reason == self._held:
+            return
+
+        if reason is None:
+            timeline.LOGGER.info("pwm hold ended")
+        else:
+            timeline.LOGGER.info("pwm hold (%s)", reason)
+
+        self._held = reason
+
     def _go_idle(self, reason: str) -> None:
-        """Switch to IDLE; leaving ON or OFF is logged on the timeline with `reason`."""
+        """Switch to IDLE, which ends the latched cycles per hour; leaving ON or OFF is logged on the timeline with `reason`."""
+        self._latched_cycles_per_hour = None
         if self._status != PWMStatus.IDLE:
             timeline.LOGGER.info("pwm IDLE (%s)", reason)
             self._status = PWMStatus.IDLE
@@ -347,6 +394,11 @@ class PWM:
     def duty_cycle_branch(self) -> str | None:
         """Short name of the duty cycle branch that applied in the last calculation, e.g. `mid` or `low-duty`; None after a reset."""
         return self._duty_cycle_branch
+
+    @property
+    def hold(self) -> str | None:
+        """Why no pulse may start, as of the last update: `hot water` or `hot water delay`; None if a pulse may start, while a pulse is on, or after a reset."""
+        return self._hold
 
     @property
     def last_duty_cycle_percentage(self) -> Optional[float]:

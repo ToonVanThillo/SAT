@@ -230,6 +230,7 @@
       "system_configuration": {
         "data": {
           "automatic_duty_cycle": "Automatische inschakelduur",
+          "hot_water_delay": "Vertraging na warm water",
           "overshoot_protection": "Overshoot Bescherming (met PWM)",
           "sync_climates_with_mode": "Synchroniseer klimaten met modus",
           "sensor_max_value_age": "Maximale leeftijd van de waarden van de temperatuursensor",
@@ -237,6 +238,7 @@
         },
         "data_description": {
           "automatic_duty_cycle": "Automatische inschakelduur voor Pulsbreedtemodulatie (PWM) in- of uitschakelen.",
+          "hot_water_delay": "Seconden na een warmwaterbranderbeurt waarin PWM geen puls start, bv. de verwarmingsblokkering van de ketel na warm water (300 voor een Junkers Cerapur die de verwarming 5 minuten blokkeert). Zolang de ketel warm water maakt, start er ook geen puls; een puls die al loopt, wordt niet beïnvloed. 0 schakelt de vertraging uit.",
           "overshoot_protection": "Overshoot Bescherming inschakelen met Pulsbreedtemodulatie (PWM) om temperatuur-overshoot van de ketel te voorkomen.",
           "sensor_max_value_age": "De maximale leeftijd van de waarden van de temperatuursensor voordat het als verouderd wordt beschouwd.",
           "window_minimum_open_time": "De minimale tijd dat een raam open moet zijn voordat het systeem reageert."

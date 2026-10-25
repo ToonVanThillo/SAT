@@ -116,7 +116,7 @@ async def test_setpoint_stabilization_disables_with_idle_line(clock, caplog):
     await start_pulse(pwm, clock)
     assert pwm.enabled
     # A burning flame lets the setpoint adjuster follow the boiler; then a cooling down boiler with a higher requested setpoint disables
-    burning = SimpleNamespace(is_active=True, is_inactive=False, latest_on_time_seconds=30, average_on_time_seconds=100)
+    burning = SimpleNamespace(is_active=True, is_inactive=False, latest_on_time_seconds=30, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     clock.tick(5)
     await pwm.update(boiler(flame_active=True), burning, setpoint_for(0.5))  # type: ignore[arg-type]
     assert idle_lines(caplog) == []

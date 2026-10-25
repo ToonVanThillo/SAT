@@ -133,7 +133,7 @@ def boiler(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water=False,
 
 
 def flame(active=False):
-    return SimpleNamespace(is_active=active, is_inactive=not active, latest_on_time_seconds=None, average_on_time_seconds=100)
+    return SimpleNamespace(is_active=active, is_inactive=not active, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
 
 
 def setpoint_for(duty: float) -> float:
@@ -232,6 +232,26 @@ async def test_n_change_mid_off_is_latched(clock):
     assert pwm.cycles_per_hour == 4
     assert pwm.state.duty_cycle == (450, 450)
     assert pwm.state.status == PWMStatus.OFF
+
+
+async def test_idle_releases_the_latch_before_a_low_duty_off_phase(clock):
+    pwm = make_pwm()
+    pwm.update_cycles_per_hour(-5)
+    await start_pulse(pwm, clock, 0.5)
+    assert pwm.cycles_per_hour == 4
+
+    # Missing values end the pulse; N changes while idle
+    CURVE.value = None
+    await step(pwm, clock, 0.5, 10)
+    assert pwm.state.status == PWMStatus.IDLE
+    CURVE.value = 30.0
+    pwm.update_cycles_per_hour(20)
+
+    # Below the minimum duty the PWM goes from idle to off without a pulse
+    await step(pwm, clock, 0.0, 10)
+
+    assert pwm.state.status == PWMStatus.OFF
+    assert pwm.cycles_per_hour == 2
 
 
 async def test_off_phase_beyond_twice_the_cycle_releases_latch(clock):
@@ -425,11 +445,10 @@ async def test_below_minimum_duty_never_starts_a_pulse(clock, flame_active, hot_
 
 
 @pytest.mark.parametrize("flame_active", [False, True])
-@pytest.mark.parametrize("hot_water", [False, True])
-async def test_just_above_minimum_duty_starts_a_pulse(clock, flame_active, hot_water):
+async def test_just_above_minimum_duty_starts_a_pulse(clock, flame_active):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(20)
-    await step(pwm, clock, 0.06, flame_active=flame_active, hot_water=hot_water)
+    await step(pwm, clock, 0.06, flame_active=flame_active)
     assert pwm.status == PWMStatus.ON
     assert pwm.duty_cycle_branch == "low"
 
