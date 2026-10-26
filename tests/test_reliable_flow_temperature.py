@@ -1,7 +1,8 @@
 """The pump state and the reliable flow temperature: what makes a reading reliable, what reads it, and the diagnostic sensor.
 
-A combi boiler may stop its pump straight after a hot water draw; the water left in the boiler then reads stale and too high until the
-pump runs again. The control logic reads the last reliable reading instead of the raw one.
+A combi boiler may stop its pump straight after a hot water draw; the water left in the boiler then reads stale and too high while the
+pump is off. A reading is reliable when it is live, SAT is not producing hot water, the pump is not off and no hot water signal shows;
+until then the control logic reads the last reliable reading instead of the raw one.
 """
 import logging
 from collections.abc import Iterator
@@ -114,14 +115,9 @@ async def test_a_hot_water_draw_and_a_stopped_pump_do_not_move_the_reliable_temp
     assert coordinator.boiler.hot_water_active
     assert_no_samples()
 
-    # The flame goes off while the pump overruns: unreliable until the pump has stopped and started again; the lower of the raw and
-    # the last reliable reading shows
-    await cycle(curflowtemp=58.0, burngas="off", tapwateractive="off")
+    # The flame goes off as the pump stops, and the water left in the boiler reads high
+    await cycle(curflowtemp=60.0, burngas="off", tapwateractive="off", heatingpump="off")
     assert not coordinator.boiler.hot_water_active
-    assert_no_samples()
-
-    # The pump stops and the water left in the boiler reads high
-    await cycle(curflowtemp=60.0, burngas="off", heatingpump="off")
     assert_no_samples()
     assert coordinator.boiler_temperature == 60.0
     assert coordinator.boiler.flow_temperature == 60.0
@@ -170,18 +166,21 @@ async def test_a_burn_classified_by_a_non_flag_signal_in_the_payload_is_unreliab
 
 @pytest.mark.parametrize(*ems_entry())
 @pytest.mark.usefixtures("loop_entry")
-async def test_a_hot_water_burn_lasts_until_the_flame_goes_off_and_the_pump_restarts(entry, coordinator, boiler_data):
+async def test_a_hot_water_burn_is_unreliable_until_the_flame_goes_off(entry, coordinator, boiler_data):
+    """ACCEPTED LIMITATION 1: without a configured hot water burner power or flow temperature, nothing but the tap flag and the flame tells a
+    hot water burn; the pump overrun after a draw (flame and flag off, pump on) is reliable at once, stagnant water included."""
     await boiler_data(**PUMP_ON | {"curflowtemp": 45.0})
     await boiler_data(**PUMP_ON | {"curflowtemp": 55.0, "burngas": "on", "tapwateractive": "on"})
 
     await boiler_data(**PUMP_ON | {"curflowtemp": 58.0, "burngas": "on", "tapwateractive": "off"})
     assert coordinator.reliable_boiler_temperature == 45.0
 
-    # The flame is off but the pump still runs: the reading stays unreliable until the pump has stopped and started again
+    # The flame is off and no hot-water signal is left: the pump overrun is reliable (without the burner power or flow temperature
+    # signals configured, nothing tells it apart)
     await boiler_data(**PUMP_ON | {"curflowtemp": 52.0, "burngas": "off", "tapwateractive": "off"})
-    assert coordinator.reliable_boiler_temperature == 45.0
+    assert coordinator.reliable_boiler_temperature == 52.0
     await boiler_data(**IDLE | {"heatingpump": "off", "curflowtemp": 52.0})
-    assert coordinator.reliable_boiler_temperature == 45.0
+    assert coordinator.reliable_boiler_temperature == 52.0
 
     await boiler_data(**PUMP_ON | {"curflowtemp": 48.0})
     assert coordinator.reliable_boiler_temperature == 48.0
@@ -218,7 +217,7 @@ async def test_without_a_pump_state_readings_are_reliable_except_during_hot_wate
     assert coordinator.reliable_boiler_temperature == 61.0
 
 
-# Scenario 2: restart
+# Scenario 2: restored and first live readings
 
 async def test_restored_data_gives_the_raw_value_and_is_never_locked_in(ems):
     ems.async_set_updated_data(PUMP_ON | {"curflowtemp": 33.0}, restored=True)
@@ -494,31 +493,11 @@ def test_the_ems_fixture_has_a_pump_that_is_off():
     assert EMS_BOILER_DATA["heatingpump"] == "off"
 
 
-# C and D: the pump transition and the wait after a hot water burn
+# C and D: the pump transition
 
 HEATING_ON = PUMP_ON | {"heatingactive": "on"}
 DRAW = {"burngas": "on", "tapwateractive": "on"}
 OVERRUN = {"burngas": "off", "tapwateractive": "off"}
-
-
-async def after_a_draw(ems, boiler_data) -> None:
-    """Reliable 45, then a draw that ends with the flame off and the pump still on: a wait for the pump restart is pending."""
-    await boiler_data(**PUMP_ON | {"curflowtemp": 45.0})
-    await boiler_data(**PUMP_ON | {"curflowtemp": 55.0} | DRAW)
-    await boiler_data(**PUMP_ON | {"curflowtemp": 56.0} | OVERRUN)
-    assert ems.reliable_boiler_temperature == 45.0
-
-
-async def test_the_pump_overrun_after_a_draw_shows_the_lower_of_the_raw_and_the_last_reliable_value(ems, boiler_data):
-    await after_a_draw(ems, boiler_data)
-
-    # Trapped water reads higher: the last reliable value wins; water that cooled down reads lower: the raw value wins
-    await boiler_data(**PUMP_ON | {"curflowtemp": 62.0} | OVERRUN)
-    assert ems.reliable_boiler_temperature == 45.0
-    await boiler_data(**PUMP_ON | {"curflowtemp": 38.0} | OVERRUN)
-    assert ems.reliable_boiler_temperature == 38.0
-    await boiler_data(**PUMP_ON | {"curflowtemp": 44.0} | OVERRUN)
-    assert ems.reliable_boiler_temperature == 44.0
 
 
 async def test_a_pump_that_is_off_shows_the_lower_of_the_raw_and_the_last_reliable_value(ems, boiler_data):
@@ -534,65 +513,14 @@ async def test_a_pump_that_is_off_shows_the_lower_of_the_raw_and_the_last_reliab
     assert ems.reliable_boiler_temperature == 45.0
 
 
-async def test_a_transition_through_an_unknown_pump_state_ends_the_wait(ems, boiler_data):
-    await after_a_draw(ems, boiler_data)
-
-    await boiler_data(**IDLE | {"heatingpump": "off", "curflowtemp": 55.0})
-    assert ems.reliable_boiler_temperature == 45.0
-
-    # With an unknown pump the wait is ignored: the reading is reliable
-    await boiler_data(**IDLE | {"heatingpump": "unknown", "curflowtemp": 54.0})
-    assert ems.pump_active is None
-    assert ems.reliable_boiler_temperature == 54.0
-
-    # Off, unknown, on is a transition: 56 is reliable, not held back by the last reliable 54
-    await boiler_data(**PUMP_ON | {"curflowtemp": 56.0})
-    assert ems.reliable_boiler_temperature == 56.0
-
-
-async def test_an_unknown_pump_state_between_two_on_states_is_no_transition(ems, boiler_data):
-    await after_a_draw(ems, boiler_data)
-
-    await boiler_data(**IDLE | {"heatingpump": "unknown", "curflowtemp": 54.0})
-    assert ems.reliable_boiler_temperature == 54.0
-
-    # On after on is no restart: the wait is still pending, so the last reliable 54 holds the raw 58 back
-    await boiler_data(**PUMP_ON | {"curflowtemp": 58.0})
-    assert ems.reliable_boiler_temperature == 54.0
-
-
 async def test_restored_data_takes_no_part_in_the_pump_transition(ems, boiler_data):
-    await after_a_draw(ems, boiler_data)
+    await boiler_data(**PUMP_ON | {"curflowtemp": 45.0})
     await boiler_data(**IDLE | {"heatingpump": "off", "curflowtemp": 55.0})
 
     ems.async_set_updated_data(PUMP_ON | {"curflowtemp": 50.0}, restored=True)
 
     assert ems.reliable_boiler_temperature == 45.0
     assert ems.pump_active is not True
-
-
-async def test_a_pump_that_starts_in_the_payload_of_a_draw_does_not_end_its_wait(ems, boiler_data):
-    await boiler_data(**PUMP_ON | {"curflowtemp": 45.0})
-    await boiler_data(**IDLE | {"heatingpump": "off", "curflowtemp": 45.0})
-
-    await boiler_data(**PUMP_ON | {"curflowtemp": 58.0} | DRAW)
-    assert ems.reliable_boiler_temperature == 45.0
-
-    # The flame goes off with the pump on: the draw is not followed by a restart yet
-    await boiler_data(**PUMP_ON | {"curflowtemp": 59.0} | OVERRUN)
-    assert ems.reliable_boiler_temperature == 45.0
-
-
-async def test_a_second_draw_during_the_wait_keeps_it_armed(ems, boiler_data):
-    await after_a_draw(ems, boiler_data)
-
-    await boiler_data(**PUMP_ON | {"curflowtemp": 57.0} | DRAW)
-    await boiler_data(**PUMP_ON | {"curflowtemp": 58.0} | OVERRUN)
-    assert ems.reliable_boiler_temperature == 45.0
-
-    await boiler_data(**IDLE | {"heatingpump": "off", "curflowtemp": 58.0})
-    await boiler_data(**PUMP_ON | {"curflowtemp": 50.0})
-    assert ems.reliable_boiler_temperature == 50.0
 
 
 # The update step on a backend that has no data arrival
@@ -814,7 +742,7 @@ async def test_the_cycle_line_shows_the_reliable_temperature_only_when_it_differ
     assert " flow=60 reliable=45 " in line or " flow=60.0 reliable=45.0 " in line
 
 
-# A hot water burn ends a running pump start; the real restart after it ends the wait
+# A pump that starts with a draw is no pump start, and a hot water burn ends a running one
 
 async def test_a_pump_start_during_a_draw_is_no_pump_start_after_it(ems, boiler_data, freezer):
     active = IDLE | {"selflowtemp": 55, "heatingactive": "on"}
@@ -853,20 +781,7 @@ async def test_a_pump_start_in_the_middle_of_a_draw_ends_with_the_draw(ems, boil
     assert ems.device_status != BoilerStatus.PUMP_STARTING
 
 
-async def test_the_transition_check_runs_before_the_wait_is_armed(ems, boiler_data):
-    await boiler_data(**PUMP_ON | {"curflowtemp": 45.0})
-    await boiler_data(**IDLE | {"heatingpump": "off", "curflowtemp": 55.0} | DRAW)
-
-    # The last payload of the burn: the flame is still on with hot water, the pump goes off to on
-    await boiler_data(**PUMP_ON | {"curflowtemp": 58.0} | DRAW)
-    assert ems.reliable_boiler_temperature == 45.0
-
-    # That transition did not end the wait: the next payload is unreliable
-    await boiler_data(**PUMP_ON | {"curflowtemp": 60.0} | OVERRUN)
-    assert ems.reliable_boiler_temperature == 45.0
-
-
-async def test_without_a_pump_state_no_wait_is_armed_and_no_pump_start_is_recorded(ems, boiler_data):
+async def test_without_a_pump_state_no_pump_start_is_recorded(ems, boiler_data):
     no_pump = NO_PUMP_KEY | {"selflowtemp": 55, "heatingactive": "on"}
 
     await boiler_data(**no_pump | {"curflowtemp": 45.0})
@@ -878,14 +793,14 @@ async def test_without_a_pump_state_no_wait_is_armed_and_no_pump_start_is_record
     assert ems.device_status != BoilerStatus.PUMP_STARTING
 
 
-async def test_a_pump_state_that_appears_after_a_draw_starts_with_no_wait(ems, boiler_data):
+async def test_a_pump_state_that_appears_after_a_draw_is_no_restart(ems, boiler_data):
     no_pump = NO_PUMP_KEY | {"selflowtemp": 55, "heatingactive": "on"}
     await boiler_data(**no_pump | {"curflowtemp": 45.0})
     await boiler_data(**no_pump | {"curflowtemp": 58.0} | DRAW)
     await boiler_data(**no_pump | {"curflowtemp": 50.0} | OVERRUN)
     assert ems.reliable_boiler_temperature == 50.0
 
-    # The pump state becomes known: no wait is pending and the first known state is no restart
+    # The pump state becomes known: the first known state is no restart
     await boiler_data(**IDLE | {"selflowtemp": 55, "heatingactive": "on", "heatingpump": "on", "curflowtemp": 62.0})
 
     assert ems.pump_active is True

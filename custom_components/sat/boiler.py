@@ -24,8 +24,6 @@ class BoilerState:
     hot_water_active: bool
     # From live device data; None if the backend can't tell
     pump_active: bool | None
-    # Whether a hot water burn waits for the pump to go from off to on (see `SatDataUpdateCoordinator.awaiting_pump_restart`)
-    awaiting_pump_restart: bool
 
     setpoint: float | None
     flow_temperature: float | None

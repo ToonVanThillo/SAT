@@ -24,22 +24,21 @@ In HVAC mode OFF the decide phase requests heater OFF and releases the control
 setpoint. In HEAT, when no valve is open, it resets PWM and requests the
 minimum setpoint (10 °C), whatever the calculated setpoint; without radiators
 configured, the valves count as open. When the target, inside or outside
-temperature is missing (see the climate inputs under Snapshot), it ends
-circulation after hot water, resets PWM and requests heater OFF with the
-minimum setpoint, without a max relative modulation or max setpoint; the
-climate's setpoint is not updated. When it requests heater OFF in HEAT (a
-missing temperature, no valve open, the PWM off phase, a calculated setpoint
-that is too cold, or a PWM minimum setpoint at or below the cold threshold),
-it releases the control setpoint only on backends that switch
-heating off with a separate command, and only once the heater channel has
+temperature is missing (see the climate inputs under Snapshot), it resets PWM
+and requests heater OFF with the minimum setpoint, without a max relative
+modulation or max setpoint; the climate's setpoint is not updated. When it
+requests heater OFF in HEAT (a missing temperature, no valve open, the PWM off
+phase, a calculated setpoint that is too cold, or a PWM minimum setpoint at or
+below the cold threshold), it releases the control setpoint only on backends
+that switch heating off with a separate command, and only once the heater
+channel has
 confirmed heating off; until then, and on a backend whose boiler is kept off by
 a low setpoint, it requests the computed setpoint (10 °C, or the PWM minimum
 setpoint). On EMS-ESP that command is `heatingoff`, under which EMS-ESP itself
 keeps sending the boiler a flow temperature of 0, so writing it as well is
 redundant. For now only EMS-ESP releases: on backends without channels a
 release leaves the last setpoint on the device, so they keep requesting the
-minimum until they migrate. Circulation after hot water replaces a heater OFF
-decision with heater ON at its own setpoint, and never releases.
+minimum until they migrate.
 
 Every write goes through this path, including HVAC mode OFF and pushing the
 setpoint to the thermostat. Hot water control is out of scope; where a backend
@@ -47,8 +46,7 @@ supports the hot water setpoint, it keeps its direct write path.
 
 ## Snapshot
 - Built once per cycle by `coordinator.snapshot()`, right after the
-  coordinator's update step (flame state including the count of hot water
-  burns, pump state and the wait for the pump after hot water, reliable flow
+  coordinator's update step (flame state, pump state, reliable flow
   temperature, temperature history, tracker). It is a
   frozen dataclass filled from the coordinator's public properties and its raw
   device values (`readings`, by device key); a backend overrides only the
@@ -217,10 +215,7 @@ did, in order, so a run can be reconstructed from the log alone.
   and the hold ending; a pulse held on for the minimum pulse length beyond its
   duty cycle; overshoot handling starting and ending (evaluated in HEAT cycles
   with all temperatures); inputs going missing, being held, no longer held,
-  and back (an input never valid since start logs nothing); circulation after
-  hot water starting (with the flow temperature, setpoint and duration) and
-  ending (with the reason), a warning at its end when the pump did not start
-  during it, and a warning when the flame went on during it; the PWM
+  and back (an input never valid since start logs nothing); the PWM
   cycles-per-hour cap being reached and
   lifted; flame on and off, the flame-off line with the burn's kind and the
   hot-water signals seen; the control setpoint released or requested again,
@@ -316,8 +311,6 @@ including burns SAT did not request.
   burn's duration. Flame health and the setpoint adjuster read these; the
   setpoint adjuster neither adjusts nor forces its setpoint while SAT is
   producing hot water.
-- Ended hot water burns, also partial ones, are counted in memory; circulation
-  after hot water runs at most once per burn.
 
 ## Flow temperature
 Control logic, and the values derived for it (boiler status, cold
@@ -328,18 +321,21 @@ too high until the pump runs again.
 - Backends report the pump as on, off or unknown (the default). EMS-ESP:
   `heatingpump`, live `on` or `off`; any other value, a missing value or a
   restored one is unknown.
-- A reading is reliable when it is live, SAT is not producing hot water, and
-  the pump is not off. With a known pump state, readings after a hot water burn
-  stay unreliable until the pump is seen going from off to on; an unknown state
-  in between does not break that sequence. This relies on the pump stopping
-  after hot water: on the tested boiler it stops 5-15 s after the burn and,
-  also with heat demand, stays off for about 5 minutes before heating resumes.
-  While the pump state is unknown the wait is ignored, and a hot water burn
-  then arms none. Circulation after hot water runs during this wait.
+- A reading is reliable when it is live, SAT is not producing hot water, the
+  pump is not off, and no hot water signal (see Burns) shows in the live
+  device values, with or without a flame. The tested boiler shows its hot
+  water burner power about 10 s before a draw, while it already starts the
+  pump, and its hot water flow temperature for about a minute after it, longer
+  than its pump overrun of 5–15 s; with both signals configured, the trapped
+  water is therefore never taken as reliable. Without them, as for every
+  EMS-ESP user with the default options, the overrun after a draw counts as
+  reliable; and while SAT's last sent control setpoint equals the hot water
+  flow temperature, that value is no signal. Supporting EMS-ESP beyond the
+  tested setup means making both signals required for EMS-ESP.
 - The reliable flow temperature is the current reading when reliable;
   otherwise the lower of the raw reading and the last reliable one; before the
   first reliable reading since start, the raw reading. It is kept in memory
-  only, as is the wait after a hot water burn.
+  only.
 - It feeds the PWM duty cycle, the setpoint adjuster, the boiler status, the
   dynamic minimum setpoint (v1), and the temperature history, cold
   temperature, derivative and boiler temperature tracker; these take reliable
@@ -347,37 +343,12 @@ too high until the pump runs again.
   overshoot protection calibration read the raw one. The debug cycle line adds
   the reliable value when it differs from the raw one.
 - With a known pump state, the boiler status is pump starting from the pump
-  going from off to on until an update step sees a reliable reading with the
+  going from off to on, unless that update shows a hot water signal or SAT is
+  producing hot water, until an update step sees a reliable reading with the
   flow temperature rising, the pump goes off, 60 s have passed, or a hot water
-  burn starts; a pump that starts with a draw therefore does not count. With
-  an unknown pump state it is guessed from the cold temperature and the
-  derivative.
+  burn starts; an unknown state between off and on is skipped. With an unknown
+  pump state it is guessed from the cold temperature and the derivative.
 - A diagnostic "Reliable Flow Temperature" sensor shows the value control uses.
-
-## Circulation after hot water
-EMS-ESP only, off by default (advanced options). After hot water the pump
-stops and the heat stays in the boiler. Circulation runs the pump by
-requesting heater ON with a control setpoint well below the flow temperature,
-so the boiler pumps without firing.
-- Options: the circulation setpoint, 15–25 °C (default 20), and the duration,
-  10–240 s (default 60).
-- It starts in a HEAT cycle when SAT is waiting for the pump after a hot water
-  burn and the pump is off; the boiler is not producing hot water and the
-  flame is off; a hot water burn has ended since the last circulation started;
-  the time since that burn plus the duration is below flame health's stuck-off
-  limit (300 s); PWM is not on; a valve is open; the error the PID uses is 0
-  or more; the raw flow temperature is at least the setpoint plus 10 °C; and
-  the cycle's own decision is heater OFF. A start blocked by any of these is
-  retried in later cycles; one blocked by the time limit never starts.
-- While it runs, the cycle requests heater ON, the circulation setpoint and the
-  minimum relative modulation. It does not change PWM.
-- It ends at the first of: hot water, also a new hot water burn; the flame
-  going on; PWM switching on; no valve open; an error below 0; the raw flow
-  temperature below the setpoint plus 10 °C; the cycle's own decision not
-  being heater OFF; the duration; and HVAC mode OFF or a missing temperature.
-  The ending cycle applies its own decision, so ending never cuts a PWM pulse.
-- The end is checked once per cycle, so a run can last up to one cycle past
-  the stuck-off limit.
 
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
@@ -443,17 +414,18 @@ so the boiler pumps without firing.
     heater is OFF.
 16. Pump state and a reliable flow temperature for control; pump starting from
     the pump signal.
-17. EMS-ESP: circulate after hot water, so the trapped heat reaches the
-    radiators.
-18. Missing inputs are held for 5 minutes, then the heater is OFF; staleness
+17. Missing inputs are held for 5 minutes, then the heater is OFF; staleness
     from `last_reported`; the event-driven PID keeps its state while the
     inside or target temperature is missing.
+18. Flow reliability from the hot water signals, also with the flame off,
+    instead of waiting for the pump after hot water.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
   knob value; a written setpoint must be below it and reverts to it after a
   few minutes. Under `heatingoff`, EMS-ESP itself sends `selflowtemp` 0 to the
-  boiler, which reads back 5.
+  boiler, which reads back 5. If that knob equals the configured hot water
+  flow temperature, the flow temperature signal also shows during heating.
 - A read-back sampled before a write but received after it (e.g. EMS-ESP
   publishing on an interval) would give a false `OUT_OF_SYNC`. Not observed
   yet; the channel diagnostics should show whether it happens. If so, it is
@@ -474,10 +446,11 @@ so the boiler pumps without firing.
   still be ignored.
 - What flame health's `PWM_SHORT` should detect; a candidate is the boiler
   ending a heating burn while a PWM pulse is still on.
-- EMS-ESP: a boiler that raises `selflowtemp` to its own minimum flow
-  temperature would fire during circulation; a bridged thermostat contact
-  reverting the setpoint during a run would too.
-- Whether `heatingactive` is on during circulation, and whether toggling
-  `heatingoff` restarts the boiler's anti-cycling period.
+- EMS-ESP: for about a minute after a hot water burn the tested boiler keeps
+  its hot water flow temperature as `selflowtemp`. Heating enabled at a low
+  setpoint (20 °C, below the flow temperature) ran the pump without firing
+  during that time, but once ignited when the boiler switched back to heating
+  mode. Why is open; it matters for anything that enables heating right after
+  hot water.
 - Which integrations don't update `last_reported` on a report of the same
   value.

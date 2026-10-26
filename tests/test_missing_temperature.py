@@ -1,5 +1,5 @@
 """The missing-temperature path of the HEAT loop: without the current, target or outside temperature the heater is turned off, PWM is reset
-and, once heater OFF is confirmed, the control setpoint is released. Applies to every user, with or without circulation."""
+and, once heater OFF is confirmed, the control setpoint is released. Applies to every user."""
 import json
 import logging
 from typing import Any

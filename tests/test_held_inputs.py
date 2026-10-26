@@ -684,7 +684,7 @@ async def test_hvac_off_reads_the_inputs_too(hass, start, run, climate, caplog):
     assert about(caplog, "inside temperature") == ["inside temperature missing, holding 20.9 for up to 5 min"]
 
 
-# PWM and circulation through a hold
+# PWM through a hold
 
 FORCED = with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True})
 
@@ -734,37 +734,3 @@ async def test_a_hold_that_runs_out_resets_pwm_and_turns_the_heater_off(hass, cl
     assert climate.pwm.status == PWMStatus.IDLE
     assert result["writes"] == OFF_WRITES
     assert "inside temperature still missing after 5 min, no longer held" in info(caplog)
-
-
-@pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*ems_entry({"circulate_after_hot_water": True, "circulation_duration": 240}))
-async def test_a_running_circulation_continues_through_a_hold(hass, entry, climate, boiler_data, freezer, mqtt_mock, published, caplog):
-    from tests.test_circulation_followups import PUMP_ON, Driver, circulate
-
-    driver = Driver(hass, climate, boiler_data, freezer, mqtt_mock, published, caplog)
-    await circulate(driver)
-    assert driver.line and "(circulation)" in driver.line
-
-    hass.states.async_set(INSIDE, "unavailable")
-    for _ in range(3):
-        await driver.cycle(10, **PUMP_ON)
-        assert "(circulation)" in driver.line
-        assert " held=inside" in driver.line
-        assert "circulation end" not in " ".join(driver.new)
-        assert driver.published_values("heatingoff") == []
-        assert 0 not in driver.published_values("selflowtemp")
-
-
-# Translations: the start window sentence
-
-@pytest.mark.parametrize("language", ["en", "de", "es", "fr", "it", "nl", "pt", "sk"])
-def test_translations_explain_the_start_window(language):
-    from pathlib import Path
-
-    path = Path(__file__).parent.parent / "custom_components/sat/translations" / f"{language}.json"
-    descriptions = json.loads(path.read_text(encoding="utf-8"))["options"]["step"]["advanced"]["data_description"]
-
-    assert "5" in descriptions["circulate_after_hot_water"]
-    assert all(number in descriptions["circulation_duration"] for number in ("5", "240", "60"))
-    # The sentence is an addition: the older text about the control cycle is still there
-    assert "30" in descriptions["circulation_duration"]

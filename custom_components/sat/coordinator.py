@@ -157,9 +157,8 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
         self._boiler_temperature_cold: Optional[float] = None
         self._last_reliable_boiler_temperature: float | None = None
-        # The last live pump state, a hot water burn waiting for a pump restart, and when the pump started (until the flow temperature rises)
+        # The last live pump state, and when the pump started (until the flow temperature rises)
         self._last_pump_active: bool | None = None
-        self._awaiting_pump_restart: bool = False
         self._pump_started_at: float | None = None
         self._boiler_temperatures: list[tuple[float, float]] = []
         self._boiler_temperature_tracker: BoilerTemperatureTracker = BoilerTemperatureTracker()
@@ -265,7 +264,6 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             flame_active=self.flame_active,
             hot_water_active=self.producing_hot_water,
             pump_active=self.pump_active,
-            awaiting_pump_restart=self.awaiting_pump_restart,
 
             status=self.device_status,
             is_active=self.device_active,
@@ -295,7 +293,6 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             median_on_duration_seconds_4h=self._flame.median_on_duration_seconds_4h,
 
             seconds_since_hot_water_burn=self._flame.seconds_since_hot_water_burn,
-            hot_water_burns=self._flame.hot_water_burns,
         )
 
     @property
@@ -349,12 +346,6 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         """Whether the boiler's pump runs, from live device data only; None if the backend can't tell, the default."""
         return None
 
-    @property
-    def awaiting_pump_restart(self) -> bool:
-        """Whether a hot water burn waits for the pump to be seen going from off to on; armed while a hot water burn is on with a
-        known pump state, kept in memory only. Always False while the pump state has been unknown since start."""
-        return self._awaiting_pump_restart
-
     def _live_flame_active(self) -> bool | None:
         """The flame state in the live device data; None while it is unknown, so no flame tracking path observes it.
 
@@ -403,13 +394,12 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         return self.boiler_temperature
 
     def _reliable_reading(self) -> float | None:
-        """The current flow temperature if it is reliable, else None: live, SAT not producing hot water, and with a known pump state
-        the pump on and, after a hot water burn, restarted.
+        """The current flow temperature if it is reliable, else None: live, SAT not producing hot water, the pump not off (on or
+        unknown), and no hot-water signal in the live data (also with the flame off, e.g. before and after a draw).
 
         A stopped pump leaves the water standing in the boiler, so its temperature says nothing about the heating circuit.
         """
-        pump_active = self.pump_active
-        if self.producing_hot_water or pump_active is False or (pump_active and self._awaiting_pump_restart):
+        if self.producing_hot_water or self.pump_active is False or self._hot_water_signals():
             return None
 
         return self._live_boiler_temperature()
@@ -427,24 +417,20 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         Called on live data arrival; the call in the update step is a backstop for backends without per-arrival updates (the
         backends that report a pump state today observe on arrival).
 
-        A live off-to-on transition (an unknown state in between is skipped) ends the wait for a pump restart and starts a pump
-        start, which lasts until the flow temperature rises (see the update step), the pump stops or `MAX_BOILER_TEMPERATURE_AGE`
-        passes. A hot water burn then (re)arms the wait and ends a pump start, so a pump starting with a draw counts as neither.
+        A live off-to-on transition (an unknown state in between is skipped) starts a pump start, unless SAT is producing hot water
+        or the live data shows a hot-water signal, so a pump starting with a draw, or with the boiler preparing one, doesn't count.
+        A pump start lasts until the flow temperature rises (see the update step), the pump stops, a hot water burn starts or
+        `MAX_BOILER_TEMPERATURE_AGE` passes.
         """
         if (pump_active := self.pump_active) is None:
             return
 
-        if pump_active and self._last_pump_active is False:
-            self._awaiting_pump_restart = False
-            self._pump_started_at = monotonic()
-        elif not pump_active:
+        if not pump_active or self._flame.hot_water_burn:
             self._pump_started_at = None
+        elif self._last_pump_active is False and not (self.producing_hot_water or self._hot_water_signals()):
+            self._pump_started_at = monotonic()
 
         self._last_pump_active = pump_active
-
-        if self._flame.hot_water_burn:
-            self._awaiting_pump_restart = True
-            self._pump_started_at = None
 
     @property
     def return_temperature(self) -> Optional[float]:

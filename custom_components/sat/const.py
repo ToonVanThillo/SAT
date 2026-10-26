@@ -64,9 +64,6 @@ CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR = "maximum_relative_modulation_floor"
 CONF_HOT_WATER_BURNER_POWER = "hot_water_burner_power"
 CONF_HOT_WATER_FLOW_TEMPERATURE = "hot_water_flow_temperature"
 CONF_HOT_WATER_DELAY = "hot_water_delay"
-CONF_CIRCULATE_AFTER_HOT_WATER = "circulate_after_hot_water"
-CONF_CIRCULATION_SETPOINT = "circulation_setpoint"
-CONF_CIRCULATION_DURATION = "circulation_duration"
 CONF_ROOMS = "secondary_climates"
 CONF_MQTT_TOPIC = "mqtt_topic"
 CONF_RADIATORS = "main_climates"
@@ -160,10 +157,6 @@ OPTIONS_DEFAULTS = {
     # EMS-ESP hot water signals; unset (None) disables the signal
     CONF_HOT_WATER_BURNER_POWER: None,
     CONF_HOT_WATER_FLOW_TEMPERATURE: None,
-    # EMS-ESP: run the pump without firing after a hot water burn, at this control setpoint (°C) for at most this long (s)
-    CONF_CIRCULATE_AFTER_HOT_WATER: False,
-    CONF_CIRCULATION_SETPOINT: 20,
-    CONF_CIRCULATION_DURATION: 60,
     # Seconds after a hot water burn in which PWM starts no pulse
     CONF_HOT_WATER_DELAY: 0,
     CONF_FORCE_PULSE_WIDTH_MODULATION: False,

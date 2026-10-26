@@ -39,10 +39,8 @@ known bug".
   requests 0 (or the floor) again. The max relative modulation is written twice
   per PWM cycle, and the boiler starts each ON phase at the maximum. Observed
   on EMS-ESP. The same happens after the valves reopen: the boiler reads back
-  ≤ 10, so the first heating cycle requests the configured maximum. Each
-  circulation after hot water also writes it twice, also with PWM not enabled:
-  the floor at its start (it requests 0) and the configured maximum after it
-  ends (the boiler reads back ≤ 10 again). Plan step 6 addresses this.
+  ≤ 10, so the first heating cycle requests the configured maximum. Plan step 6
+  addresses this.
 - Flame health stores no average on-time when a cycle completes: the ON→OFF
   transition doesn't record the duration, and the next ON phase seeds the
   average from its first seconds. PWM treats a missing or short (< 60 s)
@@ -53,33 +51,35 @@ known bug".
   test the flame relit 3:13 after `heatingoff` was switched off, 6:20 after it
   went out. PWM counts the wait as ON time. Needs further testing. On EMS-ESP,
   valves closing and reopening toggle `heatingoff`, so if this holds, each
-  reopen may wait about 3 min before the flame lights. Circulation after hot
-  water toggles `heatingoff` twice per hot water draw (off at its start, on
-  after its end), and a missing temperature once per episode.
+  reopen may wait about 3 min before the flame lights. A missing temperature
+  toggles `heatingoff` once per episode.
 - The temperature tracker skips only a boiler setpoint of exactly
   `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
   heating off counts as a setpoint decrease and starts stabilisation mode at
   the first reliable flow temperature reading under `heatingoff` (the tracker
-  takes reliable readings only; on EMS-ESP not while the pump is off). The end
-  of a circulation after hot water counts too: the read-back drops from the
-  circulation setpoint (default 20) to 5.
-- On EMS-ESP, PREHEATING effectively never shows. The pump is usually off
-  before a heat demand and the cold temperature only takes reliable readings,
-  so it is not above the flow temperature when the pump starts. This has no
+  takes reliable readings only; on EMS-ESP not while the pump is off).
+- On EMS-ESP, PREHEATING effectively never shows (except right after a draw
+  without the hot water signals configured, see below). The pump is usually
+  off before a heat demand and the cold temperature only takes reliable
+  readings, so it is not above the flow temperature when the pump starts. This has no
   control effect: the boiler status shows HEATING_UP, WAITING_FOR_FLAME or
   AT_SETPOINT instead. Flame health no longer treats that phase as transient,
   so it can report STUCK_OFF after `STUCK_OFF_SECONDS` (300 s) of heat demand
-  without a flame. Accepted. Circulation after hot water only starts if it can
-  end within that limit after the hot water burn, but its end is checked once
-  per cycle, so a run can last up to about one cycle past it and briefly
-  report STUCK_OFF. No control effect.
-- With a known pump state (EMS-ESP), readings after a hot water burn stay
-  unreliable until the pump is seen going from off to on. On a boiler that
-  keeps its pump running after hot water, that only happens when the pump next
-  stops and starts again; until then the reliable flow temperature is the lower
-  of the raw reading and the last reliable one. Not seen on the boiler in the
-  field tests, which always stops its pump after hot water. Accepted.
-
+  without a flame. Accepted.
+- On EMS-ESP without a configured hot water burner power or flow temperature,
+  which is every EMS-ESP user with the default options, the pump overrun after
+  a draw counts as reliable at once: only the hot water active flag is a
+  signal, and it is already off. The trapped water at 55–60 °C then reaches
+  the reliable value, so the PWM duty and the boiler status; the tracker; the
+  history, derivative and cold temperature (a cold value of about 58 °C for up
+  to 60 s, so a heating start within that minute can show PREHEATING); and the
+  setpoint adjuster's force step (flow + 10, so a pulse at about 68 °C with the
+  dynamic minimum setpoint v2). Accepted for the tested setup; supporting
+  EMS-ESP beyond it means making both signals required.
+- On EMS-ESP, while SAT's last sent control setpoint equals the configured hot
+  water flow temperature, `selflowtemp` at that value is no signal. After a
+  draw the pump overrun can then count as reliable, if the burner power has
+  already dropped (seen: 134 → 31 at flame-off). Accepted.
 - On EMS-ESP, the hot water flow temperature signal can classify a heating burn
   as hot water from a stale `selflowtemp`: while SAT's control setpoint equals
   the configured hot water flow temperature and the flame is on, a payload that
@@ -89,18 +89,16 @@ known bug".
   setpoint on heater OFF (the sent value becomes none). The burn then counts as
   hot water: it is left out of the flame statistics, SAT treats the boiler as
   producing hot water until the flame goes off, and PWM starts no pulse until
-  the hot water delay has passed after it. Its flow temperature readings are
-  not reliable, nor are those after it until the pump has gone from off to on.
-  Accepted.
+  the hot water delay has passed after it. Flow temperature readings are
+  unreliable while the stale `selflowtemp` shows, also with the flame off, and
+  a pump start in such a payload is not recorded. Accepted.
 - The hot water delay is timed from the end of the last hot water burn as the
   flame tracking saw it, which is kept in memory only. A reload or restart
   forgets it: saving any option reloads the entry, so saved 60 s after a hot
   water burn, PWM can start a pulse inside the boiler's heating lockout. A hot
   water burn that ends during a reload or restart is never observed at all.
-  The same holds for the count of hot water burns, the wait for the pump after
-  hot water, the held climate inputs and a pending PID reset: a hot water burn
-  that ends during a reload gets no circulation after it, and an input missing
-  after a restart has nothing to hold. Accepted for now.
+  The same holds for the held climate inputs and a pending PID reset: an input
+  missing after a restart has nothing to hold. Accepted for now.
 - `Flame.latest_on_time_seconds` returns the previous burn's on time until the
   second update (listener or control cycle) of a new burn, because the first
   update only starts the burn. It feeds the setpoint adjuster's `> 6` check in
@@ -164,8 +162,6 @@ known bug".
   Calculated Setpoint sensor keep their last values while the boiler is off.
   Hold lines are also logged in HVAC OFF, where nothing reads the inputs;
   harmless.
-- During circulation after hot water the boiler status shows ANTI_CYCLING or
-  PUMP_STARTING, and the climate's `hvac_action` shows HEATING. Display only.
 - Outside the control cycle, room target temperatures are still converted with
   a bare `float()` (the `_async_climate_changed` state listener and
   `_async_update_rooms_from_climates` at startup), so a room with a non-numeric
@@ -214,11 +210,11 @@ known bug".
   boiler's own `burnmaxpower` maximum is never confirmed: the boiler reads
   back its own value, so the configured value is resent after every new
   read-back and the channel stays `OUT_OF_SYNC`.
-- On EMS-ESP, whenever heater OFF follows heater ON (the end of a circulation
-  after hot water, each PWM ON→OFF, the first cycle of a missing temperature),
-  the control setpoint is sent as 0 until heater OFF is confirmed, while the
-  boiler reads back 5 under `heatingoff`. The control setpoint channel is
-  briefly `OUT_OF_SYNC` (sent 0, read back 5) until it is released.
+- On EMS-ESP, whenever heater OFF follows heater ON (each PWM ON→OFF, the
+  first cycle of a missing temperature), the control setpoint is sent as 0
+  until heater OFF is confirmed, while the boiler reads back 5 under
+  `heatingoff`. The control setpoint channel is briefly `OUT_OF_SYNC` (sent 0,
+  read back 5) until it is released.
 
 ## Startup and stored data
 - When HA is already running (reload or new entry), the first control loop runs
