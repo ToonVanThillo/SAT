@@ -73,6 +73,12 @@ async def coordinator(hass, entry: MockConfigEntry) -> SatDataUpdateCoordinator:
 
 
 @pytest.fixture
+def no_input_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn off the grace period of missing climate inputs, so a missing input takes the missing-temperature path at once."""
+    monkeypatch.setattr("custom_components.sat.held_input.MISSING_INPUT_GRACE", 0)
+
+
+@pytest.fixture
 def no_publish_delay() -> Iterator[None]:
     """Replace asyncio.sleep globally with a zero-delay yield, so the 1s wait after an MQTT publish does not slow the tests."""
     real_sleep = asyncio.sleep
@@ -112,7 +118,7 @@ def listen(coordinator: SatDataUpdateCoordinator) -> MagicMock:
 def boiler(flame_active: bool) -> BoilerState:
     """Return a heating boiler state with the given flame state."""
     return BoilerState(
-        is_active=True, is_inactive=False, status=BoilerStatus.HEATING_UP, flame_active=flame_active, hot_water_active=False, pump_active=None,
+        is_active=True, is_inactive=False, status=BoilerStatus.HEATING_UP, flame_active=flame_active, hot_water_active=False, pump_active=None, awaiting_pump_restart=False,
         setpoint=50.0, flow_temperature=45.0, reliable_flow_temperature=45.0, return_temperature=40.0, relative_modulation_level=50.0,
     )
 
@@ -122,6 +128,33 @@ async def advance(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: 
     freezer.tick(timedelta(seconds=seconds))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
+
+
+def timeline_since(caplog: LogCaptureFixture, mark: int) -> list[str]:
+    """Return the timeline messages logged after `mark` (a `len(caplog.records)` taken earlier)."""
+    return [r.getMessage() for r in caplog.records[mark:] if r.name == TIMELINE]
+
+
+async def run_one_loop(hass: HomeAssistant, climate: SatClimate, caplog: LogCaptureFixture, mark: int) -> list[str]:
+    """Make sure exactly one climate control loop ran since `mark` and return the timeline messages since then.
+
+    Events (boiler data, sensor changes) debounce a loop of their own, which runs by itself once enough time has passed. If one ran, that is
+    the loop; otherwise the pending debounce handle is dropped and the loop is run here, so a cycle never has two loops racing each other.
+    """
+    await hass.async_block_till_done()
+
+    if not [m for m in timeline_since(caplog, mark) if m.startswith("cycle ")]:
+        cancel = climate._control_heating_loop_unsub
+        if cancel is not None:
+            cancel()
+            climate._control_heating_loop_unsub = None
+        await climate.async_control_heating_loop()
+        await hass.async_block_till_done()
+
+    new = timeline_since(caplog, mark)
+    assert len([m for m in new if m.startswith("cycle ")]) == 1, "exactly one loop per cycle"
+
+    return new
 
 
 async def settle() -> None:

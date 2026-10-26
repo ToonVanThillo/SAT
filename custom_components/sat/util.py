@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry
 
+from .circulation import Circulation
 from .const import *
 from .heating_curve import HeatingCurve
 from .helpers import convert_time_str_to_seconds
@@ -104,6 +105,17 @@ def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulat
     return PWM(
         heating_curve=heating_curve, cycles=cycles, automatic_duty_cycle=automatic_duty_cycle,
         supports_relative_modulation_management=supports_relative_modulation_management, force=force, hot_water_delay=hot_water_delay,
+    )
+
+
+def create_circulation(config_data: Mapping[str, Any], config_options: Mapping[str, Any]) -> Circulation | None:
+    """Create the circulation after hot water if the option is on; None otherwise and on backends other than EMS-ESP, which don't offer it."""
+    if config_data.get(CONF_MODE) != MODE_MQTT_EMS or not config_options.get(CONF_CIRCULATE_AFTER_HOT_WATER):
+        return None
+
+    return Circulation(
+        setpoint=float(config_options.get(CONF_CIRCULATION_SETPOINT, OPTIONS_DEFAULTS[CONF_CIRCULATION_SETPOINT])),
+        duration=float(config_options.get(CONF_CIRCULATION_DURATION, OPTIONS_DEFAULTS[CONF_CIRCULATION_DURATION])),
     )
 
 

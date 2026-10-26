@@ -27,7 +27,7 @@ from tests.const import IDLE, ems_entry, otgw_entry
 from tests.test_climate_loop import message, run_loop
 
 BOILER_STATE = BoilerState(
-    is_active=False, is_inactive=True, status=BoilerStatus.IDLE, flame_active=False, hot_water_active=False, pump_active=None,
+    is_active=False, is_inactive=True, status=BoilerStatus.IDLE, flame_active=False, hot_water_active=False, pump_active=None, awaiting_pump_restart=False,
     setpoint=40.0, flow_temperature=None, reliable_flow_temperature=None, return_temperature=None, relative_modulation_level=None,
 )
 

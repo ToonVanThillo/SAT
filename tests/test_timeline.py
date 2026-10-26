@@ -329,6 +329,7 @@ async def test_cycle_line_is_debug_only(loop_entry, climate, boiler_data, mqtt_m
 
 
 @pytest.mark.parametrize(*ems_entry())
+@pytest.mark.usefixtures("no_input_grace")
 async def test_missing_temperature_short_form(hass, loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**IDLE)
@@ -341,7 +342,7 @@ async def test_missing_temperature_short_form(hass, loop_entry, climate, boiler_
     await climate.async_control_heating_loop()
 
     [line] = cycle_lines(caplog)
-    assert re.fullmatch(r"cycle \d+ \| missing temperature: outside", line)
+    assert re.fullmatch(r"cycle \d+ \| missing temperature: outside \| want setpoint=10 heater=OFF \| sent .*", line)
 
 
 # PWM and flame edges, branches and noise

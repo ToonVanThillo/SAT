@@ -779,6 +779,15 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
                 selector.NumberSelectorConfig(min=30, max=90, step=1, unit_of_measurement="°C")
             )
 
+            # Circulation runs only while the flow temperature is well above its setpoint, so the boiler runs its pump without firing
+            schema[vol.Required(CONF_CIRCULATE_AFTER_HOT_WATER, default=options[CONF_CIRCULATE_AFTER_HOT_WATER])] = bool
+            schema[vol.Required(CONF_CIRCULATION_SETPOINT, default=options[CONF_CIRCULATION_SETPOINT])] = selector.NumberSelector(
+                selector.NumberSelectorConfig(min=15, max=25, step=1, unit_of_measurement="°C")
+            )
+            schema[vol.Required(CONF_CIRCULATION_DURATION, default=options[CONF_CIRCULATION_DURATION])] = selector.NumberSelector(
+                selector.NumberSelectorConfig(min=10, max=240, step=1, unit_of_measurement="s", mode=selector.NumberSelectorMode.BOX)
+            )
+
         schema[vol.Required(CONF_SAMPLE_TIME, default=options[CONF_SAMPLE_TIME])] = selector.TimeSelector()
 
         return self.async_show_form(

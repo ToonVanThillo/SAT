@@ -4,7 +4,7 @@ from homeassistant.util.unit_conversion import TemperatureConverter
 
 class SummerSimmer:
     @staticmethod
-    def index(temperature: float, humidity: float) -> float | None:
+    def index(temperature: float | None, humidity: float | None) -> float | None:
         """
         Calculate the Summer Simmer Index.
 

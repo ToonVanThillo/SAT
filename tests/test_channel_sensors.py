@@ -124,9 +124,7 @@ async def test_cycle_updates_the_states_through_the_signal_before_any_debounce(h
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_verify_alone_updates_the_states_through_the_signal(hass, entry, coordinator, climate, boiler_data, freezer):
-    # Without the outside temperature the climate loop returns after verify, without submitting
-    hass.states.async_set("sensor.test_outside_sensor", "unavailable")
+async def test_coordinator_verify_alone_signals_the_synchro_entities(hass, entry, coordinator, climate, boiler_data, freezer):
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await boiler_data(**EMS_BOILER_DATA)
@@ -137,7 +135,9 @@ async def test_verify_alone_updates_the_states_through_the_signal(hass, entry, c
     freezer.tick(1)
     await boiler_data(selflowtemp=50)
     assert shown(hass).state == "in_sync"
-    await climate.async_control_heating_loop()
+    # A verify without a submit
+    coordinator.verify(coordinator.snapshot())
+    await hass.async_block_till_done()
 
     assert coordinator.channel_states[SETPOINT].sent == 40
     assert shown(hass).state == "out_of_sync"

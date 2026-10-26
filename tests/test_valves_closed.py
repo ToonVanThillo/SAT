@@ -409,7 +409,8 @@ async def test_hvac_off_releases_and_stops_the_heater_whatever_the_valves(hass, 
 
 @pytest.mark.parametrize(*WITH_RADIATOR)
 @pytest.mark.parametrize("hvac_action", ["idle", "heating"])
-async def test_missing_temperature_submits_nothing_whatever_the_valves(hass, entry, climate, coordinator, boiler_data, hvac_action):
+@pytest.mark.usefixtures("no_input_grace")
+async def test_missing_temperature_submits_heater_off_whatever_the_valves(hass, entry, climate, coordinator, boiler_data, hvac_action):
     await boiler_data(**IDLE)
     hass.states.async_set(RADIATOR, "heat", radiator(hvac_action))
     hass.states.async_set(INSIDE, "unavailable")
@@ -419,6 +420,8 @@ async def test_missing_temperature_submits_nothing_whatever_the_valves(hass, ent
     with patch.object(coordinator, "async_submit", wraps=coordinator.async_submit) as submit:
         await climate.async_control_heating_loop()
 
-    submit.assert_not_awaited()
+    submit.assert_awaited_once()
+    desired = submit.await_args.args[0]
+    assert (desired.control_setpoint, desired.heater_state) == (MINIMUM_SETPOINT, DeviceState.OFF)
 
 

@@ -39,8 +39,10 @@ known bug".
   requests 0 (or the floor) again. The max relative modulation is written twice
   per PWM cycle, and the boiler starts each ON phase at the maximum. Observed
   on EMS-ESP. The same happens after the valves reopen: the boiler reads back
-  ≤ 10, so the first heating cycle requests the configured maximum. Plan step 6
-  addresses this.
+  ≤ 10, so the first heating cycle requests the configured maximum. Each
+  circulation after hot water also writes it twice, also with PWM not enabled:
+  the floor at its start (it requests 0) and the configured maximum after it
+  ends (the boiler reads back ≤ 10 again). Plan step 6 addresses this.
 - Flame health stores no average on-time when a cycle completes: the ON→OFF
   transition doesn't record the duration, and the next ON phase seeds the
   average from its first seconds. PWM treats a missing or short (< 60 s)
@@ -51,19 +53,26 @@ known bug".
   test the flame relit 3:13 after `heatingoff` was switched off, 6:20 after it
   went out. PWM counts the wait as ON time. Needs further testing. On EMS-ESP,
   valves closing and reopening toggle `heatingoff`, so if this holds, each
-  reopen may wait about 3 min before the flame lights.
+  reopen may wait about 3 min before the flame lights. Circulation after hot
+  water toggles `heatingoff` twice per hot water draw (off at its start, on
+  after its end), and a missing temperature once per episode.
 - The temperature tracker skips only a boiler setpoint of exactly
   `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
   heating off counts as a setpoint decrease and starts stabilisation mode at
   the first reliable flow temperature reading under `heatingoff` (the tracker
-  takes reliable readings only; on EMS-ESP not while the pump is off).
+  takes reliable readings only; on EMS-ESP not while the pump is off). The end
+  of a circulation after hot water counts too: the read-back drops from the
+  circulation setpoint (default 20) to 5.
 - On EMS-ESP, PREHEATING effectively never shows. The pump is usually off
   before a heat demand and the cold temperature only takes reliable readings,
   so it is not above the flow temperature when the pump starts. This has no
   control effect: the boiler status shows HEATING_UP, WAITING_FOR_FLAME or
   AT_SETPOINT instead. Flame health no longer treats that phase as transient,
   so it can report STUCK_OFF after `STUCK_OFF_SECONDS` (300 s) of heat demand
-  without a flame. Accepted.
+  without a flame. Accepted. Circulation after hot water only starts if it can
+  end within that limit after the hot water burn, but its end is checked once
+  per cycle, so a run can last up to about one cycle past it and briefly
+  report STUCK_OFF. No control effect.
 - With a known pump state (EMS-ESP), readings after a hot water burn stay
   unreliable until the pump is seen going from off to on. On a boiler that
   keeps its pump running after hot water, that only happens when the pump next
@@ -88,7 +97,10 @@ known bug".
   forgets it: saving any option reloads the entry, so saved 60 s after a hot
   water burn, PWM can start a pulse inside the boiler's heating lockout. A hot
   water burn that ends during a reload or restart is never observed at all.
-  Accepted for now.
+  The same holds for the count of hot water burns, the wait for the pump after
+  hot water, the held climate inputs and a pending PID reset: a hot water burn
+  that ends during a reload gets no circulation after it, and an input missing
+  after a restart has nothing to hold. Accepted for now.
 - `Flame.latest_on_time_seconds` returns the previous burn's on time until the
   second update (listener or control cycle) of a new burn, because the first
   update only starts the burn. It feeds the setpoint adjuster's `> 6` check in
@@ -105,7 +117,19 @@ known bug".
   pulse count and disables PWM. Valves that open and close quickly can start
   more than N pulses per hour: each reopen can start a pulse at once from
   IDLE. With the dynamic minimum setpoint (version 2), PWM stays disabled
-  after the valves reopen until overshoot handling enables it again.
+  after the valves reopen until overshoot handling enables it again. The
+  missing-temperature PWM reset does the same once a missing temperature
+  outlasts its 5-minute hold; a held input doesn't reset PWM.
+- The PID's age reset (`sensor_max_value_age`) compares the time since the
+  PID's last update, not the sensors' age. It fires whenever the PID hasn't
+  updated for longer than the max age, which with a short max age means at
+  most sensor events. It sets the last and previous errors to 0, and the
+  sample-time limit (default 60 s) drops the update in the same call, so the
+  proportional term stays 0 until the next state change at least 60 s later.
+- While the live inside or target temperature is missing, the event-driven
+  updates skip the heating curves and autotune along with the PID, so the
+  heating curves don't follow an outside or target change during the gap. This
+  only matters within the 5-minute hold; after it the boiler is off.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with
@@ -119,11 +143,29 @@ known bug".
   room with a non-numeric target or current temperature is skipped by
   `valves_open` without a log. With every radiator unavailable or off,
   `valves_open` is False, so the boiler is switched off (accepted; without
-  radiators configured the valves count as open).
+  radiators configured the valves count as open). An unreadable inside,
+  humidity or outside value is held for 5 minutes, then the boiler is switched
+  off.
 - With thermal comfort, `current_temperature` is None when the humidity sensor
   is unreadable, unavailable or not configured (the config flow allows thermal
-  comfort without one), so HEAT stops after the snapshot phase although the
-  inside temperature is readable. Only a non-numeric humidity value is logged.
+  comfort without one), so HEAT switches the boiler off once the humidity's
+  5-minute hold has run out (at once without a sensor), although the inside
+  temperature is readable. Only a non-numeric humidity value is logged.
+- Staleness of the inside and humidity sensors (`sensor_max_value_age`) uses
+  `last_reported`, which moves on every report, also of the same value.
+  Integrations that don't write a report when the value is unchanged (likely
+  HA MQTT entities without `force_update`, e.g. Zigbee2MQTT, and template
+  sensors) still go stale after the max age without a change: the input is
+  held for 5 minutes, then the boiler is switched off. Mitigation: set the max
+  age to 0, or enable `force_update`.
+- While an input is held, the climate's `current_temperature` and the error
+  values (attributes and sensors) read the live sensors: unknown, and an error
+  of 0. Once the hold has run out, the climate's `setpoint` attribute and the
+  Calculated Setpoint sensor keep their last values while the boiler is off.
+  Hold lines are also logged in HVAC OFF, where nothing reads the inputs;
+  harmless.
+- During circulation after hot water the boiler status shows ANTI_CYCLING or
+  PUMP_STARTING, and the climate's `hvac_action` shows HEATING. Display only.
 - Outside the control cycle, room target temperatures are still converted with
   a bare `float()` (the `_async_climate_changed` state listener and
   `_async_update_rooms_from_climates` at startup), so a room with a non-numeric
@@ -172,6 +214,11 @@ known bug".
   boiler's own `burnmaxpower` maximum is never confirmed: the boiler reads
   back its own value, so the configured value is resent after every new
   read-back and the channel stays `OUT_OF_SYNC`.
+- On EMS-ESP, whenever heater OFF follows heater ON (the end of a circulation
+  after hot water, each PWM ON→OFF, the first cycle of a missing temperature),
+  the control setpoint is sent as 0 until heater OFF is confirmed, while the
+  boiler reads back 5 under `heatingoff`. The control setpoint channel is
+  briefly `OUT_OF_SYNC` (sent 0, read back 5) until it is released.
 
 ## Startup and stored data
 - When HA is already running (reload or new entry), the first control loop runs
@@ -183,7 +230,10 @@ known bug".
   producing hot water only from the first live flag (or another live
   hot-water signal) on. In HVAC OFF the first loop can send heater OFF based on
   stored values, except on EMS-ESP, whose channel writes wait for a live
-  read-back. OpenTherm over MQTT doesn't mark its flow temperature live-only,
+  read-back. The same goes for HEAT when an input has not been valid since
+  start, so nothing is held: the first loop takes the missing-temperature path
+  and, on backends without channels, can switch the heater off from stored
+  values. OpenTherm over MQTT doesn't mark its flow temperature live-only,
   so after a restart a restored reading can become the reliable flow
   temperature, and it enters the temperature history, cold temperature and
   tracker.

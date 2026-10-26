@@ -265,6 +265,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             flame_active=self.flame_active,
             hot_water_active=self.producing_hot_water,
             pump_active=self.pump_active,
+            awaiting_pump_restart=self.awaiting_pump_restart,
 
             status=self.device_status,
             is_active=self.device_active,
@@ -294,6 +295,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             median_on_duration_seconds_4h=self._flame.median_on_duration_seconds_4h,
 
             seconds_since_hot_water_burn=self._flame.seconds_since_hot_water_burn,
+            hot_water_burns=self._flame.hot_water_burns,
         )
 
     @property
@@ -346,6 +348,12 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
     def pump_active(self) -> bool | None:
         """Whether the boiler's pump runs, from live device data only; None if the backend can't tell, the default."""
         return None
+
+    @property
+    def awaiting_pump_restart(self) -> bool:
+        """Whether a hot water burn waits for the pump to be seen going from off to on; armed while a hot water burn is on with a
+        known pump state, kept in memory only. Always False while the pump state has been unknown since start."""
+        return self._awaiting_pump_restart
 
     def _live_flame_active(self) -> bool | None:
         """The flame state in the live device data; None while it is unknown, so no flame tracking path observes it.

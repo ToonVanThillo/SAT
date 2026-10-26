@@ -179,13 +179,14 @@ async def test_cycle_submits_the_full_state_when_nothing_changes(entry, climate,
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_missing_temperature_submits_nothing(hass, entry, climate, coordinator, boiler_data):
+@pytest.mark.usefixtures("no_input_grace")
+async def test_missing_temperature_submits_heater_off(hass, entry, climate, coordinator, boiler_data):
     await boiler_data(**IDLE)
     hass.states.async_set(INSIDE, "unavailable")
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
-    # Only the snapshot phase runs
+    # Decide and reconcile run, with heater OFF at the minimum setpoint
     with patch.object(coordinator, "async_control_heating_loop", wraps=coordinator.async_control_heating_loop) as update, \
             patch.object(coordinator, "verify", wraps=coordinator.verify) as verify, \
             patch.object(coordinator, "async_submit", wraps=coordinator.async_submit) as submit:
@@ -193,7 +194,7 @@ async def test_missing_temperature_submits_nothing(hass, entry, climate, coordin
 
     update.assert_awaited_once()
     verify.assert_called_once_with(coordinator._snapshot)
-    submit.assert_not_awaited()
+    submit.assert_awaited_once_with(DesiredState(control_setpoint=MINIMUM_SETPOINT, heater_state=DeviceState.OFF))
 
 
 @pytest.mark.usefixtures("loop_entry")

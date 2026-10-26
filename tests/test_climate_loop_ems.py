@@ -89,16 +89,19 @@ async def test_humidity_is_exposed_as_attribute(hass, entry, climate, boiler_dat
 
 @pytest.mark.parametrize(*ems_entry())
 @pytest.mark.parametrize("sensor", [INSIDE, OUTSIDE])
-async def test_loop_publishes_nothing_without_a_temperature(hass, entry, climate, boiler_data, mqtt_mock, published, sensor):
+@pytest.mark.usefixtures("no_input_grace")
+async def test_loop_turns_the_heater_off_without_a_temperature(hass, entry, climate, boiler_data, mqtt_mock, published, sensor):
     await boiler_data(**IDLE)
     hass.states.async_set(sensor, "unavailable")
 
-    assert await run_loop(climate, mqtt_mock, published) == []
+    # Heater OFF at the minimum setpoint (sent as 0), released once heater OFF is confirmed
+    assert await run_loop(climate, mqtt_mock, published) == [message('{"cmd": "selflowtemp", "value": 0}'), message('{"cmd": "heatingoff", "value": "on"}')]
 
 
 @pytest.mark.parametrize(*ems_entry())
 @pytest.mark.parametrize("sensor", [INSIDE, OUTSIDE])
-async def test_loop_publishes_nothing_with_a_non_numeric_temperature(hass, entry, climate, boiler_data, mqtt_mock, published, sensor):
+@pytest.mark.usefixtures("no_input_grace")
+async def test_loop_turns_the_heater_off_with_a_non_numeric_temperature(hass, entry, climate, boiler_data, mqtt_mock, published, sensor):
     await boiler_data(**IDLE)
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
@@ -109,7 +112,7 @@ async def test_loop_publishes_nothing_with_a_non_numeric_temperature(hass, entry
 
     await climate.async_control_heating_loop()
 
-    assert published() == []
+    assert published() == [message('{"cmd": "selflowtemp", "value": 0}'), message('{"cmd": "heatingoff", "value": "on"}')]
 
 
 # Heater state

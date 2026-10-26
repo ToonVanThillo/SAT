@@ -23,9 +23,14 @@ Each cycle has three phases, in this order:
 In HVAC mode OFF the decide phase requests heater OFF and releases the control
 setpoint. In HEAT, when no valve is open, it resets PWM and requests the
 minimum setpoint (10 °C), whatever the calculated setpoint; without radiators
-configured, the valves count as open. When it requests heater OFF in HEAT (no
-valve open, the PWM off phase, a calculated setpoint that is too cold, or a PWM
-minimum setpoint at or below the cold threshold), it releases the control setpoint only on backends that switch
+configured, the valves count as open. When the target, inside or outside
+temperature is missing (see the climate inputs under Snapshot), it ends
+circulation after hot water, resets PWM and requests heater OFF with the
+minimum setpoint, without a max relative modulation or max setpoint; the
+climate's setpoint is not updated. When it requests heater OFF in HEAT (a
+missing temperature, no valve open, the PWM off phase, a calculated setpoint
+that is too cold, or a PWM minimum setpoint at or below the cold threshold),
+it releases the control setpoint only on backends that switch
 heating off with a separate command, and only once the heater channel has
 confirmed heating off; until then, and on a backend whose boiler is kept off by
 a low setpoint, it requests the computed setpoint (10 °C, or the PWM minimum
@@ -33,8 +38,8 @@ setpoint). On EMS-ESP that command is `heatingoff`, under which EMS-ESP itself
 keeps sending the boiler a flow temperature of 0, so writing it as well is
 redundant. For now only EMS-ESP releases: on backends without channels a
 release leaves the last setpoint on the device, so they keep requesting the
-minimum until they migrate. In HEAT with a missing or unreadable
-temperature, only the snapshot phase and the PWM cycle-frequency update run.
+minimum until they migrate. Circulation after hot water replaces a heater OFF
+decision with heater ON at its own setpoint, and never releases.
 
 Every write goes through this path, including HVAC mode OFF and pushing the
 setpoint to the thermostat. Hot water control is out of scope; where a backend
@@ -42,7 +47,8 @@ supports the hot water setpoint, it keeps its direct write path.
 
 ## Snapshot
 - Built once per cycle by `coordinator.snapshot()`, right after the
-  coordinator's update step (flame state, pump state, reliable flow
+  coordinator's update step (flame state including the count of hot water
+  burns, pump state and the wait for the pump after hot water, reliable flow
   temperature, temperature history, tracker). It is a
   frozen dataclass filled from the coordinator's public properties and its raw
   device values (`readings`, by device key); a backend overrides only the
@@ -59,8 +65,24 @@ supports the hot water setpoint, it keeps its direct write path.
   storage are marked as restored until the first live message arrives.
 - The climate captures its own inputs (target temperature, inside temperature
   including thermal comfort, outside temperature, valve state) once at the start
-  of each cycle, in a frozen dataclass. Areas still read their sensors on
-  access.
+  of each cycle, also in HVAC mode OFF, in a frozen dataclass. Areas still read
+  their sensors on access.
+- An input is missing when its entity is absent, unavailable or not a finite
+  number; the inside and humidity sensors also when their last report
+  (`last_reported`, which also moves on a report of the same value) is older
+  than the configured maximum age. Outside entities have no age check. A
+  missing target, inside or outside temperature, or humidity with thermal
+  comfort, keeps its last valid value for less than 5 minutes after the last
+  cycle that read it as valid; with thermal comfort the inside temperature is
+  computed from the held values. After that, or without a valid value since
+  start, it is missing for the decide phase. Held values are kept in memory
+  only. A missing flow temperature is not a missing input; it only sends PWM
+  to idle.
+- Until the PID moves into the cycle (plan item 5), the PID, heating curve and
+  autotune are updated on sensor events from live values. While the live
+  inside or target temperature is missing, these updates are skipped and the
+  PID keeps its state; a PID reset requested meanwhile (target, HVAC mode or
+  area change) is done once both are back, without resetting PWM again.
 
 ## Desired state
 - A `DesiredState` holds one optional value per controllable quantity: control
@@ -194,7 +216,12 @@ did, in order, so a run can be reconstructed from the log alone.
   with the reason); a pulse start held for hot water or the hot water delay,
   and the hold ending; a pulse held on for the minimum pulse length beyond its
   duty cycle; overshoot handling starting and ending (evaluated in HEAT cycles
-  with all temperatures); the PWM cycles-per-hour cap being reached and
+  with all temperatures); inputs going missing, being held, no longer held,
+  and back (an input never valid since start logs nothing); circulation after
+  hot water starting (with the flow temperature, setpoint and duration) and
+  ending (with the reason), a warning at its end when the pump did not start
+  during it, and a warning when the flame went on during it; the PWM
+  cycles-per-hour cap being reached and
   lifted; flame on and off, the flame-off line with the burn's kind and the
   hot-water signals seen; the control setpoint released or requested again,
   with the reason, on backends that release it (those with a control-setpoint
@@ -203,9 +230,11 @@ did, in order, so a run can be reconstructed from the log alone.
   logged. Rewrites of a channel that rewrites every cycle, or of a write-only
   channel, are not logged at info.
 - At debug, one line per cycle after reconciliation, numbered with the
-  snapshot's cycle number: the inputs, boiler values, PWM state, duty and duty
-  rule, the setpoint rule, the desired state as requested, the writes as
-  encoded, and the verify transitions.
+  snapshot's cycle number: the inputs (and which are held), boiler values, PWM
+  state, duty and duty rule, the setpoint rule, the desired state as
+  requested, the writes as encoded, and the verify transitions; in HEAT with a
+  missing temperature, the missing inputs instead of the inputs and setpoint
+  rule.
 - Flame lines are logged as device data arrives, right after the matching
   `burngas` line. Backends without a per-arrival update (ESPHome, switch) log
   them from the coordinator's flame listener or its update step, whichever
@@ -226,6 +255,7 @@ diagnostic, so its history can be compared with the boiler's flow temperature.
   setpoint PWM applies.
 - It updates once per cycle, after the decide phase, and is unknown when the
   climate has no calculated setpoint. It has no attributes.
+- It keeps its last value while a temperature is missing.
 
 ## PWM cycle frequency
 The number of PWM cycles per hour, N, follows the outside temperature captured
@@ -238,12 +268,13 @@ at the start of each cycle.
 - N sets the cycle timing: the normal period 3600/N, the duty ranges in which
   the on-time is held at 180 s or the off-time at 180 s, the duty below which
   no pulse starts, and the maximum number of pulses started per hour (a PWM
-  reset restarts the count).
+  reset, also from no open valve or a missing temperature, restarts the
+  count).
 - N is latched when a pulse starts and holds for that pulse and the off phase
   after it, until the next pulse starts or the off phase exceeds twice the
   latched normal period.
 - A started pulse lasts at least 180 s; only a reset (also when no valve is
-  open), a disable, missing values or an HVAC mode other than HEAT end it
+  open or a temperature is missing), a disable, missing values or an HVAC mode other than HEAT end it
   earlier.
 - Below the minimum duty no pulse starts, also when the flame is on: PWM does
   not take over burns it did not start.
@@ -285,6 +316,8 @@ including burns SAT did not request.
   burn's duration. Flame health and the setpoint adjuster read these; the
   setpoint adjuster neither adjusts nor forces its setpoint while SAT is
   producing hot water.
+- Ended hot water burns, also partial ones, are counted in memory; circulation
+  after hot water runs at most once per burn.
 
 ## Flow temperature
 Control logic, and the values derived for it (boiler status, cold
@@ -302,7 +335,7 @@ too high until the pump runs again.
   after hot water: on the tested boiler it stops 5-15 s after the burn and,
   also with heat demand, stays off for about 5 minutes before heating resumes.
   While the pump state is unknown the wait is ignored, and a hot water burn
-  then arms none.
+  then arms none. Circulation after hot water runs during this wait.
 - The reliable flow temperature is the current reading when reliable;
   otherwise the lower of the raw reading and the last reliable one; before the
   first reliable reading since start, the raw reading. It is kept in memory
@@ -320,6 +353,31 @@ too high until the pump runs again.
   an unknown pump state it is guessed from the cold temperature and the
   derivative.
 - A diagnostic "Reliable Flow Temperature" sensor shows the value control uses.
+
+## Circulation after hot water
+EMS-ESP only, off by default (advanced options). After hot water the pump
+stops and the heat stays in the boiler. Circulation runs the pump by
+requesting heater ON with a control setpoint well below the flow temperature,
+so the boiler pumps without firing.
+- Options: the circulation setpoint, 15–25 °C (default 20), and the duration,
+  10–240 s (default 60).
+- It starts in a HEAT cycle when SAT is waiting for the pump after a hot water
+  burn and the pump is off; the boiler is not producing hot water and the
+  flame is off; a hot water burn has ended since the last circulation started;
+  the time since that burn plus the duration is below flame health's stuck-off
+  limit (300 s); PWM is not on; a valve is open; the error the PID uses is 0
+  or more; the raw flow temperature is at least the setpoint plus 10 °C; and
+  the cycle's own decision is heater OFF. A start blocked by any of these is
+  retried in later cycles; one blocked by the time limit never starts.
+- While it runs, the cycle requests heater ON, the circulation setpoint and the
+  minimum relative modulation. It does not change PWM.
+- It ends at the first of: hot water, also a new hot water burn; the flame
+  going on; PWM switching on; no valve open; an error below 0; the raw flow
+  temperature below the setpoint plus 10 °C; the cycle's own decision not
+  being heater OFF; the duration; and HVAC mode OFF or a missing temperature.
+  The ending cycle applies its own decision, so ending never cuts a PWM pulse.
+- The end is checked once per cycle, so a run can last up to one cycle past
+  the stuck-off limit.
 
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
@@ -387,6 +445,9 @@ too high until the pump runs again.
     the pump signal.
 17. EMS-ESP: circulate after hot water, so the trapped heat reaches the
     radiators.
+18. Missing inputs are held for 5 minutes, then the heater is OFF; staleness
+    from `last_reported`; the event-driven PID keeps its state while the
+    inside or target temperature is missing.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
@@ -413,3 +474,10 @@ too high until the pump runs again.
   still be ignored.
 - What flame health's `PWM_SHORT` should detect; a candidate is the boiler
   ending a heating burn while a PWM pulse is still on.
+- EMS-ESP: a boiler that raises `selflowtemp` to its own minimum flow
+  temperature would fire during circulation; a bridged thermostat contact
+  reverting the setpoint during a run would too.
+- Whether `heatingactive` is on during circulation, and whether toggling
+  `heatingoff` restarts the boiler's anti-cycling period.
+- Which integrations don't update `last_reported` on a report of the same
+  value.

@@ -46,12 +46,13 @@ from .const import PWMStatus
 from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
 from .entity import SatEntity
 from .errors import Error
+from .held_input import HeldInput
 from .helpers import convert_time_str_to_seconds, float_value, is_state_stale, state_age_seconds
 from .manufacturers.geminox import Geminox
 from .pwm import PWMState
 from .relative_modulation import RelativeModulation, RelativeModulationState
 from .summer_simmer import SummerSimmer
-from .util import create_pid_controller, create_heating_curve_controller, create_pwm_controller, create_minimum_setpoint_controller
+from .util import create_pid_controller, create_heating_curve_controller, create_pwm_controller, create_minimum_setpoint_controller, create_circulation
 
 ATTR_ROOMS = "rooms"
 ATTR_SETPOINT = "setpoint"
@@ -90,6 +91,8 @@ class ClimateInputs:
     current_temperature: float | None
     outside_temperature: float | None
     valves_open: bool
+    # Short names of the inputs read as missing and replaced by their last valid value, in capture order
+    held: tuple[str, ...] = ()
 
 
 class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
@@ -196,8 +199,19 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Create a PWM controller with given configuration options
         self.pwm = create_pwm_controller(self.heating_curve, coordinator.supports_relative_modulation_management, config_entry.data, config_options)
 
+        # Circulation after hot water (EMS-ESP), if enabled
+        self._circulation = create_circulation(config_entry.data, config_options)
+
+        # The inputs of the cycle, each held through a short gap; the humidity only counts with thermal comfort
+        self._held_target = HeldInput("target", "target temperature")
+        self._held_inside = HeldInput("inside", "inside temperature")
+        self._held_outside = HeldInput("outside", "outside temperature")
+        self._held_humidity = HeldInput("humidity", "humidity")
+
         # To log only changes: whether a control setpoint is requested (None until the first request) and whether overshoot handling is on
         self._setpoint_requested: bool | None = None
+        # A PID reset that a change asked for while the inside or target temperature was missing; done once both are back
+        self._pid_reset_pending: bool = False
         self._overshoot_handling: bool = False
 
         if self._simulation:
@@ -826,18 +840,31 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if self.current_outside_temperature is None:
             return
 
-        # Reset the PID controller if the sensor data is too old
+        # Without the inside or target temperature the error would read 0; the PID keeps its state until both are back, and a reset
+        # asked for meanwhile waits for them
+        if self.current_temperature is None or self.target_temperature is None:
+            _LOGGER.debug("Skipping the PID update: the inside or target temperature is missing.")
+            self._pid_reset_pending = self._pid_reset_pending or reset
+            return
+
+        # Reset the PID controller if the sensor data is too old; a pending reset is then moot
         if self._sensor_max_value_age != 0 and monotonic() - self.pid.last_updated > self._sensor_max_value_age:
             self.pid.reset()
             self.areas.pids.reset()
+            self._pid_reset_pending = False
 
         # Calculate the maximum error between the current temperature and the target temperature of all climates
         max_error = self.max_error
 
-        # Make sure we use the latest heating curve value
-        if self.target_temperature is not None:
-            self.areas.heating_curves.update(self.current_outside_temperature)
-            self.heating_curve.update(self.target_temperature, self.current_outside_temperature)
+        self.areas.heating_curves.update(self.current_outside_temperature)
+        self.heating_curve.update(self.target_temperature, self.current_outside_temperature)
+
+        # The PID part of a reset skipped during a gap, under the reset branch's condition; PWM and the calculated setpoint were reset
+        # at the time of the change. A reset call runs the reset branch below instead.
+        if self._pid_reset_pending and not reset and max_error.value != self.pid.last_error:
+            _LOGGER.debug("Running the PID reset deferred while the inside or target temperature was missing (error %s).", max_error.value)
+            self.pid.update_reset(error=max_error, heating_curve_value=self.heating_curve.value)
+        self._pid_reset_pending = False
 
         # Update the PID controller with the maximum error
         if not reset:
@@ -990,12 +1017,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Let the sub know we have run
         self._control_heating_loop_unsub = None
 
-        inputs = ClimateInputs(
-            target_temperature=self.target_temperature,
-            current_temperature=self.current_temperature,
-            outside_temperature=self.current_outside_temperature,
-            valves_open=self.valves_open,
-        )
+        inputs = self._capture_inputs()
 
         # Control the heating through the coordinator
         await self._coordinator.async_control_heating_loop(climate=self, pwm_state=self.pwm.state)
@@ -1007,6 +1029,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         # In HVAC mode OFF the decide phase requests heater OFF and releases the control setpoint
         if self.hvac_mode != HVACMode.HEAT:
+            self._stop_circulation("hvac off", snapshot.boiler)
             desired = DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
             self._log_setpoint_release(desired, "hvac off")
             writes = await self._coordinator.async_submit(desired)
@@ -1017,11 +1040,21 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             ))
             return
 
-        # Stop if the current, target or outside temperature is not available
+        # Without the current, target or outside temperature, request heater OFF; as with no open valve, PWM is reset, so a pulse
+        # doesn't resume when the temperature returns
         if inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
-            missing = {"target": inputs.target_temperature, "inside": inputs.current_temperature, "outside": inputs.outside_temperature}
+            missing = [held.name for held in self._held_inputs() if held.missing]
+            self._stop_circulation("missing temperature", snapshot.boiler)
+            self.pwm.reset("missing temperature")
+            async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
+
+            desired = DesiredState(control_setpoint=RELEASE if self._heater_off_releases_setpoint() else MINIMUM_SETPOINT, heater_state=DeviceState.OFF)
+            self._log_setpoint_release(desired, "missing temperature")
+            writes = await self._coordinator.async_submit(desired)
+
             timeline.cycle(snapshot.cycle, lambda: (
-                "missing temperature: " + " ".join(name for name, value in missing.items() if value is None), timeline.verified(changes)
+                "missing temperature: " + " ".join(missing),
+                f"want {timeline.desired(desired)}", f"sent {timeline.writes(writes)}", timeline.verified(changes)
             ))
             return
 
@@ -1058,10 +1091,12 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Request the relative modulation value, if supported
         relative_modulation = await self._async_control_relative_modulation(snapshot)
 
+        # The worst error, which the PID controls on
+        max_error = self.get_max_error(self.get_error(inputs.target_temperature, inputs.current_temperature))
+
         # Control the integral (if exceeded the time limit)
         if self.heating_curve.value is not None:
-            error = self.get_error(inputs.target_temperature, inputs.current_temperature)
-            self.pid.update_integral(self.get_max_error(error), self.heating_curve.value)
+            self.pid.update_integral(max_error, self.heating_curve.value)
 
         # Control our areas
         await self.areas.async_control_heating_loops()
@@ -1076,7 +1111,14 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.status)
 
         heater_state = self._heater_state(self._setpoint)
-        if heater_state == DeviceState.OFF and self._coordinator.releases_control_setpoint_when_heater_off and self._coordinator.confirmed_value(Quantity.HEATER_STATE) == DeviceState.OFF:
+        if self._circulation is not None and self._circulation.update(
+                snapshot.boiler, snapshot.flame, valves_open=inputs.valves_open, error=max_error.value, pwm_status=self.pwm.status, heater_off=heater_state == DeviceState.OFF,
+        ):
+            # Circulation overrides heater OFF: below the flow temperature, the boiler runs its pump without firing, at the least power
+            control_setpoint, heater_state, setpoint_reason = self._circulation.setpoint, DeviceState.ON, "circulation"
+            if relative_modulation is not None:
+                relative_modulation = MINIMUM_RELATIVE_MODULATION
+        elif heater_state == DeviceState.OFF and self._heater_off_releases_setpoint():
             control_setpoint = RELEASE
 
         desired = DesiredState(control_setpoint=control_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state)
@@ -1085,6 +1127,37 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         timeline.cycle(snapshot.cycle, lambda: self._cycle_segments(snapshot, inputs, setpoint_reason, desired, writes, changes))
 
         self.async_write_ha_state()
+
+    def _heater_off_releases_setpoint(self) -> bool:
+        """Whether a heater OFF request releases the control setpoint: only on backends that switch heating off with a separate command,
+        once the heater channel has confirmed heating off."""
+        return self._coordinator.releases_control_setpoint_when_heater_off and self._coordinator.confirmed_value(Quantity.HEATER_STATE) == DeviceState.OFF
+
+    def _stop_circulation(self, reason: str, boiler: BoilerState) -> None:
+        """End circulation after hot water, if enabled and running, in a cycle that skips the decide phase of HEAT."""
+        if self._circulation is not None:
+            self._circulation.stop(reason, boiler)
+
+    def _held_inputs(self) -> list[HeldInput]:
+        """The held inputs this configuration reads, in capture order."""
+        return [self._held_target, self._held_inside, self._held_outside] + ([self._held_humidity] if self._thermal_comfort else [])
+
+    def _capture_inputs(self) -> ClimateInputs:
+        """Read the cycle's inputs once; an input read as missing keeps its last valid value for up to `MISSING_INPUT_GRACE` seconds.
+
+        With thermal comfort, the inside temperature is the Summer Simmer index of the held inside temperature and the held humidity.
+        """
+        current_temperature = self._held_inside.read(self._get_entity_state_float(self.inside_sensor_entity_id))
+        if self._thermal_comfort:
+            current_temperature = SummerSimmer.index(current_temperature, self._held_humidity.read(self.current_humidity))
+
+        return ClimateInputs(
+            target_temperature=self._held_target.read(self.target_temperature),
+            current_temperature=current_temperature,
+            outside_temperature=self._held_outside.read(self.current_outside_temperature),
+            valves_open=self.valves_open,
+            held=tuple(held.name for held in self._held_inputs() if held.held),
+        )
 
     def _log_setpoint_release(self, desired: DesiredState, reason: str) -> None:
         """Log on the timeline when a requested control setpoint is released (with `reason`) or requested again, across HVAC modes.
@@ -1124,8 +1197,10 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             if controller.hold is not None:
                 pwm += f" hold={controller.hold}"
 
+        held = f" held={','.join(inputs.held)}" if inputs.held else ""
+
         return [
-            f"in target={fmt(inputs.target_temperature)} inside={fmt(inputs.current_temperature)} out={fmt(inputs.outside_temperature)} valves={'open' if inputs.valves_open else 'closed'}",
+            f"in target={fmt(inputs.target_temperature)} inside={fmt(inputs.current_temperature)} out={fmt(inputs.outside_temperature)} valves={'open' if inputs.valves_open else 'closed'}{held}",
             f"boiler flow={fmt(boiler.flow_temperature)}{reliable} flame={fmt(boiler.flame_active)} hw={fmt(boiler.hot_water_active)} active={fmt(boiler.is_active)} status={fmt(boiler.status)}",
             pwm,
             f"setpoint calc={fmt(self._calculated_setpoint)} ({setpoint_reason})",

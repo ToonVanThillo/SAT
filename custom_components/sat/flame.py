@@ -33,6 +33,8 @@ class FlameState:
 
     # Seconds since the last hot water burn ended; None if none has ended yet
     seconds_since_hot_water_burn: float | None
+    # Hot water burns ended since start, partial ones included; a change means another hot water burn has ended
+    hot_water_burns: int
 
 
 class HotWaterSignal(str, Enum):
@@ -120,6 +122,7 @@ class Flame:
         self._burn: _Burn | None = None
         self._flame_off_monotonic: Optional[float] = None
         self._hot_water_burn_end_monotonic: float | None = None
+        self._hot_water_burns: int = 0
 
         # Stored states
         self._last_boiler_state: Optional[BoilerState] = None
@@ -155,6 +158,11 @@ class Flame:
     def seconds_since_hot_water_burn(self) -> float | None:
         """Seconds since the last hot water burn ended, partial ones included; None if none has ended yet."""
         return None if self._hot_water_burn_end_monotonic is None else monotonic() - self._hot_water_burn_end_monotonic
+
+    @property
+    def hot_water_burns(self) -> int:
+        """The number of hot water burns ended since start, partial ones included; it identifies the last one."""
+        return self._hot_water_burns
 
     @property
     def on_since(self) -> Optional[float]:
@@ -291,6 +299,7 @@ class Flame:
 
         if burn.hot_water:
             self._hot_water_burn_end_monotonic = now
+            self._hot_water_burns += 1
 
         # A partial burn adds no cycle and no duration sample
         if burn.partial:
