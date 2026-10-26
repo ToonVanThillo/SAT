@@ -44,8 +44,8 @@ known bug".
 - Flame health stores no average on-time when a cycle completes: the ON→OFF
   transition doesn't record the duration, and the next ON phase seeds the
   average from its first seconds. PWM treats a missing or short (< 60 s)
-  average as short cycling and, while the flame is off, forces its setpoint to
-  flow + 10 °C.
+  average as short cycling and, while the flame is off and SAT is not producing
+  hot water, forces its setpoint to the reliable flow temperature + 10 °C.
 - The boiler's anti-cycle period (burner min period, minimum 3 min) appears to
   start when heating is re-enabled, not when the flame goes out. In a field
   test the flame relit 3:13 after `heatingoff` was switched off, 6:20 after it
@@ -54,7 +54,22 @@ known bug".
   reopen may wait about 3 min before the flame lights.
 - The temperature tracker skips only a boiler setpoint of exactly
   `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
-  heating off counts as a setpoint decrease and starts stabilisation mode.
+  heating off counts as a setpoint decrease and starts stabilisation mode at
+  the first reliable flow temperature reading under `heatingoff` (the tracker
+  takes reliable readings only; on EMS-ESP not while the pump is off).
+- On EMS-ESP, PREHEATING effectively never shows. The pump is usually off
+  before a heat demand and the cold temperature only takes reliable readings,
+  so it is not above the flow temperature when the pump starts. This has no
+  control effect: the boiler status shows HEATING_UP, WAITING_FOR_FLAME or
+  AT_SETPOINT instead. Flame health no longer treats that phase as transient,
+  so it can report STUCK_OFF after `STUCK_OFF_SECONDS` (300 s) of heat demand
+  without a flame. Accepted.
+- With a known pump state (EMS-ESP), readings after a hot water burn stay
+  unreliable until the pump is seen going from off to on. On a boiler that
+  keeps its pump running after hot water, that only happens when the pump next
+  stops and starts again; until then the reliable flow temperature is the lower
+  of the raw reading and the last reliable one. Not seen on the boiler in the
+  field tests, which always stops its pump after hot water. Accepted.
 
 - On EMS-ESP, the hot water flow temperature signal can classify a heating burn
   as hot water from a stale `selflowtemp`: while SAT's control setpoint equals
@@ -65,7 +80,9 @@ known bug".
   setpoint on heater OFF (the sent value becomes none). The burn then counts as
   hot water: it is left out of the flame statistics, SAT treats the boiler as
   producing hot water until the flame goes off, and PWM starts no pulse until
-  the hot water delay has passed after it. Accepted.
+  the hot water delay has passed after it. Its flow temperature readings are
+  not reliable, nor are those after it until the pump has gone from off to on.
+  Accepted.
 - The hot water delay is timed from the end of the last hot water burn as the
   flame tracking saw it, which is kept in memory only. A reload or restart
   forgets it: saving any option reloads the entry, so saved 60 s after a hot
@@ -166,13 +183,19 @@ known bug".
   producing hot water only from the first live flag (or another live
   hot-water signal) on. In HVAC OFF the first loop can send heater OFF based on
   stored values, except on EMS-ESP, whose channel writes wait for a live
-  read-back.
+  read-back. OpenTherm over MQTT doesn't mark its flow temperature live-only,
+  so after a restart a restored reading can become the reliable flow
+  temperature, and it enters the temperature history, cold temperature and
+  tracker.
 - EMS-ESP values are stored only on unload, so after an HA restart the restored
   values can be much older than the restart. In a field test the first cycle
   decided on a restored flow temperature of 48.7 °C and flame on (actual: about
-  27 °C, flame off). The temperature tracker starts inactive and only activates
-  when the flame goes off, so after a restart a heat-up shows as
-  OVERSHOOT_HANDLING until the first flame-off. Flame tracking (burns, flame
+  27 °C, flame off): until the first reliable reading the raw flow temperature
+  stands in for the reliable one, restored or not. A restored flow temperature
+  is never reliable itself. The temperature tracker starts inactive and only
+  activates on a reliable reading with the flame off, so after a restart a
+  heat-up that starts before such a reading shows as OVERSHOOT_HANDLING until
+  the first flame-off with a reliable reading. Flame tracking (burns, flame
   statistics, flame health) ignores a restored flame and starts with the first
   live one. `device_status`, `BoilerState.flame_active` and the temperature
   tracker still read the restored flame, while PWM reads the flame tracking,

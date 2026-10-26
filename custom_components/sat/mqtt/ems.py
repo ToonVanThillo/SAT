@@ -154,6 +154,12 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         return self.data.get(DATA_TAP_WATER_ACTIVE) == DATA_ON
 
     @property
+    def pump_active(self) -> bool | None:
+        # Only a live on or off counts; any other value is unknown
+        value = self.data.live_value(DATA_HEATING_PUMP)
+        return True if value == DATA_ON else False if value == DATA_OFF else None
+
+    @property
     def setpoint(self) -> Optional[float]:
         return float_value(self.data.get(DATA_CONTROL_SETPOINT))
 
@@ -205,6 +211,9 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
 
     def _live_hot_water_active(self) -> bool:
         return self.data.live_value(DATA_TAP_WATER_ACTIVE) == DATA_ON
+
+    def _live_boiler_temperature(self) -> float | None:
+        return float_value(self.data.live_value(DATA_BOILER_TEMPERATURE))
 
     def _hot_water_signals(self) -> frozenset[HotWaterSignal]:
         """The hot-water signals in the live boiler data: `tapwateractive` on; `selburnpow` at the configured hot water burner power;

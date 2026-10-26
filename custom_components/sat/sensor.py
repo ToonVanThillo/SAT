@@ -51,6 +51,7 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
     _async_add_entities([
         SatFlameSensor(coordinator, _config_entry),
         SatBoilerSensor(coordinator, _config_entry),
+        SatReliableFlowTemperatureSensor(coordinator, _config_entry),
         SatManufacturerSensor(coordinator, _config_entry),
         SatErrorValueSensor(coordinator, _config_entry, climate),
         SatHeatingCurveSensor(coordinator, _config_entry, climate),
@@ -324,6 +325,26 @@ class SatBoilerSensor(SatEntity, SensorEntity):
     @property
     def unique_id(self) -> str:
         return f"{self._config_entry.data.get(CONF_NAME).lower()}-boiler-status"
+
+
+class SatReliableFlowTemperatureSensor(SatEntity, SensorEntity):
+    """Diagnostic flow temperature the control logic reads: the current reading if reliable, else the lower of the raw reading and
+    the last reliable one, else (before the first reliable reading) the raw one."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+
+    def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry) -> None:
+        super().__init__(coordinator, config_entry)
+
+        self._attr_name = "Reliable Flow Temperature"
+        self._attr_unique_id = f"{config_entry.data[CONF_NAME].lower()}-reliable-flow-temperature"
+
+    @property
+    def native_value(self) -> float | None:
+        return self._coordinator.reliable_boiler_temperature
 
 
 class SatChannelSynchroSensor(SatEntity, SensorEntity):

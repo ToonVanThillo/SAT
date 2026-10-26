@@ -56,7 +56,7 @@ class MinimumSetpoint:
 
         if self._is_running_normal_mode(boiler_state, pwm_state):
             proportion = 1.0 - (boiler_state.relative_modulation_level / 100.0)
-            proportional_candidate = (proportion * boiler_state.flow_temperature) - 3.0
+            proportional_candidate = (proportion * boiler_state.reliable_flow_temperature) - 3.0
             new_minimum = clamp(proportional_candidate, 30.0)
         else:
             adjustment = (boiler_state.return_temperature - self._base_return_temperature.value) * self._adjustment_factor
@@ -80,5 +80,5 @@ class MinimumSetpoint:
                 pwm_state is PWMStatus.IDLE
                 and to_int(self._relative_modulation_level.value, 0) > 0
                 and (utcnow() - self._relative_modulation_level.last_changed).total_seconds() > 180
-                and math.isclose(boiler_state.flow_temperature, boiler_state.setpoint, abs_tol=1.0)
+                and math.isclose(boiler_state.reliable_flow_temperature, boiler_state.setpoint, abs_tol=1.0)
         )

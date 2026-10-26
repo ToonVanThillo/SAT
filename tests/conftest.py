@@ -112,8 +112,8 @@ def listen(coordinator: SatDataUpdateCoordinator) -> MagicMock:
 def boiler(flame_active: bool) -> BoilerState:
     """Return a heating boiler state with the given flame state."""
     return BoilerState(
-        is_active=True, is_inactive=False, status=BoilerStatus.HEATING_UP, flame_active=flame_active, hot_water_active=False,
-        setpoint=50.0, flow_temperature=45.0, return_temperature=40.0, relative_modulation_level=50.0,
+        is_active=True, is_inactive=False, status=BoilerStatus.HEATING_UP, flame_active=flame_active, hot_water_active=False, pump_active=None,
+        setpoint=50.0, flow_temperature=45.0, reliable_flow_temperature=45.0, return_temperature=40.0, relative_modulation_level=50.0,
     )
 
 

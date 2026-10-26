@@ -174,8 +174,9 @@ class PWM:
             self._cycles_per_hour = cycles_per_hour
 
     async def update(self, boiler: "BoilerState", flame: "FlameState", requested_setpoint: float) -> None:
-        """Update the PWM state based on the output of a PID controller."""
-        if not self._heating_curve.value or requested_setpoint is None or boiler.flow_temperature is None:
+        """Update the PWM state based on the output of a PID controller; the duty cycle and the setpoint adjuster read the reliable flow temperature."""
+        flow_temperature = boiler.reliable_flow_temperature
+        if not self._heating_curve.value or requested_setpoint is None or flow_temperature is None:
             self._go_idle("missing values")
             self._last_update = monotonic()
             # Only shown in the timeline's cycle line, which shouldn't show a stale duty next to IDLE
@@ -183,7 +184,7 @@ class PWM:
             self._duty_cycle_branch = None
             self._hold = None
             self._set_held(None)
-            self._last_boiler_temperature = boiler.flow_temperature
+            self._last_boiler_temperature = flow_temperature
 
             if not self._values_missing:
                 self._values_missing = True
@@ -194,8 +195,8 @@ class PWM:
         self._values_missing = False
 
         if self._last_boiler_temperature is None:
-            self._last_boiler_temperature = boiler.flow_temperature
-            _LOGGER.debug("Initialized last boiler temperature to %.1f°C", boiler.flow_temperature)
+            self._last_boiler_temperature = flow_temperature
+            _LOGGER.debug("Initialized last boiler temperature to %.1f°C", flow_temperature)
 
         if self._first_duty_cycle_start is None or (monotonic() - self._first_duty_cycle_start) > 3600:
             self._current_cycle = 0
@@ -213,16 +214,16 @@ class PWM:
         # Update boiler temperature if heater has just started up
         if self._status == PWMStatus.ON:
             if elapsed <= HEATER_STARTUP_TIMEFRAME:
-                self._last_boiler_temperature = (self._alpha * boiler.flow_temperature + (1 - self._alpha) * self._last_boiler_temperature)
+                self._last_boiler_temperature = (self._alpha * flow_temperature + (1 - self._alpha) * self._last_boiler_temperature)
             else:
-                self._last_boiler_temperature = boiler.flow_temperature
+                self._last_boiler_temperature = flow_temperature
 
-        # Control the adjusted setpoint; a hot water burn says nothing about heating, so it doesn't adjust
+        # Control the adjusted setpoint; hot water says nothing about heating, so it doesn't adjust
         if flame.is_active and not boiler.hot_water_active and boiler.status not in (BoilerStatus.PUMP_STARTING, BoilerStatus.OVERSHOOT_HANDLING) and flame.latest_on_time_seconds is not None and flame.latest_on_time_seconds > 6:
-            target = boiler.flow_temperature - 3
+            target = flow_temperature - 3
             self._setpoint = self._setpoint_adjuster.adjust(target_setpoint=target)
-        elif flame.is_inactive and (flame.average_on_time_seconds is None or flame.average_on_time_seconds < 60):
-            target = boiler.flow_temperature + 10
+        elif flame.is_inactive and not boiler.hot_water_active and (flame.average_on_time_seconds is None or flame.average_on_time_seconds < 60):
+            target = flow_temperature + 10
             self._setpoint = self._setpoint_adjuster.force(target_setpoint=target)
         elif self._setpoint_adjuster.current is not None:
             self._setpoint = self._setpoint_adjuster.current
@@ -264,7 +265,7 @@ class PWM:
             self._current_cycle += 1
             self._status = PWMStatus.ON
             self._last_update = monotonic()
-            self._last_boiler_temperature = boiler.flow_temperature
+            self._last_boiler_temperature = flow_temperature
             self._latched_cycles_per_hour = self._cycles_per_hour
             self._minimum_pulse_held = False
             timeline.LOGGER.info("pwm ON (pulse %d this hour, %d cycles/h)", self._current_cycle, self._latched_cycles_per_hour)

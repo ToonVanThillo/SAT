@@ -1114,6 +1114,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         """The cycle line of a HEAT cycle: inputs, boiler, PWM, the setpoint rule, the desired state, the writes and the verify changes."""
         fmt = timeline.fmt
         boiler = snapshot.boiler
+        # The reliable flow temperature only when it differs from the raw one
+        reliable = "" if boiler.reliable_flow_temperature == boiler.flow_temperature else f" reliable={fmt(boiler.reliable_flow_temperature)}"
         pwm = "pwm ?"
         if (controller := self.pwm) is not None:
             pwm = f"pwm {fmt(controller.status)}"
@@ -1124,7 +1126,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         return [
             f"in target={fmt(inputs.target_temperature)} inside={fmt(inputs.current_temperature)} out={fmt(inputs.outside_temperature)} valves={'open' if inputs.valves_open else 'closed'}",
-            f"boiler flow={fmt(boiler.flow_temperature)} flame={fmt(boiler.flame_active)} hw={fmt(boiler.hot_water_active)} active={fmt(boiler.is_active)} status={fmt(boiler.status)}",
+            f"boiler flow={fmt(boiler.flow_temperature)}{reliable} flame={fmt(boiler.flame_active)} hw={fmt(boiler.hot_water_active)} active={fmt(boiler.is_active)} status={fmt(boiler.status)}",
             pwm,
             f"setpoint calc={fmt(self._calculated_setpoint)} ({setpoint_reason})",
             f"want {timeline.desired(desired)}",

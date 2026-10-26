@@ -156,6 +156,11 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         self.data: SatData = SatData(self.traced_keys)
 
         self._boiler_temperature_cold: Optional[float] = None
+        self._last_reliable_boiler_temperature: float | None = None
+        # The last live pump state, a hot water burn waiting for a pump restart, and when the pump started (until the flow temperature rises)
+        self._last_pump_active: bool | None = None
+        self._awaiting_pump_restart: bool = False
+        self._pump_started_at: float | None = None
         self._boiler_temperatures: list[tuple[float, float]] = []
         self._boiler_temperature_tracker: BoilerTemperatureTracker = BoilerTemperatureTracker()
 
@@ -195,8 +200,8 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
     @property
     def device_status(self) -> BoilerStatus:
-        """Return the current status of the device."""
-        if self.boiler_temperature is None:
+        """Return the current status of the device, comparing the reliable flow temperature."""
+        if (boiler_temperature := self.reliable_boiler_temperature) is None:
             return BoilerStatus.INSUFFICIENT_DATA
 
         if self.producing_hot_water:
@@ -206,15 +211,20 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             return BoilerStatus.IDLE
 
         if self.device_active:
-            if self.boiler_temperature_cold is not None and self.boiler_temperature_cold > self.boiler_temperature:
-                if self.boiler_temperature_derivative is not None and self.boiler_temperature_derivative <= 0:
-                    return BoilerStatus.PUMP_STARTING
+            below_cold = self.boiler_temperature_cold is not None and self.boiler_temperature_cold > boiler_temperature
 
-                if self._boiler_temperature_tracker.active and self.setpoint > self.boiler_temperature:
-                    return BoilerStatus.PREHEATING
+            # With a known pump state its start is seen; otherwise it is guessed from a falling temperature below the cold one
+            if self.pump_active is not None:
+                if self._pump_started_at is not None and seconds_since(self._pump_started_at) < MAX_BOILER_TEMPERATURE_AGE:
+                    return BoilerStatus.PUMP_STARTING
+            elif below_cold and self.boiler_temperature_derivative is not None and self.boiler_temperature_derivative <= 0:
+                return BoilerStatus.PUMP_STARTING
+
+            if below_cold and self._boiler_temperature_tracker.active and self.setpoint > boiler_temperature:
+                return BoilerStatus.PREHEATING
 
         # We assume space-heating mode with a valid setpoint.
-        delta = self.boiler_temperature - self.setpoint
+        delta = boiler_temperature - self.setpoint
 
         # Below the setpoint
         if delta < -BOILER_DEADBAND:
@@ -254,6 +264,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         return BoilerState(
             flame_active=self.flame_active,
             hot_water_active=self.producing_hot_water,
+            pump_active=self.pump_active,
 
             status=self.device_status,
             is_active=self.device_active,
@@ -261,6 +272,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
             setpoint=self.setpoint,
             flow_temperature=self.boiler_temperature,
+            reliable_flow_temperature=self.reliable_boiler_temperature,
             return_temperature=self.return_temperature,
             relative_modulation_level=self.relative_modulation_value,
         )
@@ -330,6 +342,11 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         """
         return self.hot_water_active
 
+    @property
+    def pump_active(self) -> bool | None:
+        """Whether the boiler's pump runs, from live device data only; None if the backend can't tell, the default."""
+        return None
+
     def _live_flame_active(self) -> bool | None:
         """The flame state in the live device data; None while it is unknown, so no flame tracking path observes it.
 
@@ -352,6 +369,74 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
     @property
     def boiler_temperature(self) -> Optional[float]:
         return None
+
+    @property
+    def reliable_boiler_temperature(self) -> float | None:
+        """The flow temperature the control logic reads; display and logging read the raw `boiler_temperature`.
+
+        None while the raw value is None. Otherwise the current reading if it is reliable; if not, the lower of the raw value and
+        the last reliable reading (water trapped after hot water reads too high, standing water that cools down is credible), or
+        the raw value before the first reliable reading.
+        """
+        if (raw := self.boiler_temperature) is None:
+            return None
+
+        if (reading := self._reliable_reading()) is not None:
+            return reading
+
+        return raw if self._last_reliable_boiler_temperature is None else min(raw, self._last_reliable_boiler_temperature)
+
+    def _live_boiler_temperature(self) -> float | None:
+        """The flow temperature from live device data only; None if missing or restored from storage.
+
+        By default `boiler_temperature`, so a backend that restores device data without overriding this (such as OpenTherm over MQTT)
+        counts its restored value as live.
+        """
+        return self.boiler_temperature
+
+    def _reliable_reading(self) -> float | None:
+        """The current flow temperature if it is reliable, else None: live, SAT not producing hot water, and with a known pump state
+        the pump on and, after a hot water burn, restarted.
+
+        A stopped pump leaves the water standing in the boiler, so its temperature says nothing about the heating circuit.
+        """
+        pump_active = self.pump_active
+        if self.producing_hot_water or pump_active is False or (pump_active and self._awaiting_pump_restart):
+            return None
+
+        return self._live_boiler_temperature()
+
+    def _keep_reliable_reading(self) -> float | None:
+        """Keep the current reading as the last reliable one if it is reliable, and return it; None if it isn't."""
+        if (reading := self._reliable_reading()) is not None:
+            self._last_reliable_boiler_temperature = reading
+
+        return reading
+
+    def _observe_pump(self) -> None:
+        """Follow the live pump state, after the burn update; nothing happens while it is unknown.
+
+        Called on live data arrival; the call in the update step is a backstop for backends without per-arrival updates (the
+        backends that report a pump state today observe on arrival).
+
+        A live off-to-on transition (an unknown state in between is skipped) ends the wait for a pump restart and starts a pump
+        start, which lasts until the flow temperature rises (see the update step), the pump stops or `MAX_BOILER_TEMPERATURE_AGE`
+        passes. A hot water burn then (re)arms the wait and ends a pump start, so a pump starting with a draw counts as neither.
+        """
+        if (pump_active := self.pump_active) is None:
+            return
+
+        if pump_active and self._last_pump_active is False:
+            self._awaiting_pump_restart = False
+            self._pump_started_at = monotonic()
+        elif not pump_active:
+            self._pump_started_at = None
+
+        self._last_pump_active = pump_active
+
+        if self._flame.hot_water_burn:
+            self._awaiting_pump_restart = True
+            self._pump_started_at = None
 
     @property
     def return_temperature(self) -> Optional[float]:
@@ -616,24 +701,28 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             manufacturers = ManufacturerFactory.resolve_by_member_id(self.member_id)
             self._manufacturer = manufacturers[0] if len(manufacturers) > 0 else None
 
+        # The tracker, the temperature history and the cold temperature take reliable samples only, not a stale reading repeatedly
+        self._observe_pump()
+        sample = self._keep_reliable_reading()
+
         # Nothing further to do without the temperature
         if self.boiler_temperature is None:
             return
 
         # Handle the temperature tracker
-        if self.setpoint is not None and self.boiler_temperature_derivative is not None and self.device_status is not BoilerStatus.HOT_WATER:
+        if sample is not None and self.setpoint is not None and self.boiler_temperature_derivative is not None:
             self._boiler_temperature_tracker.update(
                 flame_active=self.flame_active,
                 setpoint=round(self.setpoint, 0),
-                boiler_temperature=round(self.boiler_temperature, 0),
+                boiler_temperature=round(sample, 0),
                 boiler_temperature_derivative=self.boiler_temperature_derivative
             )
 
-        # Append current boiler temperature if valid and unique
-        if self.boiler_temperature is not None:
+        # Append the sample if unique
+        if sample is not None:
             current_time = monotonic()
             if not self._boiler_temperatures or self._boiler_temperatures[-1][0] != current_time:
-                self._boiler_temperatures.append((current_time, self.boiler_temperature))
+                self._boiler_temperatures.append((current_time, sample))
 
         # Remove old temperature records beyond the allowed age
         self._boiler_temperatures = [
@@ -642,11 +731,15 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             if seconds_since(timestamp) <= MAX_BOILER_TEMPERATURE_AGE
         ]
 
+        # A pump start ends once the flow temperature rises
+        if self._pump_started_at is not None and sample is not None and (derivative := self.boiler_temperature_derivative) is not None and derivative > 0:
+            self._pump_started_at = None
+
         # Update the cold temperature of the boiler
         if boiler_temperature_cold := self._get_latest_boiler_cold_temperature():
             self._boiler_temperature_cold = boiler_temperature_cold
-        elif self._boiler_temperature_cold is not None:
-            self._boiler_temperature_cold = min(self.boiler_temperature, self._boiler_temperature_cold)
+        elif self._boiler_temperature_cold is not None and sample is not None:
+            self._boiler_temperature_cold = min(sample, self._boiler_temperature_cold)
 
     @callback
     def _update_flame(self, pwm_state: PWMState | None = None) -> None:
@@ -738,6 +831,11 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         # Only once the flame itself is known: a missing flame is no observation, so a burn running at startup stays partial.
         if not restored and (flame_active := self._live_flame_active()) is not None:
             self._flame.observe(flame_active, self._hot_water_signals())
+
+        # Also on arrival, after the burn update, so no pump transition or reliable reading between two cycles is missed
+        if not restored:
+            self._observe_pump()
+            self._keep_reliable_reading()
 
         if self.data.is_dirty():
             # Cancel previous scheduled run, if any

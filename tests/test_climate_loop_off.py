@@ -105,18 +105,18 @@ async def test_switching_off_runs_one_full_cycle(hass, entry, climate, coordinat
 async def test_off_cycles_keep_the_coordinator_state_updating(hass, entry, climate, coordinator, boiler_data, freezer: FrozenDateTimeFactory):
     await climate.async_set_hvac_mode(HVACMode.OFF)
 
-    # Each cycle appends the boiler temperature to the history that feeds the derivative; `heater_on_since` follows `heatingactive`
-    await boiler_data(**IDLE | {"curflowtemp": 40.0, "burngas": "off", "heatingactive": "off"})
+    # Each cycle with the pump on appends the boiler temperature to the history that feeds the derivative; `heater_on_since` follows `heatingactive`
+    await boiler_data(**IDLE | {"heatingpump": "on", "curflowtemp": 40.0, "burngas": "off", "heatingactive": "off"})
     freezer.tick(10)
     await climate.async_control_heating_loop()
-    await boiler_data(**IDLE | {"curflowtemp": 50.0, "burngas": "on", "heatingactive": "on"})
+    await boiler_data(**IDLE | {"heatingpump": "on", "curflowtemp": 50.0, "burngas": "on", "heatingactive": "on"})
     freezer.tick(10)
     await climate.async_control_heating_loop()
 
     assert coordinator.boiler_temperature_derivative == pytest.approx(1.0)
     assert coordinator.heater_on_since is not None
 
-    await boiler_data(**IDLE | {"curflowtemp": 45.0, "burngas": "off", "heatingactive": "off"})
+    await boiler_data(**IDLE | {"heatingpump": "on", "curflowtemp": 45.0, "burngas": "off", "heatingactive": "off"})
     freezer.tick(10)
     await climate.async_control_heating_loop()
     assert coordinator.heater_on_since is None

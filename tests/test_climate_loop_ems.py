@@ -235,16 +235,16 @@ async def test_boiler_attributes_follow_the_boiler_temperature(hass, entry, clim
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
-    await cycle(hass, climate, boiler_data, freezer, **IDLE | {"curflowtemp": 40})
+    await cycle(hass, climate, boiler_data, freezer, **IDLE | {"heatingpump": "on", "curflowtemp": 40})
     assert attributes()["boiler_temperature_cold"] == 40
     assert attributes()["boiler_temperature_derivative"] is None
     assert attributes()["boiler_temperature_tracking"] is False
 
-    await cycle(hass, climate, boiler_data, freezer, **IDLE | {"curflowtemp": 50, "burngas": "on", "heatingactive": "on"})
+    await cycle(hass, climate, boiler_data, freezer, **IDLE | {"heatingpump": "on", "curflowtemp": 50, "burngas": "on", "heatingactive": "on"})
     assert attributes()["boiler_temperature_derivative"] > 0
     assert attributes()["boiler_temperature_cold"] == 40
 
-    await cycle(hass, climate, boiler_data, freezer, **IDLE | {"curflowtemp": 45, "burngas": "on", "heatingactive": "on"})
+    await cycle(hass, climate, boiler_data, freezer, **IDLE | {"heatingpump": "on", "curflowtemp": 45, "burngas": "on", "heatingactive": "on"})
     assert attributes()["boiler_temperature_derivative"] < 0
     assert attributes()["boiler_temperature_cold"] == 40
 

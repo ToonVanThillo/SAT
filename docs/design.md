@@ -42,9 +42,11 @@ supports the hot water setpoint, it keeps its direct write path.
 
 ## Snapshot
 - Built once per cycle by `coordinator.snapshot()`, right after the
-  coordinator's update step (flame state, temperature history, tracker). It is a
+  coordinator's update step (flame state, pump state, reliable flow
+  temperature, temperature history, tracker). It is a
   frozen dataclass filled from the coordinator's public properties and its raw
-  device values (`readings`, by device key), so backends need no changes.
+  device values (`readings`, by device key); a backend overrides only the
+  properties it can read (such as the pump state).
 - Each snapshot carries a cycle number, incremented per snapshot.
 - It holds the device and derived values the control logic reads (boiler state
   including device status, flame state) and the manufacturer, each read once per
@@ -281,7 +283,43 @@ including burns SAT did not request.
 - Flame statistics count heating burns only: cycles in the last hour, the 4 h
   median on-time, the average on-time, the 15 min duty ratio and the last
   burn's duration. Flame health and the setpoint adjuster read these; the
-  setpoint adjuster does not adjust during a hot water burn.
+  setpoint adjuster neither adjusts nor forces its setpoint while SAT is
+  producing hot water.
+
+## Flow temperature
+Control logic, and the values derived for it (boiler status, cold
+temperature, derivative, tracking), read the reliable flow temperature; the
+boiler temperature display and the timeline's `flow=` read the raw one. Some combi boilers stop the pump right after hot
+water, and the trapped water keeps heating up, so the raw reading is stale and
+too high until the pump runs again.
+- Backends report the pump as on, off or unknown (the default). EMS-ESP:
+  `heatingpump`, live `on` or `off`; any other value, a missing value or a
+  restored one is unknown.
+- A reading is reliable when it is live, SAT is not producing hot water, and
+  the pump is not off. With a known pump state, readings after a hot water burn
+  stay unreliable until the pump is seen going from off to on; an unknown state
+  in between does not break that sequence. This relies on the pump stopping
+  after hot water: on the tested boiler it stops 5-15 s after the burn and,
+  also with heat demand, stays off for about 5 minutes before heating resumes.
+  While the pump state is unknown the wait is ignored, and a hot water burn
+  then arms none.
+- The reliable flow temperature is the current reading when reliable;
+  otherwise the lower of the raw reading and the last reliable one; before the
+  first reliable reading since start, the raw reading. It is kept in memory
+  only, as is the wait after a hot water burn.
+- It feeds the PWM duty cycle, the setpoint adjuster, the boiler status, the
+  dynamic minimum setpoint (v1), and the temperature history, cold
+  temperature, derivative and boiler temperature tracker; these take reliable
+  readings only and skip the others. The PID's missing-value check and the
+  overshoot protection calibration read the raw one. The debug cycle line adds
+  the reliable value when it differs from the raw one.
+- With a known pump state, the boiler status is pump starting from the pump
+  going from off to on until an update step sees a reliable reading with the
+  flow temperature rising, the pump goes off, 60 s have passed, or a hot water
+  burn starts; a pump that starts with a draw therefore does not count. With
+  an unknown pump state it is guessed from the cold temperature and the
+  derivative.
+- A diagnostic "Reliable Flow Temperature" sensor shows the value control uses.
 
 ## Testing
 - Characterization tests at the MQTT boundary pin current behaviour before any
@@ -337,17 +375,18 @@ including burns SAT did not request.
     180 s.
 11. Timeline logging: traced boiler values on arrival, channel writes and edges
     at info, one cycle line per cycle at debug.
-<<<<<<< HEAD
 12. PWM starts no pulse below the minimum duty, also with the flame on.
 13. Burns classified as hot water or heating; flame statistics count heating
     burns only.
 14. Follow-ups to burns: last burn duration counts heating burns only, the
     setpoint adjuster pauses during hot water, PWM waits for hot water and the
     hot water delay.
-=======
-12. In HEAT, no open valve resets PWM and requests the minimum setpoint, so the
+15. In HEAT, no open valve resets PWM and requests the minimum setpoint, so the
     heater is OFF.
->>>>>>> e7a3a7d (Turn the boiler off when no valve is open)
+16. Pump state and a reliable flow temperature for control; pump starting from
+    the pump signal.
+17. EMS-ESP: circulate after hot water, so the trapped heat reaches the
+    radiators.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
@@ -374,5 +413,3 @@ including burns SAT did not request.
   still be ignored.
 - What flame health's `PWM_SHORT` should detect; a candidate is the boiler
   ending a heating burn while a PWM pulse is still on.
-- After hot water the pump does not run, so the flow temperature stays high
-  and stale while the boiler sits idle; PWM computes its duty from it.

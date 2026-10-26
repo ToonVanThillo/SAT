@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from .const import MINIMUM_SETPOINT, BoilerStatus
 
@@ -23,11 +22,15 @@ class BoilerState:
 
     flame_active: bool
     hot_water_active: bool
+    # From live device data; None if the backend can't tell
+    pump_active: bool | None
 
-    setpoint: Optional[float]
-    flow_temperature: Optional[float]
-    return_temperature: Optional[float]
-    relative_modulation_level: Optional[float]
+    setpoint: float | None
+    flow_temperature: float | None
+    # What the control logic reads (see `SatDataUpdateCoordinator.reliable_boiler_temperature`); None while the raw one is None
+    reliable_flow_temperature: float | None
+    return_temperature: float | None
+    relative_modulation_level: float | None
 
 
 class BoilerTemperatureTracker:

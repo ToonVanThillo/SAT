@@ -129,7 +129,7 @@ def make_pwm(automatic=True, **overrides) -> PWM:
 
 
 def boiler(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water=False, flow=FLOW):
-    return SimpleNamespace(status=status, flame_active=flame_active, hot_water_active=hot_water, flow_temperature=flow)
+    return SimpleNamespace(status=status, flame_active=flame_active, hot_water_active=hot_water, flow_temperature=flow, reliable_flow_temperature=flow)
 
 
 def flame(active=False):
