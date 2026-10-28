@@ -84,7 +84,7 @@ def _create_cycle_config(options: Mapping[str, Any], maximum_time: int) -> Cycle
     )
 
 
-def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulation_management: bool, config_data: MappingProxyType[str, Any], config_options: MappingProxyType[str, Any]) -> PWM | None:
+def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulation_management: bool, config_data: MappingProxyType[str, Any], config_options: MappingProxyType[str, Any]) -> PWM:
     """Create and return a PWM controller instance with the given configuration options."""
     # Extract the configuration options
     automatic_duty_cycle = bool(config_options.get(CONF_AUTOMATIC_DUTY_CYCLE))

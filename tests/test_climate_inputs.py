@@ -317,8 +317,8 @@ async def test_eco_mode_max_error_ignores_the_areas(hass, entry, climate):
 @pytest.mark.parametrize(*with_data({}))
 async def test_relative_modulation_attributes(entry, climate, boiler_data):
     await boiler_data(**IDLE)
-    attributes = climate.extra_state_attributes
+    boiler = climate.coordinator.boiler
 
-    assert attributes["relative_modulation_state"] == "PULSE_WIDTH_MODULATION_OFF"
-    assert attributes["relative_modulation_enabled"] is True
-    assert attributes["relative_modulation_value"] == 100
+    assert climate.relative_modulation_state.name == "PULSE_WIDTH_MODULATION_OFF"
+    assert climate.relative_modulation.enabled(boiler) is True
+    assert climate.get_relative_modulation_value(boiler) == 100

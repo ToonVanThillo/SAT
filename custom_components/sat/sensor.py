@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import logging
 import typing
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription, SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature, UnitOfVolume
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, Event, EventStateChangedData, callback
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower, UnitOfTemperature, UnitOfTime, UnitOfVolume
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_state_change_event
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
 from .channels import ChannelStatus, Quantity, diagnostic_status, held_problem_expiry
-from .const import CONF_MODE, MODE_SERIAL, CONF_NAME, DOMAIN, COORDINATOR, CLIMATE, MODE_SIMULATOR, CONF_MINIMUM_CONSUMPTION, CONF_MAXIMUM_CONSUMPTION, SIGNAL_CHANNELS_UPDATED, SIGNAL_PWM_UPDATED, PWMStatus
+from .const import CONF_MODE, MODE_SERIAL, CONF_NAME, DOMAIN, COORDINATOR, CLIMATE, MODE_SIMULATOR, CONF_MINIMUM_CONSUMPTION, CONF_MAXIMUM_CONSUMPTION, SIGNAL_CHANNELS_UPDATED, SIGNAL_CLIMATE_UPDATED, SIGNAL_PWM_UPDATED, PWMStatus
 from .coordinator import SatDataUpdateCoordinator
 from .entity import SatEntity, SatClimateEntity
 from .serial import sensor as serial_sensor
@@ -57,6 +59,7 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
         SatHeatingCurveSensor(coordinator, _config_entry, climate),
         SatCalculatedSetpointSensor(coordinator, _config_entry, climate),
     ])
+    _async_add_entities([SatControlSensor(coordinator, _config_entry, climate, description) for description in CONTROL_SENSORS])
 
     if coordinator.supports_relative_modulation_management:
         _async_add_entities([SatCurrentPowerSensor(coordinator, _config_entry)])
@@ -65,7 +68,11 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
             _async_add_entities([SatCurrentConsumptionSensor(coordinator, _config_entry)])
 
     if coordinator.supports_setpoint_management:
-        _async_add_entities([SatPWMStatusSensor(coordinator, _config_entry), SatPWMCyclesPerHourSensor(coordinator, _config_entry, climate)])
+        _async_add_entities([
+            SatPWMStatusSensor(coordinator, _config_entry),
+            SatPWMCyclesPerHourSensor(coordinator, _config_entry, climate),
+            SatPWMDutyCycleSensor(coordinator, _config_entry, climate),
+        ])
 
 
 class SatCurrentPowerSensor(SatEntity, SensorEntity):
@@ -154,17 +161,19 @@ class SatCurrentConsumptionSensor(SatEntity, SensorEntity):
         return f"{self._config_entry.data.get(CONF_NAME).lower()}-boiler-current-consumption"
 
 
-class SatHeatingCurveSensor(SatClimateEntity, SensorEntity):
+class SatClimateValueSensor(SatClimateEntity, SensorEntity):
+    """A sensor of a value of the climate's control loop, written only after each write of the climate state.
+
+    The climate itself writes on every coordinator update, so the coordinator listener that CoordinatorEntity's async_added_to_hass
+    registers is deliberately skipped; it would only double the writes.
+    """
 
     async def async_added_to_hass(self) -> None:
-        async def on_state_change(_event: Event[EventStateChangedData]):
-            self.async_write_ha_state()
+        signal = SIGNAL_CLIMATE_UPDATED.format(self._config_entry.entry_id)
+        self.async_on_remove(async_dispatcher_connect(self.hass, signal, self.async_write_ha_state))
 
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self._climate.entity_id], on_state_change
-            )
-        )
+
+class SatHeatingCurveSensor(SatClimateValueSensor):
 
     @property
     def name(self) -> str:
@@ -181,17 +190,14 @@ class SatHeatingCurveSensor(SatClimateEntity, SensorEntity):
         return UnitOfTemperature.CELSIUS
 
     @property
-    def available(self):
+    def available(self) -> bool:
         """Return availability of the sensor."""
-        return self._climate.extra_state_attributes.get("heating_curve") is not None
+        return self._climate.heating_curve.value is not None
 
     @property
-    def native_value(self) -> float:
-        """Return the state of the device in native units.
-
-        In this case, the state represents the current heating curve value.
-        """
-        return self._climate.extra_state_attributes.get("heating_curve")
+    def native_value(self) -> float | None:
+        """Return the current heating curve value."""
+        return self._climate.heating_curve.value
 
     @property
     def unique_id(self) -> str:
@@ -199,20 +205,10 @@ class SatHeatingCurveSensor(SatClimateEntity, SensorEntity):
         return f"{self._config_entry.data.get(CONF_NAME).lower()}-heating-curve"
 
 
-class SatCalculatedSetpointSensor(SatClimateEntity, SensorEntity):
+class SatCalculatedSetpointSensor(SatClimateValueSensor):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-
-    async def async_added_to_hass(self) -> None:
-        async def on_state_change(_event: Event[EventStateChangedData]):
-            self.async_write_ha_state()
-
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self._climate.entity_id], on_state_change
-            )
-        )
 
     @property
     def name(self) -> str:
@@ -227,26 +223,12 @@ class SatCalculatedSetpointSensor(SatClimateEntity, SensorEntity):
         return f"{self._config_entry.data.get(CONF_NAME).lower()}-calculated-setpoint"
 
 
-class SatErrorValueSensor(SatClimateEntity, SensorEntity):
-
-    async def async_added_to_hass(self) -> None:
-        async def on_state_change(_event: Event[EventStateChangedData]):
-            self.async_write_ha_state()
-
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self._climate.entity_id], on_state_change
-            )
-        )
+class SatErrorValueSensor(SatClimateValueSensor):
+    """The largest error, in °C; no temperature device class, since it is an offset that HA would convert as an absolute temperature."""
 
     @property
     def name(self) -> str:
         return f"Error Value {self._config_entry.data.get(CONF_NAME)}"
-
-    @property
-    def device_class(self):
-        """Return the device class."""
-        return SensorDeviceClass.TEMPERATURE
 
     @property
     def native_unit_of_measurement(self):
@@ -254,17 +236,14 @@ class SatErrorValueSensor(SatClimateEntity, SensorEntity):
         return UnitOfTemperature.CELSIUS
 
     @property
-    def available(self):
-        """Return availability of the sensor."""
-        return self._climate.extra_state_attributes.get("error") is not None
+    def available(self) -> bool:
+        """Always available: the error is 0 while the target or inside temperature is unknown."""
+        return True
 
     @property
     def native_value(self) -> float:
-        """Return the state of the device in native units.
-
-        In this case, the state represents the current error value.
-        """
-        return self._climate.extra_state_attributes.get("error")
+        """Return the largest error of the climate and its areas."""
+        return self._climate.max_error.value
 
     @property
     def unique_id(self) -> str:
@@ -333,6 +312,7 @@ class SatReliableFlowTemperatureSensor(SatEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
@@ -352,6 +332,7 @@ class SatChannelSynchroSensor(SatEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry, quantity: Quantity) -> None:
         super().__init__(coordinator, config_entry)
@@ -399,6 +380,7 @@ class SatPWMStatusSensor(SatEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
     _attr_options = [s.value for s in PWMStatus]
 
     def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry) -> None:
@@ -428,6 +410,7 @@ class SatPWMCyclesPerHourSensor(SatClimateEntity, SensorEntity):
     """Diagnostic cycles per hour the PWM controller uses; latched for the running cycle, otherwise following the outside temperature."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "cycles/h"
 
@@ -450,3 +433,101 @@ class SatPWMCyclesPerHourSensor(SatClimateEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         return self._climate.pwm.cycles_per_hour
+
+
+class SatPWMDutyCycleSensor(SatClimateEntity, SensorEntity):
+    """Diagnostic duty cycle PWM switches with: the on-time as a percentage of the on- and off-time; unknown while PWM has none or both
+    times are 0."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry, climate: SatClimate) -> None:
+        super().__init__(coordinator, config_entry, climate)
+
+        self._attr_name = f"PWM Duty Cycle {config_entry.data.get(CONF_NAME)}"
+        self._attr_unique_id = f"{config_entry.data[CONF_NAME].lower()}-pwm-duty-cycle"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        signal = SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id)
+        self.async_on_remove(async_dispatcher_connect(self.hass, signal, self._on_pwm_updated))
+
+    @callback
+    def _on_pwm_updated(self, _status: PWMStatus) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float | None:
+        if (duty_cycle := self._climate.pwm.duty_cycle) is None:
+            return None
+
+        # A cycle time below a second gives no on- or off-time
+        on_time, off_time = duty_cycle
+        if on_time + off_time == 0:
+            return None
+
+        return round(on_time / (on_time + off_time) * 100, 1)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SatControlSensorEntityDescription(SensorEntityDescription):
+    """A diagnostic sensor of a control-loop value; the key is the suffix of its unique ID."""
+
+    value_fn: Callable[[SatClimate, SatDataUpdateCoordinator], float | None]
+
+
+CONTROL_SENSORS: tuple[SatControlSensorEntityDescription, ...] = (
+    # The PID terms are offsets added to a setpoint; a temperature device class would convert them as absolute temperatures
+    SatControlSensorEntityDescription(
+        key="proportional", name="Proportional", native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda climate, _coordinator: climate.pid.proportional,
+    ),
+    SatControlSensorEntityDescription(
+        key="integral", name="Integral", native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda climate, _coordinator: climate.pid.integral,
+    ),
+    SatControlSensorEntityDescription(
+        key="derivative", name="Derivative", native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda climate, _coordinator: climate.pid.derivative,
+    ),
+    SatControlSensorEntityDescription(key="kp", name="Kp", value_fn=lambda climate, _coordinator: climate.pid.kp),
+    SatControlSensorEntityDescription(key="ki", name="Ki", value_fn=lambda climate, _coordinator: climate.pid.ki),
+    SatControlSensorEntityDescription(key="kd", name="Kd", value_fn=lambda climate, _coordinator: climate.pid.kd),
+    SatControlSensorEntityDescription(
+        key="minimum-setpoint", name="Minimum Setpoint", device_class=SensorDeviceClass.TEMPERATURE, native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda climate, _coordinator: climate.minimum_setpoint_value,
+    ),
+    SatControlSensorEntityDescription(
+        key="autotune-coefficient", name="Autotune Coefficient",
+        value_fn=lambda climate, _coordinator: climate.heating_curve.optimal_coefficient,
+    ),
+    SatControlSensorEntityDescription(
+        key="flame-average-on-time", name="Flame Average On-Time", device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.SECONDS,
+        value_fn=lambda _climate, coordinator: coordinator.flame.average_on_time_seconds,
+    ),
+)
+
+
+class SatControlSensor(SatClimateValueSensor):
+    """Diagnostic sensor of a control-loop value, given by its description; unknown while the value is None."""
+
+    entity_description: SatControlSensorEntityDescription
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry, climate: SatClimate, description: SatControlSensorEntityDescription) -> None:
+        super().__init__(coordinator, config_entry, climate)
+
+        self.entity_description = description
+        self._attr_name = f"{description.name} {config_entry.data.get(CONF_NAME)}"
+        self._attr_unique_id = f"{config_entry.data[CONF_NAME].lower()}-{description.key}"
+
+    @property
+    def native_value(self) -> float | None:
+        return self.entity_description.value_fn(self._climate, self._coordinator)

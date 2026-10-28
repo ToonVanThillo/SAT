@@ -202,9 +202,9 @@ async def test_presentation_reflects_changes_after_the_last_cycle(hass, entry, c
     await boiler_data(**IDLE)
     await climate.async_control_heating_loop()
     assert climate.hvac_action == HVACAction.IDLE
-    assert climate.extra_state_attributes["relative_modulation_state"] == RelativeModulationState.PULSE_WIDTH_MODULATION_OFF.name
+    assert climate.relative_modulation_state == RelativeModulationState.PULSE_WIDTH_MODULATION_OFF
 
     await boiler_data(**IDLE | {"heatingactive": "on", "selflowtemp": 0})
 
     assert climate.hvac_action == HVACAction.HEATING
-    assert climate.extra_state_attributes["relative_modulation_state"] == RelativeModulationState.COLD.name
+    assert climate.relative_modulation_state == RelativeModulationState.COLD

@@ -77,7 +77,7 @@ async def test_translations_have_the_error_and_fields():
 
 # Sensor
 
-@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry())
 async def test_sensor_metadata(hass: HomeAssistant, entry, climate: SatClimate) -> None:
     state = hass.states.get(ENTITY_ID)
@@ -94,14 +94,14 @@ async def test_sensor_metadata(hass: HomeAssistant, entry, climate: SatClimate) 
     assert item.entity_category == EntityCategory.DIAGNOSTIC
 
 
-@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry())
 async def test_created_alongside_the_pwm_status_sensor(hass: HomeAssistant, entry) -> None:
     assert hass.states.get("sensor.pwm_status") is not None
     assert hass.states.get(ENTITY_ID) is not None
 
 
-@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry())
 async def test_sensor_reflects_n_in_use_with_hvac_off(hass: HomeAssistant, entry, climate: SatClimate, boiler_data) -> None:
     """Outside 9.9 degrees gives N=2; the sensor follows every control cycle, including HVAC OFF."""
@@ -121,7 +121,7 @@ async def test_sensor_reflects_n_in_use_with_hvac_off(hass: HomeAssistant, entry
     assert hass.states.get(ENTITY_ID).state == "4"
 
 
-@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry({CONF_CYCLES_PER_HOUR_COLD: 3, CONF_CYCLES_PER_HOUR_MILD: 3}))
 async def test_options_set_the_cycles(hass: HomeAssistant, entry, climate: SatClimate, boiler_data) -> None:
     await boiler_data(**IDLE | {"heatingoff": "on"})
@@ -220,7 +220,7 @@ def test_valid_options_log_no_error(caplog):
     assert not [r for r in caplog.records if r.levelno == logging.ERROR]
 
 
-@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry({CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE: 5, CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE: 5}))
 async def test_equal_temperatures_still_set_up_with_defaults(hass: HomeAssistant, entry, climate: SatClimate, boiler_data, caplog) -> None:
     assert any(r.levelno == logging.ERROR and "Invalid cycles per hour options" in r.getMessage() for r in caplog.get_records("setup"))
@@ -245,7 +245,7 @@ async def test_equal_temperatures_still_set_up_with_defaults(hass: HomeAssistant
 
 # Updates during HEAT
 
-@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry())
 async def test_sensor_updates_during_heat_cycles(hass: HomeAssistant, entry, climate: SatClimate, boiler_data) -> None:
     await boiler_data(**IDLE | {"heatingoff": "on"})

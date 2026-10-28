@@ -128,6 +128,18 @@ known bug".
   updates skip the heating curves and autotune along with the PID, so the
   heating curves don't follow an outside or target change during the gap. This
   only matters within the 5-minute hold; after it the boiler is off.
+- Autotune: the learned coefficient (Autotune Coefficient sensor) is only
+  reported, never used by the control loop. Its two fuzzy adjustment blocks
+  both apply to every sample (the positive block's `< 0.5` branch also catches
+  every negative derivative), so the net adjustment is asymmetric at the
+  boundaries: a derivative of exactly 1.0 gets +0.1 and one of exactly -1.0
+  gets -0.1, against the direction of their neighbours (-0.1 just below 1.0,
+  +0.1 just above -1.0). The first sample sets the derivative to the
+  coefficient itself instead of a difference, which biases it downward (a
+  coefficient above 1 gets -0.2), and a truthiness check treats a previous
+  coefficient of 0.0 as none. It runs on the event-driven updates in any HVAC
+  mode and before the boiler-temperature gate, and it converts the requested
+  setpoint, so the estimate absorbs whatever PID output is present.
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with
@@ -156,26 +168,35 @@ known bug".
   sensors) still go stale after the max age without a change: the input is
   held for 5 minutes, then the boiler is switched off. Mitigation: set the max
   age to 0, or enable `force_update`.
-- While an input is held, the climate's `current_temperature` and the error
-  values (attributes and sensors) read the live sensors: unknown, and an error
-  of 0. Once the hold has run out, the climate's `setpoint` attribute and the
-  Calculated Setpoint sensor keep their last values while the boiler is off.
+- While an input is held, the climate's `current_temperature` and the Error
+  Value sensor read the live sensors: unknown, and an error of 0. Once the hold
+  has run out, the control setpoint (diagnostics download) and the Calculated
+  Setpoint sensor keep their last values while the boiler is off.
   Hold lines are also logged in HVAC OFF, where nothing reads the inputs;
   harmless.
 - Outside the control cycle, room target temperatures are still converted with
   a bare `float()` (the `_async_climate_changed` state listener and
   `_async_update_rooms_from_climates` at startup), so a room with a non-numeric
   target raises there.
-- The climate entity exposes many control-loop values as extra state attributes
-  (setpoints, PID terms, PWM and relative modulation state, errors), several of
-  which change every cycle. HA convention is to keep climate attributes to the
-  standard set and expose such values as separate entities; frequent attribute
-  changes also record a new state each time. Some (heating curve, error) are
-  already duplicated as sensors.
 - Flame Health is unavailable while the flame status is INSUFFICIENT_DATA. In
   HA, unavailable means the device can't be reached; missing data should be
   unknown. On backends that store device data (MQTT, serial) the status stays
   INSUFFICIENT_DATA until the first live flame value arrives.
+- The default activity and away presets are both 10 °C, and setting a target
+  through `async_set_temperature` selects the first preset with that
+  temperature, so setting 10 °C selects activity, never away. Leaving a preset
+  with PRESET_NONE restores its return target through
+  `async_set_target_temperature`, without this matching, but closing the window
+  restores the target from before the window opened through
+  `async_set_temperature`, so the matching runs. The climate stays in activity
+  after the window closes: with preset away (10 °C), an open window past the
+  minimum open time switches to activity, and on closing, the return target of
+  10 °C matches activity again, which `async_set_preset_mode` skips as already
+  set.
+- The `pulse_width_modulation` service enables or disables PWM (disabling
+  clears the duty cycle) without sending `SIGNAL_PWM_UPDATED`, so PWM Status
+  (which shows the status it last received over that signal) stays stale until
+  the next cycle, and PWM Duty Cycle until the next cycle or coordinator update.
 - After the climate is renamed (HA removes and re-adds the entity), room
   temperature sensors are no longer tracked: their listeners are released on
   removal, but `_sensors` keeps their IDs, so `async_track_sensor_temperature`

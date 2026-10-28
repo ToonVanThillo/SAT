@@ -65,6 +65,11 @@ def attributes_of(hass: HomeAssistant, climate: SatClimate) -> dict:
     return dict(state.attributes)
 
 
+def settings_of(climate: SatClimate) -> SatClimateRestoreData:
+    """Return the user settings the climate holds, as it would store them."""
+    return climate.extra_restore_state_data
+
+
 def startup_log(caplog) -> str:
     """Return the messages logged while the entry was set up (fixture phase)."""
     return "\n".join(r.getMessage() for r in caplog.get_records("setup"))
@@ -146,45 +151,41 @@ async def test_the_standard_state_and_user_settings_are_restored(hass, entry, cl
     assert hass.states.get(climate.entity_id).state == "heat"
     assert attributes["temperature"] == 22.5
     assert attributes["preset_mode"] == "away"
-    assert attributes["rooms"] == {ROOM: 20.0, OTHER_ROOM: 18.5}
-    assert attributes["pre_custom_temperature"] == 19.0
-    assert attributes["pre_activity_temperature"] == 17.5
+    settings = settings_of(climate)
+    assert settings.rooms == {ROOM: 20.0, OTHER_ROOM: 18.5}
+    assert settings.pre_custom_temperature == 19.0
+    assert settings.pre_activity_temperature == 17.5
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)
 @pytest.mark.parametrize("restore", [(old_state(**OLD_ATTRIBUTES), EXTRA)], indirect=True)
 async def test_control_state_is_not_restored(hass, entry, climate, restore):
-    attributes = attributes_of(hass, climate)
-
-    assert attributes["integral"] == 0
-    assert attributes["derivative_raw"] == 0
-    assert attributes["pulse_width_modulation_enabled"] is False
-    assert attributes["optimal_coefficient"] != 9.9
-    assert attributes["coefficient_derivative"] != 1.5
-    assert attributes["heating_curve"] != 44.0
-    assert attributes["error"] != 9.0
-    assert attributes["setpoint"] != 55.0
+    assert climate.pid.integral == 0
+    assert climate.pid.raw_derivative == 0
+    assert climate.heating_curve.optimal_coefficient != 9.9
+    assert climate.heating_curve.coefficient_derivative != 1.5
+    assert climate.heating_curve.value != 44.0
+    assert climate.max_error.value != 9.0
+    assert climate.setpoint != 55.0
     assert climate.pwm.enabled is False
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)
 @pytest.mark.parametrize("restore", [(old_state(**OLD_ATTRIBUTES), None)], indirect=True)
 async def test_control_state_matches_a_fresh_start_without_extra_data(hass, entry, climate, restore):
-    attributes = attributes_of(hass, climate)
-
-    assert (attributes["integral"], attributes["derivative_raw"]) == (0, 0)
-    assert attributes["setpoint"] != 55.0
-    assert attributes["pulse_width_modulation_enabled"] is False
+    assert (climate.pid.integral, climate.pid.raw_derivative) == (0, 0)
+    assert climate.setpoint != 55.0
+    assert climate.pwm.enabled is False
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)
 @pytest.mark.parametrize("restore", [(old_state(**OLD_ATTRIBUTES), EXTRA | {"pre_custom_temperature": None, "pre_activity_temperature": None})], indirect=True)
 async def test_stored_none_temperatures_stay_none(hass, entry, climate, restore):
-    attributes = attributes_of(hass, climate)
+    settings = settings_of(climate)
 
-    assert attributes["pre_custom_temperature"] is None
-    assert attributes["pre_activity_temperature"] is None
-    assert attributes["rooms"] == {ROOM: 20.0, OTHER_ROOM: 18.5}
+    assert settings.pre_custom_temperature is None
+    assert settings.pre_activity_temperature is None
+    assert settings.rooms == {ROOM: 20.0, OTHER_ROOM: 18.5}
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)
@@ -196,13 +197,13 @@ async def test_stored_none_temperatures_stay_none(hass, entry, climate, restore)
     (old_state(**OLD_ATTRIBUTES), EXTRA | {"rooms": 5}),
 ], ids=["no-extra", "empty-extra", "missing-keys", "bad-temperature", "bad-rooms"], indirect=True)
 async def test_missing_or_malformed_extra_data_ignores_the_old_attributes(hass, entry, climate, restore):
-    attributes = attributes_of(hass, climate)
+    settings = settings_of(climate)
 
-    assert attributes["pre_custom_temperature"] is None
-    assert attributes["pre_activity_temperature"] is None
+    assert settings.pre_custom_temperature is None
+    assert settings.pre_activity_temperature is None
     # Rooms are rebuilt from the area climates, never from the old attributes
-    assert attributes["rooms"] == {ROOM: 21.0, OTHER_ROOM: 16.0}
-    assert attributes["temperature"] == 22.5
+    assert settings.rooms == {ROOM: 21.0, OTHER_ROOM: 16.0}
+    assert attributes_of(hass, climate)["temperature"] == 22.5
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)
@@ -211,11 +212,11 @@ async def test_missing_or_malformed_extra_data_ignores_the_old_attributes(hass, 
     (old_state(**OLD_ATTRIBUTES), EXTRA | {"rooms": {}}),
 ], ids=["none", "empty"], indirect=True)
 async def test_none_or_empty_stored_rooms_are_rebuilt(hass, entry, climate, restore):
-    attributes = attributes_of(hass, climate)
+    settings = settings_of(climate)
 
-    assert attributes["rooms"] == {ROOM: 21.0, OTHER_ROOM: 16.0}
-    assert attributes["pre_custom_temperature"] == 19.0
-    assert attributes["pre_activity_temperature"] == 17.5
+    assert settings.rooms == {ROOM: 21.0, OTHER_ROOM: 16.0}
+    assert settings.pre_custom_temperature == 19.0
+    assert settings.pre_activity_temperature == 17.5
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)
@@ -231,13 +232,13 @@ async def test_none_or_empty_stored_rooms_are_rebuilt(hass, entry, climate, rest
 ], ids=["unavailable", "unknown-and-no-temperature"], indirect=["area_states"])
 @pytest.mark.parametrize("restore", [None], indirect=True)
 async def test_rebuilt_rooms_skip_unavailable_areas_and_areas_without_a_target(hass, entry, climate, restore, area_states, expected_rooms):
-    assert attributes_of(hass, climate)["rooms"] == expected_rooms
+    assert settings_of(climate).rooms == expected_rooms
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)
 @pytest.mark.parametrize("restore", [None], indirect=True)
 async def test_rooms_are_built_from_the_area_climates_without_any_stored_data(hass, entry, climate, restore):
-    assert attributes_of(hass, climate)["rooms"] == {ROOM: 21.0, OTHER_ROOM: 16.0}
+    assert settings_of(climate).rooms == {ROOM: 21.0, OTHER_ROOM: 16.0}
 
 
 # Old state handling (unchanged behaviour)
@@ -265,7 +266,7 @@ async def test_without_an_old_state_the_defaults_apply(hass, entry, climate, res
     assert climate.hvac_mode == HVACMode.OFF
     assert f"No previously saved temperature, setting to {climate.min_temp}" in startup_log(caplog)
     assert "Undefined target temperature" not in startup_log(caplog)
-    assert attributes_of(hass, climate)["pre_custom_temperature"] is None
+    assert settings_of(climate).pre_custom_temperature is None
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)

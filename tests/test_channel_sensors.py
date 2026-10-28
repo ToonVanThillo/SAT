@@ -17,7 +17,7 @@ from tests.conftest import advance
 from tests.const import EMS_BOILER_DATA, IDLE, ems_entry, otgw_entry
 from tests.test_mqtt_ems import cycle
 
-pytestmark = pytest.mark.usefixtures("loop_entry")
+pytestmark = pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 
 CHANNELS = ["control_setpoint", "maximum_relative_modulation", "heater_state", "maximum_setpoint"]
 HEALTH = {"test-flame-health", "test-boiler-health"}
@@ -81,7 +81,6 @@ async def test_ems_has_channel_sensors(hass, entry):
         registered = registry.async_get(f"sensor.{name}_synchro")
         assert registered.unique_id == f"test-channel-{name}"
         assert registered.entity_category == er.EntityCategory.DIAGNOSTIC
-        assert registered.disabled_by is None
     assert shown(hass, "heater_state").attributes["friendly_name"].endswith("Heater State Synchro")
     assert shown(hass, "maximum_relative_modulation").attributes["friendly_name"].endswith("Maximum Relative Modulation Synchro")
 

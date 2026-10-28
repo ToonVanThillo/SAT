@@ -4,6 +4,9 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.components.diagnostics import (
+    get_diagnostics_for_config_entry,
+)
 
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
@@ -72,7 +75,7 @@ async def test_outside_temperature_changes_the_setpoint(hass, entry, climate, bo
     await climate.async_control_heating_loop()
 
     assert published() == [message('{"cmd": "selflowtemp", "value": 37}')]
-    assert hass.states.get(climate.entity_id).attributes["outside_temperature"] == -5.0
+    assert climate.current_outside_temperature == -5.0
 
 
 @pytest.mark.parametrize(*with_data({CONF_HUMIDITY_SENSOR_ENTITY_ID: "sensor.test_humidity"}))
@@ -129,7 +132,7 @@ async def test_heater_start_depends_on_open_valves(hass, entry, climate, boiler_
     await climate.async_control_heating_loop()
 
     assert published()[2:] == expected
-    assert hass.states.get(climate.entity_id).attributes["valves_open"] is (hvac_action == "heating")
+    assert climate.valves_open is (hvac_action == "heating")
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -212,44 +215,47 @@ async def test_overshoot_does_not_enable_pwm_by_default(hass, entry, climate, bo
 
     # current behaviour, known bug: the loop enables PWM on overshoot, then resets (and so disables) it again
     # because the PWM-enabled condition is not met
-    assert hass.states.get(climate.entity_id).attributes["pulse_width_modulation_enabled"] is False
+    assert climate.pwm.enabled is False
 
 
 @pytest.mark.parametrize(*ems_entry({CONF_DYNAMIC_MINIMUM_SETPOINT: True, CONF_DYNAMIC_MINIMUM_SETPOINT_VERSION: 2}))
 async def test_overshoot_handling_enables_pwm(hass, entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
     await run_loop(climate, mqtt_mock, published)
-    assert hass.states.get(climate.entity_id).attributes["pulse_width_modulation_enabled"] is False
+    assert climate.pwm.enabled is False
 
     await boiler_data(**OVERSHOOT)
     await climate.async_control_heating_loop()
 
-    assert hass.states.get(climate.entity_id).attributes["pulse_width_modulation_enabled"] is True
+    assert climate.pwm.enabled is True
     assert climate.pulse_width_modulation_enabled
 
 
 # Coordinator attributes
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_boiler_attributes_follow_the_boiler_temperature(hass, entry, climate, boiler_data, freezer):
-    def attributes() -> dict:
-        return hass.states.get(climate.entity_id).attributes
+async def test_boiler_attributes_follow_the_boiler_temperature(hass, hass_client, entry, climate, boiler_data, freezer):
+    async def control() -> dict:
+        return (await get_diagnostics_for_config_entry(hass, hass_client, entry))["control"]
 
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
     await cycle(hass, climate, boiler_data, freezer, **IDLE | {"heatingpump": "on", "curflowtemp": 40})
-    assert attributes()["boiler_temperature_cold"] == 40
-    assert attributes()["boiler_temperature_derivative"] is None
-    assert attributes()["boiler_temperature_tracking"] is False
+    values = await control()
+    assert values["boiler_temperature_cold"] == 40
+    assert values["boiler_temperature_derivative"] is None
+    assert values["boiler_temperature_tracking"] is False
 
     await cycle(hass, climate, boiler_data, freezer, **IDLE | {"heatingpump": "on", "curflowtemp": 50, "burngas": "on", "heatingactive": "on"})
-    assert attributes()["boiler_temperature_derivative"] > 0
-    assert attributes()["boiler_temperature_cold"] == 40
+    values = await control()
+    assert values["boiler_temperature_derivative"] > 0
+    assert values["boiler_temperature_cold"] == 40
 
     await cycle(hass, climate, boiler_data, freezer, **IDLE | {"heatingpump": "on", "curflowtemp": 45, "burngas": "on", "heatingactive": "on"})
-    assert attributes()["boiler_temperature_derivative"] < 0
-    assert attributes()["boiler_temperature_cold"] == 40
+    values = await control()
+    assert values["boiler_temperature_derivative"] < 0
+    assert values["boiler_temperature_cold"] == 40
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -259,7 +265,7 @@ async def test_flame_timing_attribute_is_the_average_on_time(hass, entry, climat
         await boiler_data(**IDLE | {"burngas": burngas})
         await climate.async_control_heating_loop()
 
-        return hass.states.get(climate.entity_id).attributes["boiler_flame_timing"]
+        return climate.coordinator.flame.average_on_time_seconds
 
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)

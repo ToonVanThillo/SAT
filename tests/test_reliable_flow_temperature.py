@@ -453,7 +453,7 @@ def sensor_entry(hass: HomeAssistant, entry):
     return registry, entity_id
 
 
-@pytest.mark.usefixtures("loop_entry")
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry())
 async def test_the_reliable_flow_temperature_sensor_shows_the_reliable_value(hass, entry, boiler_data, freezer: FrozenDateTimeFactory):
     registry, entity_id = sensor_entry(hass, entry)

@@ -3,7 +3,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from _pytest.logging import LogCaptureFixture
@@ -78,6 +78,13 @@ async def coordinator(hass, entry: MockConfigEntry) -> SatDataUpdateCoordinator:
 def no_input_grace(monkeypatch: pytest.MonkeyPatch) -> None:
     """Turn off the grace period of missing climate inputs, so a missing input takes the missing-temperature path at once."""
     monkeypatch.setattr("custom_components.sat.held_input.MISSING_INPUT_GRACE", 0)
+
+
+@pytest.fixture
+def entity_registry_enabled_by_default() -> Iterator[None]:
+    """Create entities that are disabled by default, such as SAT's diagnostic entities, as enabled; request it before the entry."""
+    with patch("homeassistant.helpers.entity.Entity.entity_registry_enabled_default", new_callable=PropertyMock, return_value=True):
+        yield
 
 
 @pytest.fixture

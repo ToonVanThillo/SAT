@@ -375,7 +375,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if old_state is not None:
             if self._target_temperature is None:
                 if old_state.attributes.get(ATTR_TEMPERATURE) is None:
-                    self.pid.setpoint = self.min_temp
                     self._target_temperature = self.min_temp
                     _LOGGER.warning("Undefined target temperature, falling back to %s", self._target_temperature, )
                 else:
@@ -388,7 +387,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 self._attr_preset_mode = old_state.attributes.get(ATTR_PRESET_MODE)
         else:
             if self._target_temperature is None:
-                self.pid.setpoint = self.min_temp
                 self._target_temperature = self.min_temp
                 _LOGGER.warning("No previously saved temperature, setting to %s", self._target_temperature)
 
@@ -424,59 +422,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             pre_activity_temperature=self._pre_activity_temperature,
         )
 
-    @property
-    def extra_state_attributes(self):
-        """Return device state attributes."""
-        boiler = self._coordinator.boiler
-
-        return {
-            "error": self.max_error.value,
-            "error_pid": self.pid.last_error,
-            "error_source": self.max_error.entity_id,
-
-            "integral": self.pid.integral,
-            "derivative": self.pid.derivative,
-            "proportional": self.pid.proportional,
-            "integral_enabled": self.pid.integral_enabled,
-
-            "boiler_flame_timing": self._coordinator.flame.average_on_time_seconds,
-            "boiler_temperature_cold": self._coordinator.boiler_temperature_cold,
-            "boiler_temperature_tracking": self._coordinator.boiler_temperature_tracking,
-            "boiler_temperature_derivative": self._coordinator.boiler_temperature_derivative,
-
-            "pre_custom_temperature": self._pre_custom_temperature,
-            "pre_activity_temperature": self._pre_activity_temperature,
-
-            "derivative_enabled": self.pid.derivative_enabled,
-            "derivative_raw": self.pid.raw_derivative,
-
-            "current_kp": self.pid.kp,
-            "current_ki": self.pid.ki,
-            "current_kd": self.pid.kd,
-
-            "rooms": self._rooms,
-            "setpoint": self._setpoint,
-            "current_humidity": self.current_humidity,
-
-            "summer_simmer_index": SummerSimmer.index(self.current_temperature, self.current_humidity),
-            "summer_simmer_perception": SummerSimmer.perception(self.current_temperature, self.current_humidity),
-
-            "valves_open": self.valves_open,
-            "heating_curve": self.heating_curve.value,
-            "requested_setpoint": self.requested_setpoint,
-            "minimum_setpoint": self.minimum_setpoint_value,
-            "outside_temperature": self.current_outside_temperature,
-            "optimal_coefficient": self.heating_curve.optimal_coefficient,
-            "coefficient_derivative": self.heating_curve.coefficient_derivative,
-
-            "relative_modulation_value": self.get_relative_modulation_value(boiler),
-            "relative_modulation_enabled": self.relative_modulation.enabled(boiler),
-            "relative_modulation_state": self.relative_modulation.state(boiler).name,
-
-            "pulse_width_modulation_enabled": self.pwm.enabled,
-            "pulse_width_modulation_state": self.pwm.status.name,
-            "pulse_width_modulation_duty_cycle": self.pwm.duty_cycle,
-        }
+    @callback
+    def async_write_ha_state(self) -> None:
+        """Write the climate state and signal the sensors of control-loop values, which the state doesn't carry."""
+        super().async_write_ha_state()
+        async_dispatcher_send(self.hass, SIGNAL_CLIMATE_UPDATED.format(self._config_entry.entry_id))
 
     @property
     def current_temperature(self) -> Optional[float]:

@@ -195,8 +195,8 @@ The entities have no attributes: an attribute that changes every cycle would
 record a new state each time. The channel details (internal status, target,
 sent and read-back values with their times, drift count, last-problem times)
 are in the integration's diagnostics download, together with the config entry
-(device address, unique ID and discovery keys redacted) and the raw device
-values with their receive times.
+(device address, unique ID and discovery keys redacted), the raw device values
+with their receive times, and the control values (see Climate entity).
 
 Backends without channels have no synchro diagnostics until they migrate.
 
@@ -248,8 +248,9 @@ diagnostic, so its history can be compared with the boiler's flow temperature.
 - It shows the value before PWM and before the minimum and maximum setpoint
   limits. With PWM active it still shows the calculated value, not the
   setpoint PWM applies.
-- It updates once per cycle, after the decide phase, and is unknown when the
-  climate has no calculated setpoint. It has no attributes.
+- It shows the value the latest cycle calculated, and is unknown when the
+  climate has no calculated setpoint (also after a PID reset). It has no
+  attributes.
 - It keeps its last value while a temperature is missing.
 
 ## Climate entity

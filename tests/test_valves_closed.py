@@ -90,7 +90,7 @@ async def test_without_radiators_the_valves_count_as_open(hass, entry, climate, 
         HEATER_ON,
     ]
     assert climate.setpoint == 35.0
-    assert hass.states.get(climate.entity_id).attributes["valves_open"] is True
+    assert climate.valves_open is True
     assert "valves=open" in cycle_lines(caplog)[-1]
     assert not timeline_info(caplog, "valves closed")
 
@@ -151,11 +151,10 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
     desired = submit.await_args_list[-1].args[0]
     assert desired.control_setpoint == MINIMUM_SETPOINT
     assert desired.heater_state == DeviceState.OFF
-    attributes = hass.states.get(climate.entity_id).attributes
-    assert attributes["setpoint"] == 10
-    assert attributes["pulse_width_modulation_state"] == "IDLE"
+    assert climate.setpoint == 10
+    assert climate.pwm.status.name == "IDLE"
     # Current behaviour, known bug: the "valves closed" PWM reset also disables PWM, even when forced (docs/known-issues.md, Control logic)
-    assert attributes["pulse_width_modulation_enabled"] is False
+    assert climate.pwm.enabled is False
     assert climate.calculated_setpoint == calculated
     assert hass.states.get("sensor.calculated_setpoint_test").state == str(calculated)
     assert f"setpoint calc={calculated} (valves closed)" in cycle_lines(caplog)[-1]
