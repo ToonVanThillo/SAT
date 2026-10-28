@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Optional, Tuple, TYPE_CHECKING
 
-from homeassistant.core import State
-
 from . import timeline
 from .const import HEATER_STARTUP_TIMEFRAME, MINIMUM_SETPOINT, BoilerStatus, PWMStatus
 from .heating_curve import HeatingCurve
@@ -147,11 +145,6 @@ class PWM:
         self._last_duty_cycle_percentage: float | None = None
         self._duty_cycle_branch: str | None = None
         self._hold: str | None = None
-
-    def restore(self, state: State) -> None:
-        """Restore the PWM controller from a saved state."""
-        if enabled := state.attributes.get("pulse_width_modulation_enabled"):
-            self._enabled = bool(enabled)
 
     def enable(self) -> None:
         """Enable the PWM control."""

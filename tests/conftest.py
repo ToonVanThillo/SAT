@@ -17,6 +17,8 @@ from pytest_homeassistant_custom_component.common import (
     assert_setup_component,
     async_fire_mqtt_message,
     async_fire_time_changed,
+    mock_restore_cache,
+    mock_restore_cache_with_extra_data,
 )
 
 from custom_components.sat.boiler import BoilerState
@@ -177,6 +179,20 @@ async def tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: flo
 def published(mqtt_mock) -> Callable[[], list[tuple]]:
     """Return the (topic, payload, qos, retain) tuples published through the MQTT mock so far."""
     return lambda: [call.args for call in mqtt_mock.async_publish.call_args_list]
+
+
+@pytest.fixture
+def restore(hass: HomeAssistant, request: pytest.FixtureRequest) -> None:
+    """Seed the restore cache before the entry is set up; param is (State, extra data) or None."""
+    param = getattr(request, "param", None)
+    if param is None:
+        return
+
+    state, extra = param
+    if extra is None:
+        mock_restore_cache(hass, [state])
+    else:
+        mock_restore_cache_with_extra_data(hass, [(state, extra)])
 
 
 @pytest.fixture

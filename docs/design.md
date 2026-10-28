@@ -252,6 +252,27 @@ diagnostic, so its history can be compared with the boiler's flow temperature.
   climate has no calculated setpoint. It has no attributes.
 - It keeps its last value while a temperature is missing.
 
+## Climate entity
+The climate has only HA's standard climate attributes; a value that changes
+every cycle would record a new climate state each time. Control-loop values are
+separate entities or in the diagnostics download.
+- Regular sensors: Error Value, Heating Curve and Calculated Setpoint, for
+  comparing on graphs.
+- Diagnostic sensors, without attributes: Proportional, Integral, Derivative,
+  Kp, Ki, Kd, Minimum Setpoint, PWM Duty Cycle (%), Autotune Coefficient,
+  Flame Average On-Time. All diagnostic entities are disabled by default.
+- The diagnostics download has the other control values: the PID's error and
+  the error source, the control setpoint, relative modulation state and value,
+  whether a valve is open, the boiler's cold temperature, tracking and
+  derivative, and the autotune coefficient derivative.
+- After a restart the climate restores, besides its HVAC mode, target
+  temperature and preset, only user settings: room targets and the targets to
+  return to after a preset or an open window. They are stored as restore data,
+  not attributes. Values that arrive or are recomputed at a regular rate are
+  not restored: the PID, PWM, control setpoint and autotune start fresh. If a
+  restored preset has no target to return to, leaving it keeps the current
+  target and logs a warning.
+
 ## PWM cycle frequency
 The number of PWM cycles per hour, N, follows the outside temperature captured
 at the start of each cycle.
@@ -419,6 +440,11 @@ too high until the pump runs again.
     inside or target temperature is missing.
 18. Flow reliability from the hot water signals, also with the flame off,
     instead of waiting for the pump after hot water.
+19. Restart restores only user settings, from restore data; the PID, PWM,
+    control setpoint and autotune start fresh.
+20. The climate keeps only standard attributes; control-loop values become
+    diagnostic sensors or go to the diagnostics download; all diagnostic
+    entities are disabled by default.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the

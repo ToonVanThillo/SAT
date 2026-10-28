@@ -61,13 +61,6 @@ class HeatingCurve:
         self._optimal_coefficients.append(coefficient)
         self._optimal_coefficient = round(mean(self._optimal_coefficients), 1)
 
-    def restore_autotune(self, coefficient: float, derivative: float):
-        """Restore a previous optimal coefficient value."""
-        self._optimal_coefficient = coefficient
-        self._coefficient_derivative = derivative
-
-        self._optimal_coefficients = deque([coefficient] * 5, maxlen=5)
-
     @staticmethod
     def calculate(target_temperature: float, outside_temperature: float) -> float:
         """Calculate the heating curve value based on the current outside temperature"""

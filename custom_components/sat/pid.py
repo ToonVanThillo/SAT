@@ -2,8 +2,6 @@ import logging
 from time import monotonic
 from typing import Optional
 
-from homeassistant.core import State
-
 from .const import *
 from .errors import Error
 from .helpers import seconds_since
@@ -196,27 +194,6 @@ class PID:
 
         # Update derivative timestamp
         self._last_derivative_time = now
-
-    def restore(self, state: State) -> None:
-        """Restore the PID controller from a saved state."""
-        if (last_error := state.attributes.get("error")) is not None:
-            self._last_error = float(last_error)
-            self._previous_error = float(last_error)
-
-        if (last_integral := state.attributes.get("integral")) is not None:
-            self._integral = float(last_integral)
-
-        if (last_raw_derivative := state.attributes.get("derivative_raw")) is not None:
-            self._raw_derivative = float(last_raw_derivative)
-
-        if (last_heating_curve := state.attributes.get("heating_curve")) is not None:
-            self._last_heating_curve_value = float(last_heating_curve)
-
-        # After restore, reset timing anchors "now"
-        now = monotonic()
-        self._last_updated = now
-        self._last_derivative_time = now
-        self._last_interval_updated = now
 
     def _get_aggression_value(self) -> float:
         if self._version == 1:

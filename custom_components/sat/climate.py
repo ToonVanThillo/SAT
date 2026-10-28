@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import timedelta, datetime
 from time import monotonic, time
-from typing import Optional, Callable
+from typing import Any, Callable, Optional, Self
 
 from homeassistant.components import notify, sensor, weather
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
@@ -34,7 +34,7 @@ from homeassistant.helpers import entity_registry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval, async_call_later
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.start import async_at_started
 
 from .area import Areas, SENSOR_TEMPERATURE_ID
@@ -53,13 +53,6 @@ from .pwm import PWMState
 from .relative_modulation import RelativeModulation, RelativeModulationState
 from .summer_simmer import SummerSimmer
 from .util import create_pid_controller, create_heating_curve_controller, create_pwm_controller, create_minimum_setpoint_controller
-
-ATTR_ROOMS = "rooms"
-ATTR_SETPOINT = "setpoint"
-ATTR_OPTIMAL_COEFFICIENT = "optimal_coefficient"
-ATTR_COEFFICIENT_DERIVATIVE = "coefficient_derivative"
-ATTR_PRE_CUSTOM_TEMPERATURE = "pre_custom_temperature"
-ATTR_PRE_ACTIVITY_TEMPERATURE = "pre_activity_temperature"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,6 +88,38 @@ class ClimateInputs:
     held: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SatClimateRestoreData(ExtraStoredData):
+    """User settings of the climate that are restored after a restart."""
+    rooms: dict[str, float] | None
+    pre_custom_temperature: float | None
+    pre_activity_temperature: float | None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the settings as a JSON-serializable dict."""
+        return {
+            "rooms": dict(self.rooms) if self.rooms is not None else None,
+            "pre_custom_temperature": self.pre_custom_temperature,
+            "pre_activity_temperature": self.pre_activity_temperature,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self | None:
+        """Return the settings stored by as_dict, or None if the data is malformed."""
+        try:
+            rooms = data["rooms"]
+            pre_custom_temperature = data["pre_custom_temperature"]
+            pre_activity_temperature = data["pre_activity_temperature"]
+
+            return cls(
+                rooms={str(entity_id): float(temperature) for entity_id, temperature in rooms.items()} if rooms is not None else None,
+                pre_custom_temperature=float(pre_custom_temperature) if pre_custom_temperature is not None else None,
+                pre_activity_temperature=float(pre_activity_temperature) if pre_activity_temperature is not None else None,
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return None
+
+
 class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
     _enable_turn_on_off_backwards_compatibility = False
 
@@ -124,7 +149,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         self._alpha = 0.2
         self._sensors = []
-        self._rooms = None
+        self._rooms: dict[str, float] | None = None
         self._setpoint = None
         self._calculated_setpoint = None
         self._last_boiler_temperature = None
@@ -133,8 +158,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self._hvac_mode = None
         self._target_temperature = None
         self._window_sensor_handle = None
-        self._pre_custom_temperature = None
-        self._pre_activity_temperature = None
+        self._pre_custom_temperature: float | None = None
+        self._pre_activity_temperature: float | None = None
 
         self._attr_temperature_unit = unit
         self._attr_hvac_mode = HVACMode.OFF
@@ -333,13 +358,21 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 self.async_track_sensor_temperature(sensor_temperature_id)
 
     async def _restore_previous_state_or_set_defaults(self):
-        """Restore the previous state if available or set default values."""
+        """Restore the previous state and user settings if available or set default values."""
         old_state = await self.async_get_last_state()
 
-        if old_state is not None:
-            self.pwm.restore(old_state)
-            self.pid.restore(old_state)
+        if (extra_data := await self.async_get_last_extra_data()) is not None and (
+                restore_data := SatClimateRestoreData.from_dict(extra_data.as_dict())) is not None:
+            self._pre_custom_temperature = restore_data.pre_custom_temperature
+            self._pre_activity_temperature = restore_data.pre_activity_temperature
 
+            if restore_data.rooms:
+                self._rooms = restore_data.rooms
+
+        if self._rooms is None:
+            await self._async_update_rooms_from_climates()
+
+        if old_state is not None:
             if self._target_temperature is None:
                 if old_state.attributes.get(ATTR_TEMPERATURE) is None:
                     self.pid.setpoint = self.min_temp
@@ -351,32 +384,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             if old_state.state:
                 self._hvac_mode = old_state.state
 
-            if old_state.attributes.get(ATTR_SETPOINT):
-                self._setpoint = old_state.attributes.get(ATTR_SETPOINT)
-
             if old_state.attributes.get(ATTR_PRESET_MODE):
                 self._attr_preset_mode = old_state.attributes.get(ATTR_PRESET_MODE)
-
-            if old_state.attributes.get(ATTR_PRE_ACTIVITY_TEMPERATURE):
-                self._pre_activity_temperature = old_state.attributes.get(ATTR_PRE_ACTIVITY_TEMPERATURE)
-
-            if old_state.attributes.get(ATTR_PRE_CUSTOM_TEMPERATURE):
-                self._pre_custom_temperature = old_state.attributes.get(ATTR_PRE_CUSTOM_TEMPERATURE)
-
-            if old_state.attributes.get(ATTR_OPTIMAL_COEFFICIENT):
-                self.heating_curve.restore_autotune(
-                    old_state.attributes.get(ATTR_OPTIMAL_COEFFICIENT),
-                    old_state.attributes.get(ATTR_COEFFICIENT_DERIVATIVE)
-                )
-
-            if old_state.attributes.get(ATTR_ROOMS):
-                self._rooms = old_state.attributes.get(ATTR_ROOMS)
-            else:
-                await self._async_update_rooms_from_climates()
         else:
-            if self._rooms is None:
-                await self._async_update_rooms_from_climates()
-
             if self._target_temperature is None:
                 self.pid.setpoint = self.min_temp
                 self._target_temperature = self.min_temp
@@ -404,6 +414,15 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
     def unique_id(self):
         """Return a unique ID to use for this entity."""
         return self._attr_id
+
+    @property
+    def extra_restore_state_data(self) -> SatClimateRestoreData:
+        """Return the user settings to restore after a restart."""
+        return SatClimateRestoreData(
+            rooms=self._rooms,
+            pre_custom_temperature=self._pre_custom_temperature,
+            pre_activity_temperature=self._pre_activity_temperature,
+        )
 
     @property
     def extra_state_attributes(self):
@@ -826,6 +845,13 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 self._window_sensor_handle = None
 
             if self.preset_mode == PRESET_ACTIVITY:
+                # Without a target to return to (e.g. not restored after a restart) the current target stays
+                if self._pre_activity_temperature is None:
+                    _LOGGER.warning("No target to return to after preset %s; keeping the current target of %s", PRESET_ACTIVITY, self._target_temperature)
+                    self._attr_preset_mode = PRESET_NONE
+                    self.async_write_ha_state()
+                    return
+
                 _LOGGER.debug(f"Restoring original target temperature.")
                 await self.async_set_temperature(temperature=self._pre_activity_temperature)
 
@@ -1266,8 +1292,15 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         # Reset the preset mode if `PRESET_NONE` is given
         if preset_mode == PRESET_NONE:
+            previous_preset_mode = self._attr_preset_mode
             self._attr_preset_mode = PRESET_NONE
-            await self.async_set_target_temperature(self._pre_custom_temperature)
+
+            # Without a target to return to (e.g. not restored after a restart) the current target stays
+            if self._pre_custom_temperature is None:
+                _LOGGER.warning("No target to return to after preset %s; keeping the current target of %s", previous_preset_mode, self._target_temperature)
+                self.async_write_ha_state()
+            else:
+                await self.async_set_target_temperature(self._pre_custom_temperature)
         else:
             # Save the current target temperature if the preset mode is being set for the first time
             if self._attr_preset_mode == PRESET_NONE:
