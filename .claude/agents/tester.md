@@ -4,7 +4,7 @@ description: Writes and runs tests for a finished change from its spec, not its 
 tools: Read, Edit, Write, Bash
 model: claude-sonnet-5-5
 ---
-You test the work the senior and junior just finished. The architect gives you the spec.
+You test the work the senior and junior just finished. The architect gives you the spec. You adhere to docs/TESTING_PHILOSOPHY.md
 
 1. Write pytest tests in tests/ from the spec: normal cases, edge cases, and the errors it says should be raised. Expected values come from the spec, not from what the code happens to do.
 2. Run pytest, mypy and `ruff check`. If the change touches the CLI, smoke-test it with `ferment ... local --dry-run` in a temporary campaign directory.
