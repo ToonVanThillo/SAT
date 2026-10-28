@@ -1034,12 +1034,13 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             ))
             return
 
+        requested_setpoint = self._calculate_control_setpoint()
         if self._calculated_setpoint is None:
             # Default to the calculated setpoint
-            self._calculated_setpoint = self._calculate_control_setpoint()
+            self._calculated_setpoint = requested_setpoint
         else:
             # Apply low filter on the requested setpoint
-            self._calculated_setpoint = round(self._alpha * self._calculate_control_setpoint() + (1 - self._alpha) * self._calculated_setpoint, 1)
+            self._calculated_setpoint = round(self._alpha * requested_setpoint + (1 - self._alpha) * self._calculated_setpoint, 1)
 
         # Check for overshoot
         overshoot_handling = snapshot.boiler.status == BoilerStatus.OVERSHOOT_HANDLING
@@ -1091,7 +1092,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         desired = DesiredState(control_setpoint=control_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state)
         self._log_setpoint_release(desired, "heater off")
         writes = await self._coordinator.async_submit(desired)
-        timeline.cycle(snapshot.cycle, lambda: self._cycle_segments(snapshot, inputs, setpoint_reason, desired, writes, changes))
+        timeline.cycle(snapshot.cycle, lambda: self._cycle_segments(snapshot, inputs, setpoint_reason, requested_setpoint, desired, writes, changes))
 
         self.async_write_ha_state()
 
@@ -1145,8 +1146,15 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         else:
             timeline.LOGGER.info("control setpoint released (%s)", reason)
 
-    def _cycle_segments(self, snapshot: BoilerSnapshot, inputs: ClimateInputs, setpoint_reason: str, desired: DesiredState, writes: list[WriteRecord], changes: list[StatusChange]) -> list[str]:
-        """The cycle line of a HEAT cycle: inputs, boiler, PWM, the setpoint rule, the desired state, the writes and the verify changes."""
+    def _cycle_segments(
+            self, snapshot: BoilerSnapshot, inputs: ClimateInputs, setpoint_reason: str, requested_setpoint: float, desired: DesiredState,
+            writes: list[WriteRecord], changes: list[StatusChange]
+    ) -> list[str]:
+        """The cycle line of a HEAT cycle: inputs, boiler, PWM, the setpoint rule, the desired state, the writes and the verify changes.
+
+        The setpoint rule shows the filtered setpoint, `requested_setpoint` (the filter's input this cycle), and the heating curve and PID terms as
+        held when the line is built.
+        """
         fmt = timeline.fmt
         boiler = snapshot.boiler
         # The reliable flow temperature only when it differs from the raw one
@@ -1160,12 +1168,18 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 pwm += f" hold={controller.hold}"
 
         held = f" held={','.join(inputs.held)}" if inputs.held else ""
+        fmt_number = timeline.fmt_number
+        pid = self.pid
+        request = (
+            f"req={fmt_number(requested_setpoint)} curve={fmt_number(self.heating_curve.value)}"
+            f" p={fmt_number(pid.proportional, signed=True)} i={fmt_number(pid.integral, signed=True)} d={fmt_number(pid.derivative, signed=True)}"
+        )
 
         return [
             f"in target={fmt(inputs.target_temperature)} inside={fmt(inputs.current_temperature)} out={fmt(inputs.outside_temperature)} valves={'open' if inputs.valves_open else 'closed'}{held}",
             f"boiler flow={fmt(boiler.flow_temperature)}{reliable} flame={fmt(boiler.flame_active)} hw={fmt(boiler.hot_water_active)} active={fmt(boiler.is_active)} status={fmt(boiler.status)}",
             pwm,
-            f"setpoint calc={fmt(self._calculated_setpoint)} ({setpoint_reason})",
+            f"setpoint calc={fmt(self._calculated_setpoint)} ({setpoint_reason}) {request}",
             f"want {timeline.desired(desired)}",
             f"sent {timeline.writes(writes)}",
             timeline.verified(changes),

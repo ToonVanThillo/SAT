@@ -39,7 +39,9 @@ class MinimumSetpoint:
             return
 
         self._base_return_temperature = update_state(previous=self._base_return_temperature, new_value=boiler_state.return_temperature)
-        _LOGGER.debug("New temperature set to: %.1f°C.", self._base_return_temperature.value)
+        # Without a return temperature, no base was set
+        if self._base_return_temperature.value is not None:
+            _LOGGER.debug("New temperature set to: %.1f°C.", self._base_return_temperature.value)
 
         if self._store:
             self._store.async_delay_save(self._data_to_save)

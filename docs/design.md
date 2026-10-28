@@ -226,7 +226,11 @@ did, in order, so a run can be reconstructed from the log alone.
   channel, are not logged at info.
 - At debug, one line per cycle after reconciliation, numbered with the
   snapshot's cycle number: the inputs (and which are held), boiler values, PWM
-  state, duty and duty rule, the setpoint rule, the desired state as
+  state, duty and duty rule, the setpoint rule, the requested setpoint the
+  low-pass filter received this cycle, the heating curve value and the PID
+  terms as held when the line is built (these need not add up to the
+  requested setpoint: the integral can update and sensor events can arrive in
+  between), the desired state as
   requested, the writes as encoded, and the verify transitions; in HEAT with a
   missing temperature, the missing inputs instead of the inputs and setpoint
   rule.
@@ -446,6 +450,9 @@ too high until the pump runs again.
 20. The climate keeps only standard attributes; control-loop values become
     diagnostic sensors or go to the diagnostics download; all diagnostic
     entities are disabled by default.
+=======
+21. Timeline: the cycle line shows the requested setpoint the low-pass filter
+    received, the heating curve value and the PID terms.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the

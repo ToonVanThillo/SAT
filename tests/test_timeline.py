@@ -271,6 +271,112 @@ async def test_heat_cycle_line_segments(loop_entry, climate, boiler_data, mqtt_m
     assert "control_setpoint=35" in sent and "heater_state=ON" in sent
 
 
+SETPOINT_SEGMENT = re.compile(r"setpoint calc=(\S+) \((.+)\) req=(\S+) curve=(\S+) p=(\S+) i=(\S+) d=(\S+)")
+
+
+def setpoint_segment(caplog) -> str:
+    [line] = cycle_lines(caplog)
+    return next(p for p in segments(line) if p.startswith("setpoint "))
+
+
+async def start_heating(climate, boiler_data, caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
+    await boiler_data(**IDLE | {"heatingoff": "on"})
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    caplog.clear()
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_setpoint_segment_shows_the_filter_input_curve_and_pid_terms(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
+    await start_heating(climate, boiler_data, caplog)
+    await climate.async_control_heating_loop()
+
+    assert setpoint_segment(caplog) == "setpoint calc=35.0 (normal) req=35.0 curve=32.8 p=+2.2 i=+0.0 d=+0.0"
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_req_is_the_request_the_filter_got_not_a_later_recomputation(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
+    await start_heating(climate, boiler_data, caplog)
+    await climate.async_control_heating_loop()
+
+    # The integral changes after the filter step and before the line is built
+    pid = type(climate.pid)
+    integral = PropertyMock(return_value=0.0)
+
+    def bump(*_args, **_kwargs) -> None:
+        integral.return_value = 5.0
+
+    freezer.tick(1)
+    await boiler_data(heatingoff="on")
+    caplog.clear()
+    with (
+        patch.object(pid, "proportional", PropertyMock(return_value=-4.04)),
+        patch.object(pid, "integral", integral),
+        patch.object(pid, "derivative", PropertyMock(return_value=2.76)),
+        patch.object(climate.pid, "update_integral", side_effect=bump),
+    ):
+        await climate.async_control_heating_loop()
+
+    # req is curve 32.8 + output -1.28 from before the change (a recomputation gives 36.5); calc = 0.2 * 31.5 + 0.8 * 35.0
+    assert setpoint_segment(caplog) == "setpoint calc=34.3 (normal) req=31.5 curve=32.8 p=-4.0 i=+5.0 d=+2.8"
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_calc_follows_req_through_the_filter_over_cycles_including_a_clamped_request(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
+    await start_heating(climate, boiler_data, caplog)
+
+    calc = None
+    # Output offsets chosen so that the third request is far below the minimum setpoint and so is clamped to 10
+    for offset in (0.0, -3.0, -500.0, 4.0, 4.0):
+        freezer.tick(1)
+        await boiler_data(heatingoff="on")
+        caplog.clear()
+        with (
+            patch.object(type(climate.pid), "proportional", PropertyMock(return_value=offset)),
+            patch.object(type(climate.pid), "integral", PropertyMock(return_value=0.0)),
+            patch.object(type(climate.pid), "derivative", PropertyMock(return_value=0.0)),
+        ):
+            await climate.async_control_heating_loop()
+
+        match = SETPOINT_SEGMENT.fullmatch(setpoint_segment(caplog))
+        assert match
+        req = float(match.group(3))
+        curve = float(match.group(4))
+        assert req == max(round(curve + offset, 1), 10.0)
+        if calc is None:
+            assert float(match.group(1)) == req
+        else:
+            assert float(match.group(1)) == round(0.2 * req + 0.8 * calc, 1)
+        if offset == -500.0:
+            assert req == 10.0
+        calc = float(match.group(1))
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_setpoint_segment_shows_an_unknown_heating_curve_as_unknown(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
+    await start_heating(climate, boiler_data, caplog)
+
+    with patch.object(type(climate.heating_curve), "value", PropertyMock(return_value=None)):
+        await climate.async_control_heating_loop()
+
+    # Without a heating curve the request is the minimum setpoint
+    assert re.fullmatch(r"setpoint calc=\S+ \(.+\) req=10\.0 curve=\? p=[+-]\d+\.\d i=[+-]\d+\.\d d=[+-]\d+\.\d", setpoint_segment(caplog))
+
+
+@pytest.mark.parametrize(("value", "signed", "expected"), [
+    (None, False, "?"),
+    (None, True, "?"),
+    (-0.04, True, "+0.0"),
+    (-0.04, False, "0.0"),
+    (12.0, True, "+12.0"),
+    (1.26, True, "+1.3"),
+    (-4.04, True, "-4.0"),
+])
+def test_fmt_number(value, signed, expected):
+    assert timeline_module.fmt_number(value, signed=signed) == expected
+
+
 @pytest.mark.parametrize(*ems_entry())
 async def test_sent_is_dash_and_resend_marked(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
@@ -343,6 +449,7 @@ async def test_missing_temperature_short_form(hass, loop_entry, climate, boiler_
 
     [line] = cycle_lines(caplog)
     assert re.fullmatch(r"cycle \d+ \| missing temperature: outside \| want setpoint=10 heater=OFF \| sent .*", line)
+    assert not any(field in line for field in ("calc=", "req=", "curve=", " p=", " i=", " d="))
 
 
 # PWM and flame edges, branches and noise

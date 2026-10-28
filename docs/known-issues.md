@@ -140,6 +140,13 @@ known bug".
   coefficient of 0.0 as none. It runs on the event-driven updates in any HVAC
   mode and before the boiler-temperature gate, and it converts the requested
   setpoint, so the estimate absorbs whatever PID output is present.
+- The dynamic minimum setpoint (version 1) raises TypeError when a base return
+  temperature is set and the boiler then reports no return temperature during
+  HEATING_UP: `MinimumSetpoint.warming_up` passes None to `update_state`, which
+  calls `math.isclose` with it, and the control cycle stops there.
+  `calculate()` has the same weakness through `relative_modulation_level`.
+  Pinned by `tests/test_minimum_setpoint.py::test_warming_up_value_then_none_again`
+  (strict xfail).
 
 ## Climate entity
 - `async_set_hvac_mode` with cascade stops at the first radiator (or room, with

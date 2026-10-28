@@ -62,6 +62,19 @@ def fmt(value: Any) -> str:
     return str(value)
 
 
+def fmt_number(value: float | None, signed: bool = False) -> str:
+    """Format a number for the timeline with one decimal, with an explicit sign if `signed`; None (unknown) as `?`.
+
+    A value rounding to zero prints as `0.0`, or `+0.0` when signed, never with a minus sign.
+    """
+    if value is None:
+        return "?"
+
+    # Adding 0.0 turns a negative zero into a positive one
+    rounded = round(value, 1) + 0.0
+    return f"{rounded:+.1f}" if signed else f"{rounded:.1f}"
+
+
 @_never_raises
 def boiler_change(key: str, previous: Any, value: Any) -> None:
     """Log a change of a traced raw device value on arrival; `previous` is None when unknown."""
