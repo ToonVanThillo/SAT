@@ -193,10 +193,17 @@ known bug".
   minimum open time switches to activity, and on closing, the return target of
   10 °C matches activity again, which `async_set_preset_mode` skips as already
   set.
-- The `pulse_width_modulation` service enables or disables PWM (disabling
-  clears the duty cycle) without sending `SIGNAL_PWM_UPDATED`, so PWM Status
-  (which shows the status it last received over that signal) stays stale until
-  the next cycle, and PWM Duty Cycle until the next cycle or coordinator update.
+- The `pulse_width_modulation` service sets the PWM enabled flag, but the
+  climate decides every cycle from its configuration and setpoints whether PWM
+  runs (`pulse_width_modulation_enabled`), and resets PWM when it doesn't. The
+  flag only counts with overshoot protection, a calculated setpoint and
+  version 2 of the dynamic minimum setpoint, so otherwise the service lasts
+  only until the next cycle, enable or disable. The clearest case is forced
+  PWM, or a boiler without setpoint management: PWM always runs, so disabling
+  it through the service is undone by the next cycle. Where the flag counts,
+  any PWM reset clears it (valves closed, a missing temperature, an error
+  change, or an HVAC mode or target change), and overshoot handling sets it
+  each cycle, undoing a disable.
 - After the climate is renamed (HA removes and re-adds the entity), room
   temperature sensors are no longer tracked: their listeners are released on
   removal, but `_sensors` keeps their IDs, so `async_track_sensor_temperature`

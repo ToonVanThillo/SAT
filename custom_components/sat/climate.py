@@ -864,7 +864,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self.pid.update_reset(error=max_error, heating_curve_value=self.heating_curve.value)
             self._calculated_setpoint = None
             self.pwm.reset("error reset")
-            async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
+            self.async_send_pwm_updated()
 
         self.async_write_ha_state()
 
@@ -939,10 +939,15 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             if target_temperature is not None:
                 self._rooms[entity_id] = float(target_temperature)
 
+    @callback
+    def async_send_pwm_updated(self) -> None:
+        """Notify the PWM sensors of the current PWM status."""
+        async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
+
     def reset_control_state(self):
         """Reset control state when major changes occur."""
         self.pwm.disable("control state reset")
-        async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
+        self.async_send_pwm_updated()
         self._calculated_setpoint = None
 
     def async_track_sensor_temperature(self, entity_id):
@@ -1005,7 +1010,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             desired = DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
             self._log_setpoint_release(desired, "hvac off")
             writes = await self._coordinator.async_submit(desired)
-            async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
+            self.async_send_pwm_updated()
 
             timeline.cycle(snapshot.cycle, lambda: (
                 f"hvac {timeline.fmt(self.hvac_mode)}", f"want {timeline.desired(desired)}", f"sent {timeline.writes(writes)}", timeline.verified(changes)
@@ -1017,7 +1022,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
             missing = [held.name for held in self._held_inputs() if held.missing]
             self.pwm.reset("missing temperature")
-            async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
+            self.async_send_pwm_updated()
 
             desired = DesiredState(control_setpoint=RELEASE if self._heater_off_releases_setpoint() else MINIMUM_SETPOINT, heater_state=DeviceState.OFF)
             self._log_setpoint_release(desired, "missing temperature")
@@ -1053,7 +1058,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         else:
             await self.pwm.update(flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint)
 
-        async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
+        self.async_send_pwm_updated()
 
         # Control setpoint to request, unless released below once heater off is confirmed
         control_setpoint: float | Release

@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Any
 from typing import TYPE_CHECKING
 
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry
 
@@ -108,18 +109,20 @@ def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulat
 
 
 def get_climate_entities(hass: "HomeAssistant", entity_ids: list[str]) -> list["SatClimate"]:
-    """Retrieve climate entities for the given entity IDs."""
+    """Retrieve the SAT climates for the given entity IDs; IDs that aren't a registered climate entity of a loaded SAT entry, or whose climate HA
+    hasn't added, are skipped."""
     entities = []
     for entity_id in entity_ids:
         registry = entity_registry.async_get(hass)
 
-        if not (entry := registry.async_get(entity_id)):
+        if not (entry := registry.async_get(entity_id)) or entry.domain != Platform.CLIMATE:
             continue
 
         if not (config_entry := hass.data[DOMAIN].get(entry.config_entry_id)):
             continue
 
-        if not (climate := config_entry.get(CLIMATE)):
+        # HA leaves hass unset on a climate it didn't add, e.g. one disabled in the registry
+        if not (climate := config_entry.get(CLIMATE)) or climate.hass is None:
             continue
 
         entities.append(climate)

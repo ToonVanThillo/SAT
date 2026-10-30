@@ -41,6 +41,8 @@ async def async_register_services(hass: HomeAssistant) -> None:
             else:
                 climate.pwm.disable()
 
+            climate.async_send_pwm_updated()
+
     hass.services.async_register(
         DOMAIN,
         service=SERVICE_PULSE_WIDTH_MODULATION,
