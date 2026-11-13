@@ -73,10 +73,9 @@ def create_heating_curve_controller(config_data, config_options) -> HeatingCurve
     return HeatingCurve(heating_system=heating_system, coefficient=coefficient)
 
 
-def _create_cycle_config(options: Mapping[str, Any], maximum_time: int) -> CycleConfig:
+def _create_cycle_config(options: Mapping[str, Any]) -> CycleConfig:
     """Create the PWM cycle configuration from the cycles per hour options; raises ValueError or TypeError for invalid values."""
     return CycleConfig(
-        maximum_time=maximum_time,
         cold_temperature=float(options[CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE]),
         cold_cycles_per_hour=int(options[CONF_CYCLES_PER_HOUR_COLD]),
         mild_temperature=float(options[CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE]),
@@ -87,22 +86,18 @@ def _create_cycle_config(options: Mapping[str, Any], maximum_time: int) -> Cycle
 def create_pwm_controller(heating_curve: HeatingCurve, config_options: Mapping[str, Any]) -> PWM:
     """Create and return a PWM controller instance with the given configuration options."""
     # Extract the configuration options
-    automatic_duty_cycle = bool(config_options.get(CONF_AUTOMATIC_DUTY_CYCLE))
-    max_cycle_time = int(convert_time_str_to_seconds(config_options.get(CONF_DUTY_CYCLE)))
     hot_water_delay = float(config_options.get(CONF_HOT_WATER_DELAY, OPTIONS_DEFAULTS[CONF_HOT_WATER_DELAY]))
 
     # Invalid mapping options fall back to the defaults, so heating keeps running
     try:
-        cycles = _create_cycle_config(config_options, max_cycle_time)
+        cycles = _create_cycle_config(config_options)
     except (TypeError, ValueError) as error:
         invalid = {key: config_options.get(key) for key in _CYCLES_PER_HOUR_OPTIONS}
         _LOGGER.error("Invalid cycles per hour options %s (%s); using the defaults instead.", invalid, error)
-        cycles = _create_cycle_config(OPTIONS_DEFAULTS, max_cycle_time)
+        cycles = _create_cycle_config(OPTIONS_DEFAULTS)
 
     # Return a new PWM controller instance with the given configuration options
-    return PWM(
-        heating_curve=heating_curve, cycles=cycles, automatic_duty_cycle=automatic_duty_cycle, hot_water_delay=hot_water_delay,
-    )
+    return PWM(heating_curve=heating_curve, cycles=cycles, hot_water_delay=hot_water_delay)
 
 
 def get_climate_entities(hass: "HomeAssistant", entity_ids: list[str]) -> list["SatClimate"]:

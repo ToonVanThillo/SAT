@@ -8,7 +8,7 @@ import pytest
 from custom_components.sat.const import BoilerStatus, PWMStatus
 from custom_components.sat.pwm import PWM, CycleConfig, CycleThresholds
 
-DEFAULTS = {"maximum_time": 900, "cold_temperature": 0, "cold_cycles_per_hour": 4, "mild_temperature": 12, "mild_cycles_per_hour": 2}
+DEFAULTS = {"cold_temperature": 0, "cold_cycles_per_hour": 4, "mild_temperature": 12, "mild_cycles_per_hour": 2}
 
 BASE = 20.0
 FLOW = 50.0
@@ -123,9 +123,9 @@ def clock():
 CURVE = SimpleNamespace(value=30.0, base_offset=BASE)
 
 
-def make_pwm(automatic=True, **overrides) -> PWM:
+def make_pwm(**overrides) -> PWM:
     CURVE.value = 30.0
-    return PWM(config(**overrides), CURVE, automatic)  # type: ignore[arg-type]
+    return PWM(config(**overrides), CURVE)  # type: ignore[arg-type]
 
 
 def boiler(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water=False, flow=FLOW):
@@ -318,30 +318,12 @@ async def test_duty_drop_to_zero_does_not_end_pulse_before_180s(clock):
 
 async def test_normal_end_applies_after_180s(clock):
     pwm = make_pwm()
-    await start_pulse(pwm, clock, 0.5)  # N=4: on 900
+    await start_pulse(pwm, clock, 0.5)  # N=4: on 450
     await step(pwm, clock, 0.5, 200)
     assert pwm.state.status == PWMStatus.ON
-    await step(pwm, clock, 0.5, 700)
-    assert pwm.state.status == PWMStatus.OFF
-
-
-async def test_minimum_pulse_on_fixed_duty_path(clock):
-    pwm = make_pwm(automatic=False)
-    await start_pulse(pwm, clock, 0.5)  # on 450
-    await step(pwm, clock, 0.0, 50)
+    await step(pwm, clock, 0.5, 249)  # 449 s
     assert pwm.state.status == PWMStatus.ON
-    await step(pwm, clock, 0.0, 129)
-    assert pwm.state.status == PWMStatus.ON
-    await step(pwm, clock, 0.0, 1)
-    assert pwm.state.status == PWMStatus.OFF
-
-
-async def test_minimum_pulse_fixed_duty_normal_end(clock):
-    pwm = make_pwm(automatic=False)
-    await start_pulse(pwm, clock, 0.5)  # on 450
-    await step(pwm, clock, 0.5, 449)
-    assert pwm.state.status == PWMStatus.ON
-    await step(pwm, clock, 0.5, 1)
+    await step(pwm, clock, 0.5, 1)  # 450 s
     assert pwm.state.status == PWMStatus.OFF
 
 
@@ -594,20 +576,26 @@ async def test_idle_after_missing_values_uses_current_n(clock, caplog):
 
 
 async def test_cap_uses_current_n_after_the_latch_expired(clock, caplog):
-    # N=4 up to 0 degrees, N=6 from 12 degrees; fixed duty path with a 400 s cycle gives (200, 200)
-    pwm = make_pwm(automatic=False, maximum_time=400, mild_cycles_per_hour=6)
+    # N=4 up to 0 degrees, N=6 from 12 degrees; four pulses within 1260 s: each ends at the 180 s minimum when the duty drops to 0,
+    # and the next starts after the 180 s off-time of a high duty
+    pwm = make_pwm(mild_cycles_per_hour=6)
     pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock)
-    await run_pulses(pwm, clock, 0.5, 200, 7)  # starts at 0, 400, 800, 1200; OFF from 1400
+    for _ in range(3):
+        await step(pwm, clock, 0.0, 180)
+        assert pwm.status == PWMStatus.OFF
+        await step(pwm, clock, 0.85, 180)
+        assert pwm.status == PWMStatus.ON
+    await step(pwm, clock, 0.0, 180)  # starts at 0, 360, 720, 1080; OFF from 1260
     assert pwm.status == PWMStatus.OFF
     pwm.update_cycles_per_hour(20)
     assert pwm.cycles_per_hour == 4
 
     with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
-        await step(pwm, clock, 0.5, 200)  # t=1600, latched N=4 caps
+        await step(pwm, clock, 0.5, 450)  # t=1710, latched N=4 caps
         assert "pwm cycles cap reached (4/h)" in caplog.text
         assert pwm.status == PWMStatus.OFF
-        await step(pwm, clock, 0.5, 1600)  # off phase of exactly 2 * 3600 / 4 s: the latch still holds
+        await step(pwm, clock, 0.5, 1350)  # off phase of exactly 2 * 3600 / 4 s: the latch still holds
         assert pwm.status == PWMStatus.OFF
         assert pwm.cycles_per_hour == 4
         await step(pwm, clock, 0.5, 1)  # latch expired, the current N=6 applies

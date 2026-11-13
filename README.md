@@ -31,7 +31,7 @@ OpenTherm ( MQTT / Serial / ESPHome ):
 - Target temperature step for adjusting the temperature in smaller increments
 - Presets for different modes such as Away, Sleep, Home, Comfort
 - Automatic gains for PID control
-- PWM and Automatic-duty cycle
+- PWM with an automatic duty cycle
 - Overshoot protection to prevent the boiler from overshooting the setpoint ( Low-Load Control )
 - Climate valve offset to adjust the temperature reading for your climate valve
 - Sample time for PID control to fine-tune your system's response time
@@ -45,7 +45,7 @@ PID ON/OFF thermostat:
 - Target temperature step for adjusting the temperature in smaller increments
 - Presets for different modes such as Away, Sleep, Home, Comfort
 - Automatic gains for PID control
-- PWM and Automatic-duty cycle
+- PWM with an automatic duty cycle
 - Climate valve offset to adjust the temperature reading for your climate valve
 - Sample time for PID control to fine-tune your system's response time
 - Open Window detection
@@ -316,7 +316,7 @@ The OPV is a crucial value that determines the boiler's on/off times when the Ov
 > [!Note]
 > If you have any TRVs, open all of them (set them to a high setpoint) to ensure accurate calculation of the OPV. Once the calculation is complete, you can lower the setpoint back to your desired temperature.
 
-*Automatic Duty Cycle*: When this option is enabled, SAT calculates the ON and OFF times of the boiler in 15-minute intervals, given that the kW needed to heat the home is less than the minimum boiler capacity. Moreover, using this feature, SAT can efficiently regulate the room temperature even in mild weather by automatically extending the duty cycle up to 30 minutes.
+*Duty Cycle*: When the kW needed to heat the home is less than the minimum boiler capacity, SAT switches the boiler ON and OFF in periods of 3600/N seconds, where N, the cycles per hour (1 to 6), is interpolated from the outside temperature between two points you can configure. With the defaults, 4 cycles per hour at 0 °C and 2 at 12 °C, a period lasts 15 to 30 minutes. The ON and OFF times within each period follow the duty cycle.
 
 > [!TIP]
 > For more in depth review of SAT and real time observations you can read this [excellent discussion post](https://github.com/Alexwijn/SAT/discussions/40) from @critictidier.

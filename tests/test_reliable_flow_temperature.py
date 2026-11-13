@@ -323,7 +323,7 @@ def clock() -> Iterator[Clock]:
 
 def make_pwm() -> PWM:
     CURVE.value = 30.0
-    pwm = PWM(config(), CURVE, True)  # type: ignore[arg-type]
+    pwm = PWM(config(), CURVE)  # type: ignore[arg-type]
     pwm.update_cycles_per_hour(20)  # 2 cycles per hour
 
     return pwm

@@ -23,9 +23,8 @@ MAXIMUM_CYCLES_PER_HOUR = 6
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CycleConfig:
     """
-    Encapsulates the cycle time of the non-automatic duty cycle and the mapping of the outside temperature to the cycles per hour.
+    Encapsulates the mapping of the outside temperature to the cycles per hour.
     """
-    maximum_time: int
     cold_temperature: float
     cold_cycles_per_hour: int
     mild_temperature: float
@@ -94,7 +93,7 @@ class PWMState:
 class PWM:
     """Implements Pulse Width Modulation (PWM) control for managing boiler operations."""
 
-    def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, automatic_duty_cycle: bool, hot_water_delay: float = 0):
+    def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, hot_water_delay: float = 0):
         """Initialize the PWM control; no pulse starts within `hot_water_delay` seconds after a hot water burn ends."""
         self._alpha: float = 0.2
         self._hot_water_delay: float = hot_water_delay
@@ -102,7 +101,6 @@ class PWM:
 
         self._cycles: CycleConfig = cycles
         self._heating_curve: HeatingCurve = heating_curve
-        self._automatic_duty_cycle: bool = automatic_duty_cycle
 
         # Cycles per hour from the latest outside temperature; the cold value until the first reading
         self._cycles_per_hour: int = cycles.cold_cycles_per_hour
@@ -327,10 +325,6 @@ class PWM:
         # Calculate duty cycle percentage
         self._last_duty_cycle_percentage = (requested_setpoint - base_offset) / (boiler_temperature - base_offset)
         self._last_duty_cycle_percentage = min(max(self._last_duty_cycle_percentage, 0), 1)
-
-        # If automatic duty cycle control is disabled
-        if not self._automatic_duty_cycle:
-            return self._last_duty_cycle_percentage * self._cycles.maximum_time, (1 - self._last_duty_cycle_percentage) * self._cycles.maximum_time, "manual"
 
         # Below the minimum duty no pulse starts, whatever the flame state
         if self._last_duty_cycle_percentage < thresholds.duty_cycle_min:

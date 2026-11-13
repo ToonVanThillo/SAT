@@ -436,8 +436,7 @@ class SatPWMCyclesPerHourSensor(SatClimateEntity, SensorEntity):
 
 
 class SatPWMDutyCycleSensor(SatClimateEntity, SensorEntity):
-    """Diagnostic duty cycle PWM switches with: the on-time as a percentage of the on- and off-time; unknown while PWM has none or both
-    times are 0."""
+    """Diagnostic duty cycle PWM switches with: the on-time as a percentage of the on- and off-time; unknown while PWM has none."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
@@ -465,11 +464,7 @@ class SatPWMDutyCycleSensor(SatClimateEntity, SensorEntity):
         if (duty_cycle := self._climate.pwm.duty_cycle) is None:
             return None
 
-        # A cycle time below a second gives no on- or off-time
         on_time, off_time = duty_cycle
-        if on_time + off_time == 0:
-            return None
-
         return round(on_time / (on_time + off_time) * 100, 1)
 
 

@@ -32,7 +32,7 @@ def clock() -> Iterator[Clock]:
 
 def make_pwm(hot_water_delay: float = 0) -> PWM:
     CURVE.value = 30.0
-    pwm = PWM(config(), CURVE, True, hot_water_delay=hot_water_delay)  # type: ignore[arg-type]
+    pwm = PWM(config(), CURVE, hot_water_delay=hot_water_delay)  # type: ignore[arg-type]
     # 2 cycles per hour: a duty of 0.5 gives 900 s on, 900 s off
     pwm.update_cycles_per_hour(20)
     return pwm

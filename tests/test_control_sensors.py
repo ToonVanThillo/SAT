@@ -1,19 +1,22 @@
 """Heating Curve, Error Value and the control-loop diagnostic sensors, and the climate's attribute set."""
+from types import SimpleNamespace
+
 import pytest
 from homeassistant.components.climate import HVACMode
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN, EntityCategory
 from homeassistant.core import Event, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from custom_components.sat.const import (
-    CONF_AUTOMATIC_DUTY_CYCLE,
-    CONF_DUTY_CYCLE,
     CONF_FORCE_PULSE_WIDTH_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MINIMUM_SETPOINT,
     CONF_MODE,
     MODE_FAKE,
+    SIGNAL_PWM_UPDATED,
+    BoilerStatus,
 )
 from custom_components.sat.fake import SatFakeCoordinator
 from tests.conftest import advance
@@ -319,6 +322,23 @@ async def test_pwm_duty_cycle_unknown_after_reset(hass, entry, climate, boiler_d
     assert value(hass, DUTY[0]) == STATE_UNKNOWN
 
 
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize("fraction, branch, expected", [(0.0, "low-duty", "0.0"), (1.0, "max", "100.0")])
+async def test_pwm_duty_cycle_at_the_low_duty_and_max_branches(hass, entry, climate, fraction, branch, expected):
+    pwm = climate.pwm
+    boiler = SimpleNamespace(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water_active=False, flow_temperature=50.0, reliable_flow_temperature=50.0)
+    flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
+    base = climate.heating_curve.base_offset
+
+    await pwm.update(boiler, flame, base + fraction * (50.0 - base))  # type: ignore[arg-type]
+    async_dispatcher_send(hass, SIGNAL_PWM_UPDATED.format(entry.entry_id), pwm.status)
+    await hass.async_block_till_done()
+
+    assert pwm.duty_cycle_branch == branch
+    assert value(hass, DUTY[0]) == expected
+
+
 # Climate attributes
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
@@ -354,31 +374,6 @@ async def test_climate_lacks_old_extra_keys(hass, entry, climate):
     for key in ("error", "integral", "setpoint", "heating_curve", "optimal_coefficient", "valves_open", "rooms", "pulse_width_modulation_state", "relative_modulation_state"):
         assert key not in attributes
     assert not [k for k in attributes if k.startswith(("pulse_width_modulation", "relative_modulation", "summer_simmer", "boiler_temperature"))]
-
-
-# Duty (0, 0)
-
-ZERO_DUTY = with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_AUTOMATIC_DUTY_CYCLE: False, CONF_DUTY_CYCLE: "00:00:00"})
-
-
-@pytest.mark.usefixtures("entity_registry_enabled_by_default")
-@pytest.mark.parametrize(*ZERO_DUTY)
-async def test_pwm_duty_cycle_is_unknown_for_zero_on_and_off_time(hass, entry, climate, coordinator, boiler_data):
-    await heat(climate, boiler_data)
-    await climate.async_control_heating_loop()
-    await hass.async_block_till_done()
-
-    assert climate.pwm.duty_cycle == (0, 0)
-    assert value(hass, DUTY[0]) == STATE_UNKNOWN
-
-    # A coordinator update doesn't raise and still reaches listeners registered after it
-    notified = []
-    coordinator.async_add_listener(lambda: notified.append(True))
-    coordinator.async_update_listeners()
-    await hass.async_block_till_done()
-
-    assert notified == [True]
-    assert value(hass, DUTY[0]) == STATE_UNKNOWN
 
 
 # One write per climate write

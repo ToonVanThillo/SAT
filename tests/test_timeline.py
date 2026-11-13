@@ -24,7 +24,7 @@ from tests.const import IDLE, ems_entry, otgw_entry, with_data
 from tests.test_climate_loop import run_loop
 from tests.test_mqtt_ems import start
 
-BRANCHES = {"manual", "low-duty", "low", "mid", "high", "max"}
+BRANCHES = {"low-duty", "low", "mid", "high", "max"}
 
 
 def timeline(caplog, level=logging.INFO, phase="call") -> list[str]:
@@ -542,15 +542,6 @@ async def test_duty_cycle_branch_names_match_the_spec():
         seen[label] = pwm.duty_cycle_branch
 
     assert seen == {"low-duty flame": "low-duty", "low-duty no flame": "low-duty", "max": "max"}
-
-
-async def test_manual_duty_cycle_branch():
-    from tests.test_pwm_cycles import Clock, make_pwm, step
-
-    pwm = make_pwm(automatic=False)
-    await step(pwm, Clock(), 0.5)
-
-    assert pwm.duty_cycle_branch == "manual"
 
 
 # Round 2: coordinator removal, overshoot, release edges, logging never raises

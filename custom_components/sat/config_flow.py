@@ -640,9 +640,6 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
                 selector.NumberSelectorConfig(min=0.1, max=0.5, step=0.1)
             )
 
-        if not options[CONF_AUTOMATIC_DUTY_CYCLE]:
-            schema[vol.Required(CONF_DUTY_CYCLE, default=options[CONF_DUTY_CYCLE])] = selector.TimeSelector()
-
         entities = entity_registry.async_get(self.hass)
         device_name = self._config_entry.data.get(CONF_NAME)
         window_id = entities.async_get_entity_id(binary_sensor.DOMAIN, DOMAIN, f"{device_name.lower()}-window-sensor")
@@ -705,7 +702,6 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
         cycles_per_hour = selector.NumberSelector(selector.NumberSelectorConfig(min=MINIMUM_CYCLES_PER_HOUR, max=MAXIMUM_CYCLES_PER_HOUR, step=1, mode=selector.NumberSelectorMode.BOX))
 
         schema: dict[Marker, Any] = {
-            vol.Required(CONF_AUTOMATIC_DUTY_CYCLE, default=options[CONF_AUTOMATIC_DUTY_CYCLE]): bool,
             vol.Required(CONF_SYNC_CLIMATES_WITH_MODE, default=options[CONF_SYNC_CLIMATES_WITH_MODE]): bool,
             vol.Required(CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE, default=options[CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE]): temperature,
             vol.Required(CONF_CYCLES_PER_HOUR_COLD, default=options[CONF_CYCLES_PER_HOUR_COLD]): cycles_per_hour,

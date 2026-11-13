@@ -182,7 +182,6 @@
           "automatic_gains_value": "Valeur de Gains Automatiques",
           "derivative": "Dérivé (kD)",
           "derivative_time_weight": "Poids Temporel Dérivé",
-          "duty_cycle": "Cycle de Fonctionnement Maximum pour la Modulation de Largeur d'Impulsion",
           "heating_curve_coefficient": "Coefficient de la Courbe de Chauffage",
           "heating_curve_version": "Version de la Courbe de Chauffage",
           "integral": "Intégral (kI)",
@@ -196,7 +195,6 @@
           "automatic_gains_value": "La valeur utilisée pour les gains automatiques dans le régulateur PID.",
           "derivative": "Le terme dérivé (kD) dans le régulateur PID, responsable de l'atténuation des dépassements.",
           "derivative_time_weight": "Un paramètre pour ajuster l'influence du terme dérivé au fil du temps, particulièrement utile pour réduire le dépassement lors de la phase de montée en température lorsque le coefficient de la courbe de chauffage est correctement réglé.",
-          "duty_cycle": "Le cycle de fonctionnement maximum pour la Modulation de Largeur d'Impulsion (PWM), contrôlant les cycles de marche/arrêt de la chaudière.",
           "heating_curve_coefficient": "Le coefficient utilisé pour ajuster la courbe de chauffage.",
           "integral": "Le terme intégral (kI) dans le régulateur PID, responsable de la réduction de l'erreur en régime permanent.",
           "maximum_setpoint": "La température optimale pour un fonctionnement efficace de la chaudière.",
@@ -229,14 +227,12 @@
       },
       "system_configuration": {
         "data": {
-          "automatic_duty_cycle": "Cycle de fonctionnement automatique",
           "hot_water_delay": "Délai après l'ECS",
           "sync_climates_with_mode": "Synchroniser les climats avec le mode",
           "sensor_max_value_age": "Âge maximal de la valeur du capteur de température",
           "window_minimum_open_time": "Temps minimum d'ouverture de la fenêtre"
         },
         "data_description": {
-          "automatic_duty_cycle": "Activer ou désactiver le cycle de fonctionnement automatique pour la Modulation de Largeur d'Impulsion (PWM).",
           "hot_water_delay": "Secondes après une combustion pour l'eau chaude pendant lesquelles la PWM ne démarre aucune impulsion, par ex. le blocage du chauffage de la chaudière après l'eau chaude (300 pour une Junkers Cerapur qui bloque le chauffage pendant 5 minutes). Aucune impulsion ne démarre non plus tant que la chaudière produit de l'eau chaude ; une impulsion déjà en cours n'est pas affectée. 0 désactive le délai.",
           "sensor_max_value_age": "L'âge maximum de la valeur du capteur de température avant de la considérer comme stagnante.",
           "window_minimum_open_time": "Le temps minimum qu'une fenêtre doit être ouverte avant que le système ne réagisse."

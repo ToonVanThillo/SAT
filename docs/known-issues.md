@@ -106,11 +106,10 @@ known bug".
   flame reports on before any update has run, so the stale value is visible
   from the moment the flame goes on.
 - A started PWM pulse is held ON for at least 180 s, while the exposed PWM
-  duty cycle keeps following the recalculated on time. With automatic duty
+  duty cycle keeps following the recalculated on time. With the automatic duty
   cycle it can read 0 s on while the status is ON (the low-duty case), and
-  flame health's PWM_SHORT check cannot fire then. With a fixed
-  duty cycle the on time can read small but non-zero, and PWM_SHORT can still
-  fire although the pulse runs 180 s. Follows from the minimum-pulse rule.
+  flame health's PWM_SHORT check cannot fire then. Follows from the
+  minimum-pulse rule.
 - The "valves closed" PWM reset, like the other PWM resets, restarts the hourly
   pulse count and disables PWM. Valves that open and close quickly can start
   more than N pulses per hour: each reopen can start a pulse at once from

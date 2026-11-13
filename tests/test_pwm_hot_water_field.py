@@ -231,7 +231,7 @@ async def test_a_hold_with_a_duty_below_the_minimum_never_starts_a_pulse(caplog)
     clock = Clock()
     with patch("custom_components.sat.pwm.monotonic", clock):
         CURVE.value = 30.0
-        pwm = PWM(config(), CURVE, True, hot_water_delay=300)  # type: ignore[arg-type]
+        pwm = PWM(config(), CURVE, hot_water_delay=300)  # type: ignore[arg-type]
         pwm.update_cycles_per_hour(20)
         for duty in (0.01, 0.01):
             await pwm.update(boiler(hot_water=True), flame(), setpoint_for(duty))  # type: ignore[arg-type]
