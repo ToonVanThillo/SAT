@@ -245,15 +245,16 @@ async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_o
     assert signals == [PWMStatus.IDLE]
     assert sent(published) == OFF_WRITES
 
-    # The temperature returns: the old pulse doesn't resume; as after closed valves, PWM may start a fresh one (pulse 1 again)
+    # The temperature returns: the old pulse doesn't resume. Current behaviour, known bug: as after closed valves, the reset left
+    # PWM IDLE, so a fresh pulse starts at once, seconds after the previous pulse start (docs/known-issues.md, Control logic)
     hass.states.async_set(sensor, "20.9" if sensor == INSIDE else "9.9")
     freezer.tick(1)
     await boiler_data(**IDLE | echo(published))
     await climate.async_control_heating_loop()
     assert "missing temperature" not in timeline(caplog, "cycle ")[-1]
-    fresh = timeline(caplog, "pwm ON")[len(pulses):]
-    assert all(line.startswith("pwm ON (pulse 1 this hour") for line in fresh)
-    assert len(timeline(caplog, "pwm OFF")) == 0
+    assert len(timeline(caplog, "pwm ON")) == len(pulses) + 1
+    assert timeline(caplog, "pwm OFF") == []
+    assert climate.pwm.status == PWMStatus.ON
 
 
 @pytest.mark.parametrize(*ems_entry())

@@ -1,4 +1,4 @@
-"""PWM cycles per hour from the outside temperature, latching at pulse start and the 180 s minimum pulse."""
+"""PWM cycles per hour from the outside temperature, latching at pulse start, the 180 s minimum pulse and the 180 s minimum off phase."""
 import logging
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -203,7 +203,7 @@ async def test_pulse_start_logs_latched_n(clock, caplog):
     pwm.update_cycles_per_hour(20)
     with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
         await start_pulse(pwm, clock)
-    assert "pwm ON (pulse 1 this hour, 2 cycles/h)" in caplog.text
+    assert "pwm ON (2 cycles/h)" in caplog.text
 
 
 async def test_n_change_mid_on_is_latched(clock):
@@ -464,64 +464,167 @@ async def test_running_pulse_held_to_180s_when_duty_falls_below_minimum(clock, f
         assert pwm.status == PWMStatus.OFF
 
 
-# Hourly cap
+# No limit on the pulses per hour
 
 async def run_pulses(pwm: PWM, clock: Clock, duty: float, half_cycle: float, steps: int) -> None:
     for _ in range(steps):
         await step(pwm, clock, duty, half_cycle)
 
 
-async def test_cap_blocks_fifth_pulse_at_n4(clock, caplog):
+async def test_a_fifth_pulse_within_the_hour_starts_at_n4(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)  # N=4: (450, 450) per cycle
     await start_pulse(pwm, clock, 0.5)
     await run_pulses(pwm, clock, 0.5, 450, 7)  # t=3150, four pulses started at 0, 900, 1800, 2700
     assert pwm.status == PWMStatus.OFF
 
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
-        await step(pwm, clock, 0.5, 450)  # t=3600, still inside the rolling hour
-        assert pwm.status == PWMStatus.OFF
-        assert "pwm cycles cap reached (4/h)" in caplog.text
-        await step(pwm, clock, 0.5, 1)  # new rolling hour
+    await step(pwm, clock, 0.5, 450)  # t=3600
     assert pwm.status == PWMStatus.ON
 
 
-async def test_cap_blocks_third_pulse_at_n2(clock, caplog):
+async def test_a_third_pulse_within_the_hour_starts_at_n2(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(20)  # N=2: (900, 900) per cycle
     await start_pulse(pwm, clock, 0.5)
-    await run_pulses(pwm, clock, 0.5, 900, 1)  # OFF
-    await run_pulses(pwm, clock, 0.5, 900, 1)  # second pulse, t=1800
+    await run_pulses(pwm, clock, 0.5, 900, 3)  # OFF, second pulse at t=1800, OFF at t=2700
+    assert pwm.status == PWMStatus.OFF
+
+    await step(pwm, clock, 0.5, 900)  # t=3600
     assert pwm.status == PWMStatus.ON
-    await run_pulses(pwm, clock, 0.5, 900, 1)  # OFF at t=2700
-    assert pwm.status == PWMStatus.OFF
-
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
-        await step(pwm, clock, 0.5, 900)  # t=3600, still inside the rolling hour
-    assert pwm.status == PWMStatus.OFF
-    assert "pwm cycles cap reached (2/h)" in caplog.text
 
 
-async def test_cap_allows_third_pulse_at_n4(clock):
+# A mid duty cycle fills the period
+
+@pytest.mark.parametrize(("temperature", "duty", "on_time"), [
+    (20, 0.37, 666), (20, 0.61, 1097), (20, 0.5333, 959),
+    (6, 0.37, 444), (6, 0.61, 731), (6, 0.5333, 639),
+    (-5, 0.37, 333), (-5, 0.61, 548), (-5, 0.5333, 479),
+])
+async def test_a_mid_duty_cycle_fills_the_period_exactly(clock, temperature, duty, on_time):
+    # The raw times are fractional: the on time is truncated and the off time is the rest of the period
     pwm = make_pwm()
+    pwm.update_cycles_per_hour(temperature)
+    await step(pwm, clock, duty)
+    assert pwm.duty_cycle_branch == "mid"
+    on, off = pwm.state.duty_cycle  # type: ignore[misc]
+    assert on == on_time
+    assert on + off == 3600 / pwm.cycles_per_hour
+
+
+# Minimum off phase: an off phase after a pulse end lasts at least 180 s
+
+def pwm_lines(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith(("pwm ON", "pwm OFF", "pwm IDLE", "pwm hold"))]
+
+
+async def max_pulse_ended_late_in_its_period(pwm: PWM, clock: Clock) -> None:
+    """At N=4: a pulse at 100% (1800 s on, 0 s off) from 0 s, ended at 1500 s by a dip to a duty of 0.85 (1020 s on)."""
     pwm.update_cycles_per_hour(-5)
-    await start_pulse(pwm, clock, 0.5)
-    await run_pulses(pwm, clock, 0.5, 450, 4)  # OFF, ON (2), OFF, ON (3)
+    await start_pulse(pwm, clock, 1.0)
+    await step(pwm, clock, 1.0, 1490)
+    assert pwm.status == PWMStatus.ON
+    await step(pwm, clock, 0.85, 10)  # 1500 s
+    assert pwm.status == PWMStatus.OFF
+
+
+async def test_a_pulse_end_at_a_duty_jitter_near_100_percent_is_followed_by_the_minimum_off_phase(clock, caplog):
+    pwm = make_pwm()
+    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
+        await max_pulse_ended_late_in_its_period(pwm, clock)
+
+        # Back at 100%, whose off time is 0
+        await step(pwm, clock, 1.0, 10)  # 10 s after the pulse end
+        assert pwm.state.duty_cycle == (1800, 0)
+        assert pwm.status == PWMStatus.OFF
+        assert pwm.hold is None
+        await step(pwm, clock, 1.0, 169)  # 179 s
+        assert pwm.status == PWMStatus.OFF
+        await step(pwm, clock, 1.0, 1)  # 180 s
+        assert pwm.status == PWMStatus.ON
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm OFF", "pwm ON (4 cycles/h)"]
+
+
+@pytest.mark.parametrize(("duty", "branch"), [(0.15, "low"), (0.5, "mid"), (0.8, "mid"), (0.85, "high")])
+async def test_the_off_time_of_a_low_mid_or_high_duty_is_unchanged(clock, duty, branch):
+    pwm = make_pwm()
+    pwm.update_cycles_per_hour(-5)  # N=4: (180, 1020), (450, 450), (720, 180), (1020, 180)
+    await start_pulse(pwm, clock, duty)
+    assert pwm.duty_cycle_branch == branch
+    on, off = pwm.state.duty_cycle  # type: ignore[misc]
+    assert off >= 180
+
+    await step(pwm, clock, duty, on)
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, duty, off - 1)
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, duty, 1)
     assert pwm.status == PWMStatus.ON
 
 
-async def test_cap_uses_latched_n_not_the_new_one(clock, caplog):
+async def test_a_rollover_after_an_earlier_pulse_end_has_no_off_phase(clock, caplog):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(20)  # N=2
-    await start_pulse(pwm, clock, 0.5)
-    await run_pulses(pwm, clock, 0.5, 900, 3)  # OFF, ON (2), OFF at t=2700
-    pwm.update_cycles_per_hour(-5)  # would allow N=4, but the latched N=2 governs this off phase
-    assert pwm.cycles_per_hour == 2
-
+    pwm.update_cycles_per_hour(-5)  # N=4
     with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
-        await step(pwm, clock, 0.5, 900)
+        await start_pulse(pwm, clock, 0.5)
+        await step(pwm, clock, 0.5, 450)
+        assert pwm.status == PWMStatus.OFF
+        await step(pwm, clock, 1.0, 450)  # 900 s: a 100% pulse, 1800 s on, 0 s off
+        assert pwm.status == PWMStatus.ON
+
+        await step(pwm, clock, 1.0, 1799)
+        await step(pwm, clock, 1.0, 1)  # 2700 s: rollover
+        assert pwm.status == PWMStatus.ON
+        await step(pwm, clock, 1.0, 10)
+        assert pwm.status == PWMStatus.ON
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm OFF", "pwm ON (4 cycles/h)"]
+
+
+@pytest.mark.parametrize("duty", [1.0, 0.85])
+async def test_a_start_from_idle_after_a_reset_is_not_held_by_the_minimum_off_phase(clock, duty):
+    pwm = make_pwm()
+    await max_pulse_ended_late_in_its_period(pwm, clock)
+    pwm.reset()
+
+    await step(pwm, clock, duty, 10)  # 10 s after the pulse end and the reset
+
+    assert pwm.status == PWMStatus.ON
+
+
+async def test_an_off_phase_entered_after_a_reset_is_not_held_by_the_minimum_off_phase(clock, caplog):
+    pwm = make_pwm()
+    pwm.update_cycles_per_hour(-5)  # N=4: (450, 450) at 0.5
+    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
+        await start_pulse(pwm, clock, 0.5)
+        await step(pwm, clock, 0.5, 450)
+        assert pwm.status == PWMStatus.OFF
+        pwm.reset()
+
+        # A due start held by hot water goes from idle to off
+        await step(pwm, clock, 0.5, hot_water=True)
+        assert pwm.status == PWMStatus.OFF
+        assert pwm.hold == "hot water"
+        # Below the minimum duty no start is due, so the hold ends and the off phase goes on
+        await step(pwm, clock, 0.05, hot_water=True)
+        assert pwm.status == PWMStatus.OFF
+
+        # At 100%, whose off time is 0: the off phase doesn't follow a pulse end
+        await step(pwm, clock, 1.0, 10)
+        assert pwm.status == PWMStatus.ON
+    assert pwm_lines(caplog) == [
+        "pwm ON (4 cycles/h)", "pwm OFF", "pwm IDLE (reset)", "pwm hold (hot water)", "pwm OFF", "pwm hold ended", "pwm ON (4 cycles/h)",
+    ]
+
+
+async def test_an_off_phase_before_the_first_pulse_is_not_held_by_the_minimum_off_phase(clock):
+    pwm = make_pwm()
+    pwm.update_cycles_per_hour(-5)  # N=4
+    # Below the minimum duty the PWM goes from idle to off without a pulse
+    await step(pwm, clock, 0.05)
     assert pwm.status == PWMStatus.OFF
-    assert "pwm cycles cap reached (2/h)" in caplog.text
+
+    await step(pwm, clock, 1.0, 10)
+
+    assert pwm.status == PWMStatus.ON
 
 
 # Characterization with hard-coded values
@@ -572,32 +675,4 @@ async def test_idle_after_missing_values_uses_current_n(clock, caplog):
     with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
         await step(pwm, clock, 0.5, 5)
     assert pwm.status == PWMStatus.ON
-    assert ", 2 cycles/h)" in caplog.text
-
-
-async def test_cap_uses_current_n_after_the_latch_expired(clock, caplog):
-    # N=4 up to 0 degrees, N=6 from 12 degrees; four pulses within 1260 s: each ends at the 180 s minimum when the duty drops to 0,
-    # and the next starts after the 180 s off-time of a high duty
-    pwm = make_pwm(mild_cycles_per_hour=6)
-    pwm.update_cycles_per_hour(-5)
-    await start_pulse(pwm, clock)
-    for _ in range(3):
-        await step(pwm, clock, 0.0, 180)
-        assert pwm.status == PWMStatus.OFF
-        await step(pwm, clock, 0.85, 180)
-        assert pwm.status == PWMStatus.ON
-    await step(pwm, clock, 0.0, 180)  # starts at 0, 360, 720, 1080; OFF from 1260
-    assert pwm.status == PWMStatus.OFF
-    pwm.update_cycles_per_hour(20)
-    assert pwm.cycles_per_hour == 4
-
-    with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
-        await step(pwm, clock, 0.5, 450)  # t=1710, latched N=4 caps
-        assert "pwm cycles cap reached (4/h)" in caplog.text
-        assert pwm.status == PWMStatus.OFF
-        await step(pwm, clock, 0.5, 1350)  # off phase of exactly 2 * 3600 / 4 s: the latch still holds
-        assert pwm.status == PWMStatus.OFF
-        assert pwm.cycles_per_hour == 4
-        await step(pwm, clock, 0.5, 1)  # latch expired, the current N=6 applies
-    assert pwm.status == PWMStatus.ON
-    assert ", 6 cycles/h)" in caplog.text
+    assert "pwm ON (2 cycles/h)" in caplog.text

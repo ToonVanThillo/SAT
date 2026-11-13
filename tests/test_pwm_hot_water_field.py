@@ -79,9 +79,8 @@ async def test_a_hot_water_burn_with_a_tail_holds_pwm_until_300_s_after_flame_of
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.ON
     assert "hold=" not in last_cycle(caplog)
-    # The held updates counted nothing: this is the first pulse
-    assert len(timeline_lines(caplog, "pwm ON")) == 1
-    assert timeline_lines(caplog, "pwm ON")[0].startswith("pwm ON (pulse 1 this hour")
+    # The held updates started nothing: this is the first pulse
+    assert timeline_lines(caplog, "pwm ON") == ["pwm ON (2 cycles/h)"]
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -101,7 +100,7 @@ async def test_without_a_delay_a_pulse_starts_right_after_flame_off_but_not_in_t
     await climate.async_control_heating_loop()
 
     assert climate.pwm.status == PWMStatus.ON
-    assert timeline_lines(caplog, "pwm ON")[0].startswith("pwm ON (pulse 1 this hour")
+    assert timeline_lines(caplog, "pwm ON") == ["pwm ON (2 cycles/h)"]
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -313,7 +312,7 @@ async def test_the_timeline_shows_the_hold_sequence_of_the_field_scenario(hass, 
         "flame off after 30.0s, hot water (flag), not counted",
         "pwm hold (hot water delay)",
         "pwm hold ended",
-        "pwm ON (pulse 1 this hour, 2 cycles/h)",
+        "pwm ON (2 cycles/h)",
     ]
 
 

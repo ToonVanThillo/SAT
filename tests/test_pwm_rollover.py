@@ -11,7 +11,7 @@ from tests.test_pwm_cycles import Clock, make_pwm, start_pulse, step
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
 from tests.test_pwm_hot_water import update as hot_water_update
 
-PWM_LINES = ("pwm ON", "pwm OFF", "pwm IDLE", "pwm cycles cap", "pwm hold")
+PWM_LINES = ("pwm ON", "pwm OFF", "pwm IDLE", "pwm hold")
 
 
 @pytest.fixture
@@ -44,49 +44,27 @@ async def test_a_100_percent_burn_stays_on_across_period_ends(clock, caplog):
         assert pwm.status == PWMStatus.ON
         assert pwm.state.duty_cycle == (1800, 0)
 
-    assert pwm_lines(caplog) == ["pwm ON (pulse 1 this hour, 4 cycles/h)"]
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)"]
 
 
-# (b) Rollovers neither count towards nor are blocked by the cap
+# (b) After a rollover, the off phase runs from the pulse end
 
-async def test_rollovers_do_not_count_towards_the_cap(clock, caplog):
-    pwm = make_pwm(cold_cycles_per_hour=6, mild_cycles_per_hour=6)  # N=6: a duty of 1.0 gives 1200 s on, 0 s off
-    # Five short pulses: each ends at the 180 s minimum when the duty drops to 0, the next starts after the 180 s off-time of a high duty
-    await start_pulse(pwm, clock, 0.5)
-    for _ in range(4):
-        await step(pwm, clock, 0.0, 180)
-        assert pwm.status == PWMStatus.OFF
-        await step(pwm, clock, 0.8, 180)
-        assert pwm.status == PWMStatus.ON
-    await step(pwm, clock, 0.0, 180)  # starts at 0, 360, 720, 1080, 1440; OFF from 1620
-    assert pwm.status == PWMStatus.OFF
-
-    # The sixth pulse, at 1800 s, uses up the cap; its period ends at 3000 s, inside the rolling hour
-    await step(pwm, clock, 1.0, 180)
-    assert pwm.status == PWMStatus.ON
-    caplog.clear()
-    for _ in range(5):
-        await step(pwm, clock, 1.0, 300)  # 2100 .. 3300 s
-        assert pwm.status == PWMStatus.ON
-    await step(pwm, clock, 1.0, 290)  # 3590 s
-    assert pwm.status == PWMStatus.ON
-
-    assert pwm_lines(caplog) == []
-
-
-async def test_a_rollover_is_not_counted_as_a_pulse(clock, caplog):
+async def test_after_a_rollover_the_off_phase_runs_from_the_pulse_end(clock, caplog):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: a duty of 1.0 gives 1800 s on, 0 s off; 0.5 gives 450 s on, 450 s off
+    pwm.update_cycles_per_hour(-5)  # N=4
     await start_pulse(pwm, clock, 1.0)
     await step(pwm, clock, 1.0, 1800)  # rollover at 1800 s
     assert pwm.status == PWMStatus.ON
 
-    await step(pwm, clock, 0.5, 450)  # 2250 s: 450 s into the second period
+    # Below the minimum duty the pulse ends at once; a duty of 0.85 has a 180 s off time
+    await step(pwm, clock, 0.05, 10)  # 1810 s
     assert pwm.status == PWMStatus.OFF
-    await step(pwm, clock, 0.5, 450)  # 2700 s: the next pulse, still inside the rolling hour
+    await step(pwm, clock, 0.85, 179)  # 1989 s: 189 s after the rollover
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, 0.85, 1)  # 1990 s: 180 s after the pulse end
     assert pwm.status == PWMStatus.ON
 
-    assert pwm_lines(caplog)[-1] == "pwm ON (pulse 2 this hour, 4 cycles/h)"
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm OFF", "pwm ON (4 cycles/h)"]
 
 
 # (c) A hot water hold doesn't stop a rollover
@@ -105,7 +83,7 @@ async def test_a_hot_water_hold_does_not_stop_a_rollover(clock, caplog, hot_wate
         assert pwm.status == PWMStatus.ON
         assert pwm.hold is None
 
-    assert pwm_lines(caplog) == ["pwm ON (pulse 1 this hour, 2 cycles/h)"]
+    assert pwm_lines(caplog) == ["pwm ON (2 cycles/h)"]
 
 
 # (d) A duty drop below 100% ends the pulse at period start + new on-time, not before the minimum pulse
@@ -125,7 +103,7 @@ async def test_a_duty_drop_in_a_later_period_ends_the_pulse_at_the_new_on_time_f
     await step(pwm, clock, 0.5, 1)  # 2250 s: 450 s into the period
     assert pwm.status == PWMStatus.OFF
 
-    assert pwm_lines(caplog) == ["pwm ON (pulse 1 this hour, 4 cycles/h)", "pwm OFF"]
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm OFF"]
 
 
 async def test_a_duty_drop_shortly_after_the_pulse_start_holds_the_minimum_pulse(clock, caplog):
@@ -141,7 +119,7 @@ async def test_a_duty_drop_shortly_after_the_pulse_start_holds_the_minimum_pulse
     await step(pwm, clock, 0.05, 1)  # 180 s
     assert pwm.status == PWMStatus.OFF
 
-    assert pwm_lines(caplog) == ["pwm ON (pulse 1 this hour, 4 cycles/h)", "pwm ON held for the minimum pulse (180s)", "pwm OFF"]
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm ON held for the minimum pulse (180s)", "pwm OFF"]
 
 
 # (e) No rollover when the duty is no longer 100% at the period end
@@ -163,7 +141,7 @@ async def test_no_rollover_when_the_duty_is_below_100_percent_at_the_period_end(
     await step(pwm, clock, 0.5, 1)
     assert pwm.status == PWMStatus.ON
 
-    assert pwm_lines(caplog) == ["pwm ON (pulse 1 this hour, 4 cycles/h)", "pwm OFF", "pwm ON (pulse 2 this hour, 4 cycles/h)"]
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm OFF", "pwm ON (4 cycles/h)"]
 
 
 # (f) N is latched again at a rollover

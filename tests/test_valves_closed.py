@@ -186,11 +186,13 @@ async def test_closing_valves_ends_a_running_pulse_at_once(hass, entry, climate,
     # Current behaviour, known bug: the reset also disables PWM (docs/known-issues.md, Control logic)
     assert climate.pwm.enabled is False
 
-    # Current behaviour, known bug: the reset zeroes the hourly pulse count, so the next pulse is pulse 1 again, not 2
+    # Current behaviour, known bug: the reset leaves PWM IDLE, so the reopened valves start a pulse at once, also seconds after
+    # the previous pulse start (docs/known-issues.md, Control logic)
     caplog.clear()
     open_valves(hass)
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
-    assert timeline_info(caplog, "pwm ON (pulse 1 this hour")
+    assert climate.pwm.status == PWMStatus.ON
+    assert timeline_info(caplog, "pwm ON") == [f"pwm ON ({climate.pwm.cycles_per_hour} cycles/h)"]
 
 
 @pytest.mark.parametrize(*WITH_RADIATOR)

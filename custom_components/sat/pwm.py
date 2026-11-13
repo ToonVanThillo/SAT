@@ -19,6 +19,9 @@ _LOGGER = logging.getLogger(__name__)
 MINIMUM_CYCLES_PER_HOUR = 1
 MAXIMUM_CYCLES_PER_HOUR = 6
 
+# Shortest off phase after a pulse end, in seconds; only a rollover goes from one period to the next without an off phase
+MINIMUM_OFF_TIME = 180
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CycleConfig:
@@ -115,8 +118,11 @@ class PWM:
         )
 
         self._status: PWMStatus = PWMStatus.IDLE
-        # Edge flags, to log only changes: the cycles-per-hour cap blocked a pulse and still applies, values are missing, the minimum pulse held this pulse
-        self._cycles_capped: bool = False
+        # Whether the current OFF phase follows a pulse end, so it lasts at least the minimum off time. Set at a pulse end; it stays set
+        # through the next ON phase, which is harmless as a start needs a status other than ON. Cleared on entering IDLE (a reset or
+        # missing values) and at IDLE -> OFF, so an OFF phase entered from IDLE never follows a pulse end
+        self._pulse_ended: bool = False
+        # Edge flags, to log only changes: values are missing, the minimum pulse held this pulse
         self._values_missing: bool = False
         self._minimum_pulse_held: bool = False
         # Why a due pulse start is held (logged on change); it is due again as soon as the hold ends
@@ -126,13 +132,11 @@ class PWM:
     def reset(self, reason: str = "reset") -> None:
         """Reset the PWM control; leaving ON or OFF is logged on the timeline with `reason`."""
         self._go_idle(reason)
-        self._lift_cycles_cap()
         self._set_held(None)
         # A missing-values episode ends with the reset, so the next one is warned about again
         self._values_missing = False
 
         self._enabled = False
-        self._current_cycle: int = 0
         # Last status change: the pulse start while ON, the pulse end while OFF
         self._last_update: float = monotonic()
         # Start of the current period while ON: the pulse start, moved at each rollover of a 100% period
@@ -140,7 +144,6 @@ class PWM:
         self._duty_cycle: Tuple[int, int] | None = None
         self._latched_cycles_per_hour: int | None = None
 
-        self._first_duty_cycle_start: float | None = None
         self._last_duty_cycle_percentage: float | None = None
         self._duty_cycle_branch: str | None = None
         self._hold: str | None = None
@@ -190,18 +193,9 @@ class PWM:
             self._last_boiler_temperature = flow_temperature
             _LOGGER.debug("Initialized last boiler temperature to %.1f°C", flow_temperature)
 
-        if self._first_duty_cycle_start is None or (monotonic() - self._first_duty_cycle_start) > 3600:
-            self._current_cycle = 0
-            self._first_duty_cycle_start = monotonic()
-            _LOGGER.info("CYCLES count reset for the rolling hour.")
-
         elapsed = monotonic() - self._last_update
         period_elapsed = monotonic() - self._period_start
-        cycles_per_hour = self.cycles_per_hour
-        if self._current_cycle < cycles_per_hour:
-            self._lift_cycles_cap()
-
-        thresholds = CycleThresholds.from_cycles_per_hour(cycles_per_hour)
+        thresholds = CycleThresholds.from_cycles_per_hour(self.cycles_per_hour)
         self._duty_cycle = self._calculate_duty_cycle(requested_setpoint, thresholds)
 
         # Update boiler temperature if the period has just started
@@ -233,12 +227,13 @@ class PWM:
         # A pulse that is on is not affected by a hold
         self._hold = None if self._status == PWMStatus.ON else self._hot_water_hold(boiler, flame)
 
-        # State transitions for PWM
+        # State transitions for PWM; the off phase after a pulse end lasts at least the minimum, also when the duty has risen to 100% meanwhile
+        off_time = max(self._duty_cycle[1], MINIMUM_OFF_TIME) if self._pulse_ended else self._duty_cycle[1]
         start_due = self._status != PWMStatus.ON and self._duty_cycle[0] >= HEATER_STARTUP_TIMEFRAME and (
-            elapsed >= self._duty_cycle[1] or self._status == PWMStatus.IDLE or self._held is not None
+            elapsed >= off_time or self._status == PWMStatus.IDLE or self._held is not None
         )
 
-        # A held pulse starts nothing: it isn't counted, latches no N and isn't capped; the next cycle decides again
+        # A held pulse starts nothing: it latches no N; the next cycle decides again
         self._set_held(self._hold if start_due else None)
         if self._held is not None:
             # Held in the off phase: IDLE would have the climate heat without PWM
@@ -249,23 +244,16 @@ class PWM:
             return
 
         if start_due:
-            if self._current_cycle >= cycles_per_hour:
-                if not self._cycles_capped:
-                    self._cycles_capped = True
-                    timeline.LOGGER.info("pwm cycles cap reached (%d/h)", cycles_per_hour)
-                return
-
-            self._current_cycle += 1
             self._status = PWMStatus.ON
             self._last_update = monotonic()
             self._period_start = self._last_update
             self._last_boiler_temperature = flow_temperature
             self._latched_cycles_per_hour = self._cycles_per_hour
             self._minimum_pulse_held = False
-            timeline.LOGGER.info("pwm ON (pulse %d this hour, %d cycles/h)", self._current_cycle, self._latched_cycles_per_hour)
+            timeline.LOGGER.info("pwm ON (%d cycles/h)", self._latched_cycles_per_hour)
             return
 
-        # A 100% period that ends rolls over into the next: the pulse goes on, uncounted and unaffected by the cap or a hold;
+        # A 100% period that ends rolls over into the next: the pulse goes on, unaffected by a hold;
         # the new period start restarts the 180 s boiler temperature smoothing, seeded by this update's flow temperature
         if self._status == PWMStatus.ON and self._duty_cycle[1] == 0 and period_elapsed >= self._duty_cycle[0]:
             self._period_start = monotonic()
@@ -282,6 +270,7 @@ class PWM:
 
         # The on-time runs from the period start, the minimum pulse above from the pulse start
         if self._status != PWMStatus.OFF and (self._duty_cycle[0] < HEATER_STARTUP_TIMEFRAME or period_elapsed >= self._duty_cycle[0] or self._status == PWMStatus.IDLE):
+            self._pulse_ended = self._status == PWMStatus.ON
             self._status = PWMStatus.OFF
             self._last_update = monotonic()
             timeline.LOGGER.info("pwm OFF")
@@ -310,17 +299,12 @@ class PWM:
         self._held = reason
 
     def _go_idle(self, reason: str) -> None:
-        """Switch to IDLE, which ends the latched cycles per hour; leaving ON or OFF is logged on the timeline with `reason`."""
+        """Switch to IDLE, which ends the latched cycles per hour and the off phase; leaving ON or OFF is logged on the timeline with `reason`."""
         self._latched_cycles_per_hour = None
+        self._pulse_ended = False
         if self._status != PWMStatus.IDLE:
             timeline.LOGGER.info("pwm IDLE (%s)", reason)
             self._status = PWMStatus.IDLE
-
-    def _lift_cycles_cap(self) -> None:
-        """Forget that the cycles-per-hour cap blocked a pulse; lifting it is logged on the timeline."""
-        if self._cycles_capped:
-            self._cycles_capped = False
-            timeline.LOGGER.info("pwm cycles cap lifted")
 
     def _calculate_duty_cycle(self, requested_setpoint: float, thresholds: CycleThresholds) -> Tuple[int, int]:
         """Calculate the duty cycle in seconds based on the output of a PID controller and a heating curve value; records the branch that applied."""
@@ -348,7 +332,9 @@ class PWM:
             return thresholds.on_time_lower, (thresholds.on_time_lower / self._last_duty_cycle_percentage) - thresholds.on_time_lower, "low"
 
         if self._last_duty_cycle_percentage <= thresholds.duty_cycle_upper:
-            return thresholds.on_time_upper * self._last_duty_cycle_percentage, thresholds.on_time_upper * (1 - self._last_duty_cycle_percentage), "mid"
+            # The off time is the rest of the period after the truncated on time, so the two add up to 3600 / N exactly
+            on_time = int(thresholds.on_time_upper * self._last_duty_cycle_percentage)
+            return on_time, thresholds.on_time_upper - on_time, "mid"
 
         if self._last_duty_cycle_percentage <= thresholds.duty_cycle_max:
             return thresholds.on_time_lower / (1 - self._last_duty_cycle_percentage) - thresholds.on_time_lower, thresholds.on_time_lower, "high"

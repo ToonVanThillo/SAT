@@ -110,13 +110,15 @@ known bug".
   cycle it can read 0 s on while the status is ON (the low-duty case), and
   flame health's PWM_SHORT check cannot fire then. Follows from the
   minimum-pulse rule.
-- The "valves closed" PWM reset, like the other PWM resets, restarts the hourly
-  pulse count and disables PWM. Valves that open and close quickly can start
-  more than N pulses per hour: each reopen can start a pulse at once from
-  IDLE. With the dynamic minimum setpoint (version 2), PWM stays disabled
-  after the valves reopen until overshoot handling enables it again. The
-  missing-temperature PWM reset does the same once a missing temperature
-  outlasts its 5-minute hold; a held input doesn't reset PWM.
+- The "valves closed" PWM reset, like the other PWM resets, disables PWM and
+  leaves it IDLE, so the reopened valves start a pulse at once, without the
+  off phase after the pulse the reset ended. Valves that open and close
+  quickly can thus start a pulse at each reopen; that is a configuration
+  problem SAT doesn't guard against. With the dynamic minimum setpoint
+  (version 2), PWM stays disabled after the valves reopen until overshoot
+  handling enables it again. The missing-temperature PWM reset does the same
+  once a missing temperature outlasts its 5-minute hold; a held input doesn't
+  reset PWM.
 - The PID's age reset (`sensor_max_value_age`) compares the time since the
   PID's last update, not the sensors' age. It fires whenever the PID hasn't
   updated for longer than the max age, which with a short max age means at

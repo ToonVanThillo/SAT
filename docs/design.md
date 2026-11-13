@@ -1,5 +1,8 @@
 # SAT design: device communication layer
 
+The PWM overhaul in `docs/pwm-overhaul.md` is in progress; where it differs
+from this document, that document applies.
+
 ## Purpose
 Make communication with the boiler explicit and verifiable: every control cycle
 decides from one consistent view of the boiler, and every command we send is
@@ -215,9 +218,7 @@ did, in order, so a run can be reconstructed from the log alone.
   and the hold ending; a pulse held on for the minimum pulse length beyond its
   duty cycle; overshoot handling starting and ending (evaluated in HEAT cycles
   with all temperatures); inputs going missing, being held, no longer held,
-  and back (an input never valid since start logs nothing); the PWM
-  cycles-per-hour cap being reached and
-  lifted; flame on and off, the flame-off line with the burn's kind and the
+  and back (an input never valid since start logs nothing); flame on and off, the flame-off line with the burn's kind and the
   hot-water signals seen; the control setpoint released or requested again,
   with the reason, on backends that release it (those with a control-setpoint
   channel), also across HVAC mode changes; coordinator setup and removal.
@@ -287,10 +288,8 @@ at the start of each cycle.
   reading it uses the N of the colder point. If the configured points are
   invalid, the defaults apply and an error is logged.
 - N sets the cycle timing: the normal period 3600/N, the duty ranges in which
-  the on-time is held at 180 s or the off-time at 180 s, the duty below which
-  no pulse starts, and the maximum number of pulses started per hour (a PWM
-  reset, also from no open valve or a missing temperature, restarts the
-  count).
+  the on-time is held at 180 s or the off-time at 180 s, and the duty below
+  which no pulse starts.
 - N is latched when a pulse starts and holds for that pulse and the off phase
   after it, until the next pulse starts or the off phase exceeds twice the
   latched normal period.

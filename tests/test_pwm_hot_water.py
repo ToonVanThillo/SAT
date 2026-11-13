@@ -20,7 +20,7 @@ from tests.conftest import TIMELINE
 from tests.const import IDLE, with_data
 from tests.test_pwm_cycles import CURVE, Clock, boiler, config, setpoint_for
 
-PWM_LINES = ("pwm ON", "pwm OFF", "pwm IDLE", "pwm cycles cap", "pwm hold")
+PWM_LINES = ("pwm ON", "pwm OFF", "pwm IDLE", "pwm hold")
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ async def test_no_pulse_starts_while_the_boiler_produces_hot_water(clock, caplog
 
     assert pwm.status == PWMStatus.ON
     assert pwm.hold is None
-    assert pwm_lines(caplog) == ["pwm hold (hot water)", "pwm OFF", "pwm hold ended", "pwm ON (pulse 1 this hour, 2 cycles/h)"]
+    assert pwm_lines(caplog) == ["pwm hold (hot water)", "pwm OFF", "pwm hold ended", "pwm ON (2 cycles/h)"]
 
 
 @pytest.mark.parametrize("since, held", [(0, True), (299, True), (300, False), (None, False)])
@@ -106,7 +106,7 @@ async def test_a_held_start_in_the_off_phase_starts_once_the_hold_ends(clock, ca
 
     await update(pwm, clock, 200, since=300)
     assert pwm.status == PWMStatus.ON
-    assert pwm_lines(caplog)[-1] == "pwm ON (pulse 2 this hour, 2 cycles/h)"
+    assert pwm_lines(caplog)[-1] == "pwm ON (2 cycles/h)"
 
 
 async def test_a_start_held_from_idle_starts_at_the_next_cycle_after_the_hold(clock):
@@ -130,7 +130,7 @@ async def test_a_pulse_that_is_on_is_not_affected(clock, caplog):
 
     await update(pwm, clock, 600, since=0)
     assert pwm.status == PWMStatus.OFF
-    assert pwm_lines(caplog) == ["pwm ON (pulse 1 this hour, 2 cycles/h)", "pwm OFF"]
+    assert pwm_lines(caplog) == ["pwm ON (2 cycles/h)", "pwm OFF"]
 
 
 async def test_a_held_start_latches_no_cycles_per_hour(clock):
@@ -160,7 +160,15 @@ async def test_a_held_start_after_idle_does_not_revive_an_old_latch(clock):
     assert pwm.cycles_per_hour == 2
 
 
-async def test_a_held_start_is_not_capped(clock, caplog):
+async def test_hot_water_outranks_its_delay(clock):
+    pwm = make_pwm(hot_water_delay=300)
+
+    await update(pwm, clock, hot_water=True, since=0)
+
+    assert pwm.hold == "hot water"
+
+
+async def test_a_held_third_start_in_the_hour_starts_once_the_hold_ends(clock, caplog):
     pwm = make_pwm()
     # Two pulses well within the hour: a duty of 0.9 gives a 180 s off time, 0.1 a 180 s pulse
     await update(pwm, clock)
@@ -169,13 +177,14 @@ async def test_a_held_start_is_not_capped(clock, caplog):
     await update(pwm, clock, 180, duty=0.1)
     assert pwm_lines(caplog)[-1] == "pwm OFF"
 
-    # The third start in the hour is due: held, the cap has no effect
+    # The third start in the hour is due: held by hot water, then started, as there is no limit on the pulses per hour
     await update(pwm, clock, 180, duty=0.9, hot_water=True)
     assert pwm.hold == "hot water"
-    assert not [line for line in pwm_lines(caplog) if line.startswith("pwm cycles cap")]
+    assert pwm.status == PWMStatus.OFF
 
-    await update(pwm, clock, 10, duty=0.9)
-    assert pwm_lines(caplog)[-1] == "pwm cycles cap reached (2/h)"
+    await update(pwm, clock, 10, duty=0.9)  # 1450 s
+    assert pwm.status == PWMStatus.ON
+    assert [line for line in pwm_lines(caplog) if line.startswith("pwm ON (")] == ["pwm ON (2 cycles/h)"] * 3
 
 
 async def test_a_reset_clears_the_hold(clock):
@@ -203,7 +212,7 @@ async def test_hold_lines_are_logged_on_change_of_the_reason(clock, caplog):
         "pwm OFF",
         "pwm hold (hot water delay)",
         "pwm hold ended",
-        "pwm ON (pulse 1 this hour, 2 cycles/h)",
+        "pwm ON (2 cycles/h)",
     ]
 
 
@@ -216,7 +225,7 @@ async def test_no_hold_line_while_no_start_is_due(clock, caplog):
     await update(pwm, clock, 100, hot_water=True)
 
     assert pwm.hold == "hot water"
-    assert pwm_lines(caplog) == ["pwm ON (pulse 1 this hour, 2 cycles/h)", "pwm OFF"]
+    assert pwm_lines(caplog) == ["pwm ON (2 cycles/h)", "pwm OFF"]
 
 
 async def test_a_hold_ends_when_the_start_is_no_longer_due(clock, caplog):

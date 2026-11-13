@@ -1,4 +1,4 @@
-"""Timeline lines of the PWM controller: idle edge with its reason and the cycles-per-hour cap edges."""
+"""Timeline lines of the PWM controller: idle edge with its reason, the missing values warning and the minimum pulse."""
 import logging
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,7 +12,6 @@ from tests.test_pwm_cycles import (
     Clock,
     boiler,
     make_pwm,
-    run_pulses,
     setpoint_for,
     start_pulse,
     step,
@@ -128,65 +127,6 @@ async def test_setpoint_stabilization_disables_with_idle_line(clock, caplog):
     assert pwm.status == PWMStatus.IDLE
     assert len(idle_lines(caplog)) == 1
     assert "stabili" in idle_lines(caplog)[0]
-
-
-# Cap edges
-
-async def capped_pwm(clock: Clock):
-    pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: four pulses started at 0, 900, 1800, 2700
-    await start_pulse(pwm, clock, 0.5)
-    await run_pulses(pwm, clock, 0.5, 450, 7)
-    return pwm
-
-
-async def test_cap_reached_is_logged_once_and_lifted_once(clock, caplog):
-    pwm = await capped_pwm(clock)
-    caplog.clear()
-
-    await step(pwm, clock, 0.5, 450)  # t=3600, still inside the rolling hour
-    await step(pwm, clock, 0.5, 0)
-    await step(pwm, clock, 0.5, 0)
-    assert lines(caplog, "pwm cycles cap") == ["pwm cycles cap reached (4/h)"]
-    assert pwm.status == PWMStatus.OFF
-
-    await step(pwm, clock, 0.5, 1)  # new rolling hour
-    assert lines(caplog, "pwm cycles cap") == ["pwm cycles cap reached (4/h)", "pwm cycles cap lifted"]
-    assert pwm.status == PWMStatus.ON
-    # The next pulse follows the lift
-    assert [m for m in lines(caplog) if m.startswith(("pwm cycles", "pwm ON"))][-2:] == ["pwm cycles cap lifted", "pwm ON (pulse 1 this hour, 4 cycles/h)"]
-
-    caplog.clear()
-    await step(pwm, clock, 0.5, 450)
-    assert lines(caplog, "pwm cycles cap") == []
-
-
-async def test_no_cap_lines_when_never_capped(clock, caplog):
-    pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
-    await start_pulse(pwm, clock, 0.5)
-    await run_pulses(pwm, clock, 0.5, 450, 5)
-
-    assert lines(caplog, "pwm cycles cap") == []
-
-
-async def test_cap_lifted_when_the_pwm_is_reset(clock, caplog):
-    pwm = await capped_pwm(clock)
-    await step(pwm, clock, 0.5, 450)
-    assert lines(caplog, "pwm cycles cap reached") == ["pwm cycles cap reached (4/h)"]
-
-    pwm.reset()
-    pwm.reset()
-
-    assert lines(caplog, "pwm cycles cap lifted") == ["pwm cycles cap lifted"]
-
-
-async def test_old_cap_line_is_gone(clock, caplog):
-    caplog.set_level(logging.DEBUG)
-    pwm = await capped_pwm(clock)
-    await step(pwm, clock, 0.5, 450)
-
-    assert "Reached max cycles per hour" not in caplog.text
 
 
 # Missing values warning
