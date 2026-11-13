@@ -133,7 +133,10 @@ class PWM:
 
         self._enabled = False
         self._current_cycle: int = 0
+        # Last status change: the pulse start while ON, the pulse end while OFF
         self._last_update: float = monotonic()
+        # Start of the current period while ON: the pulse start, moved at each rollover of a 100% period
+        self._period_start: float = monotonic()
         self._duty_cycle: Tuple[int, int] | None = None
         self._latched_cycles_per_hour: int | None = None
 
@@ -193,6 +196,7 @@ class PWM:
             _LOGGER.info("CYCLES count reset for the rolling hour.")
 
         elapsed = monotonic() - self._last_update
+        period_elapsed = monotonic() - self._period_start
         cycles_per_hour = self.cycles_per_hour
         if self._current_cycle < cycles_per_hour:
             self._lift_cycles_cap()
@@ -200,9 +204,9 @@ class PWM:
         thresholds = CycleThresholds.from_cycles_per_hour(cycles_per_hour)
         self._duty_cycle = self._calculate_duty_cycle(requested_setpoint, thresholds)
 
-        # Update boiler temperature if heater has just started up
+        # Update boiler temperature if the period has just started
         if self._status == PWMStatus.ON:
-            if elapsed <= HEATER_STARTUP_TIMEFRAME:
+            if period_elapsed <= HEATER_STARTUP_TIMEFRAME:
                 self._last_boiler_temperature = (self._alpha * flow_temperature + (1 - self._alpha) * self._last_boiler_temperature)
             else:
                 self._last_boiler_temperature = flow_temperature
@@ -254,21 +258,30 @@ class PWM:
             self._current_cycle += 1
             self._status = PWMStatus.ON
             self._last_update = monotonic()
+            self._period_start = self._last_update
             self._last_boiler_temperature = flow_temperature
             self._latched_cycles_per_hour = self._cycles_per_hour
             self._minimum_pulse_held = False
             timeline.LOGGER.info("pwm ON (pulse %d this hour, %d cycles/h)", self._current_cycle, self._latched_cycles_per_hour)
             return
 
+        # A 100% period that ends rolls over into the next: the pulse goes on, uncounted and unaffected by the cap or a hold;
+        # the new period start restarts the 180 s boiler temperature smoothing, seeded by this update's flow temperature
+        if self._status == PWMStatus.ON and self._duty_cycle[1] == 0 and period_elapsed >= self._duty_cycle[0]:
+            self._period_start = monotonic()
+            self._latched_cycles_per_hour = self._cycles_per_hour
+            return
+
         # A started pulse runs at least the minimum on time
         if self._status == PWMStatus.ON and elapsed < thresholds.on_time_lower:
             # Logged once per pulse, when the duty cycle alone would end it
-            if not self._minimum_pulse_held and (self._duty_cycle[0] < HEATER_STARTUP_TIMEFRAME or elapsed >= self._duty_cycle[0]):
+            if not self._minimum_pulse_held and (self._duty_cycle[0] < HEATER_STARTUP_TIMEFRAME or period_elapsed >= self._duty_cycle[0]):
                 self._minimum_pulse_held = True
                 timeline.LOGGER.info("pwm ON held for the minimum pulse (%.0fs)", thresholds.on_time_lower)
             return
 
-        if self._status != PWMStatus.OFF and (self._duty_cycle[0] < HEATER_STARTUP_TIMEFRAME or elapsed >= self._duty_cycle[0] or self._status == PWMStatus.IDLE):
+        # The on-time runs from the period start, the minimum pulse above from the pulse start
+        if self._status != PWMStatus.OFF and (self._duty_cycle[0] < HEATER_STARTUP_TIMEFRAME or period_elapsed >= self._duty_cycle[0] or self._status == PWMStatus.IDLE):
             self._status = PWMStatus.OFF
             self._last_update = monotonic()
             timeline.LOGGER.info("pwm OFF")
@@ -353,7 +366,7 @@ class PWM:
 
     @property
     def cycles_per_hour(self) -> int:
-        """The cycles per hour in effect: the value latched at pulse start during its ON phase and its OFF phase up to the cycle's maximum length, otherwise the current value."""
+        """The cycles per hour in effect: the value latched at pulse start, and again at each rollover of a 100% period, during its ON phase and its OFF phase up to the cycle's maximum length, otherwise the current value."""
         latched = self._latched_cycles_per_hour
         if latched is None or self._status == PWMStatus.IDLE:
             return self._cycles_per_hour
