@@ -125,7 +125,7 @@ CURVE = SimpleNamespace(value=30.0, base_offset=BASE)
 
 def make_pwm(automatic=True, **overrides) -> PWM:
     CURVE.value = 30.0
-    return PWM(config(**overrides), CURVE, False, automatic)  # type: ignore[arg-type]
+    return PWM(config(**overrides), CURVE, automatic)  # type: ignore[arg-type]
 
 
 def boiler(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water=False, flow=FLOW):

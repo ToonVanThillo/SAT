@@ -450,7 +450,6 @@ too high until the pump runs again.
 20. The climate keeps only standard attributes; control-loop values become
     diagnostic sensors or go to the diagnostics download; all diagnostic
     entities are disabled by default.
-=======
 21. Timeline: the cycle line shows the requested setpoint the low-pass filter
     received, the heating curve value and the PID terms.
 

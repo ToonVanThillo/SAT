@@ -21,12 +21,14 @@ from custom_components.sat.const import (
     CONF_CYCLES_PER_HOUR_MILD,
     CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE,
     CONF_DUTY_CYCLE,
+    CONF_HOT_WATER_DELAY,
     CONF_MODE,
     CONF_NAME,
     DOMAIN,
     MODE_MQTT_EMS,
     OPTIONS_DEFAULTS,
     BoilerStatus,
+    PWMStatus,
 )
 from custom_components.sat.util import create_pwm_controller
 from tests.const import IDLE, ems_entry
@@ -188,7 +190,7 @@ def test_create_pwm_controller_falls_back_to_defaults(overrides, caplog):
     options = MappingProxyType(OPTIONS_DEFAULTS | {CONF_AUTOMATIC_DUTY_CYCLE: False, CONF_DUTY_CYCLE: "00:10:00"} | overrides)
 
     with caplog.at_level(logging.ERROR, logger="custom_components.sat.util"):
-        pwm = create_pwm_controller(CURVE, False, MappingProxyType({}), options)  # type: ignore[arg-type]
+        pwm = create_pwm_controller(CURVE, options)  # type: ignore[arg-type]
 
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1
@@ -201,7 +203,7 @@ def test_create_pwm_controller_falls_back_to_defaults(overrides, caplog):
 
 async def test_fallback_keeps_the_duty_cycle_maximum_time():
     options = MappingProxyType(OPTIONS_DEFAULTS | {CONF_AUTOMATIC_DUTY_CYCLE: False, CONF_DUTY_CYCLE: "00:06:40", CONF_CYCLES_PER_HOUR_COLD_TEMPERATURE: 5, CONF_CYCLES_PER_HOUR_MILD_TEMPERATURE: 5})
-    pwm = create_pwm_controller(CURVE, False, MappingProxyType({}), options)  # type: ignore[arg-type]
+    pwm = create_pwm_controller(CURVE, options)  # type: ignore[arg-type]
     assert pwm is not None
 
     boiler = SimpleNamespace(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water_active=False, flow_temperature=50.0, reliable_flow_temperature=50.0)
@@ -216,7 +218,7 @@ async def test_fallback_keeps_the_duty_cycle_maximum_time():
 
 def test_valid_options_log_no_error(caplog):
     with caplog.at_level(logging.ERROR, logger="custom_components.sat.util"):
-        create_pwm_controller(CURVE, False, MappingProxyType({}), MappingProxyType(dict(OPTIONS_DEFAULTS)))  # type: ignore[arg-type]
+        create_pwm_controller(CURVE, MappingProxyType(dict(OPTIONS_DEFAULTS)))  # type: ignore[arg-type]
     assert not [r for r in caplog.records if r.levelno == logging.ERROR]
 
 
@@ -261,3 +263,41 @@ async def test_sensor_updates_during_heat_cycles(hass: HomeAssistant, entry, cli
 
     assert climate.pwm.cycles_per_hour == 4
     assert hass.states.get(ENTITY_ID).state == "4"
+
+
+# create_pwm_controller honours the duty cycle and hot water options
+
+def factory_options(**overrides) -> MappingProxyType:
+    return MappingProxyType(OPTIONS_DEFAULTS | {CONF_AUTOMATIC_DUTY_CYCLE: False, CONF_DUTY_CYCLE: "00:10:00"} | overrides)
+
+
+async def first_update(pwm, since=None, duty=0.25):
+    boiler = SimpleNamespace(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water_active=False, flow_temperature=50.0, reliable_flow_temperature=50.0)
+    flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=since)
+    await pwm.update(boiler, flame, 20.0 + duty * 30.0)  # type: ignore[arg-type]
+
+
+async def test_create_pwm_controller_manual_duty_cycle_uses_the_configured_time():
+    pwm = create_pwm_controller(CURVE, factory_options())  # type: ignore[arg-type]
+    await first_update(pwm)
+
+    on_time, off_time = pwm.state.duty_cycle  # type: ignore[misc]
+    assert abs(on_time - 150) <= 1
+    assert abs(off_time - 450) <= 1
+
+
+async def test_create_pwm_controller_automatic_duty_cycle_ignores_the_configured_time():
+    pwm = create_pwm_controller(CURVE, factory_options(**{CONF_AUTOMATIC_DUTY_CYCLE: True}))  # type: ignore[arg-type]
+    await first_update(pwm)
+
+    on_time, off_time = pwm.state.duty_cycle  # type: ignore[misc]
+    assert abs(on_time + off_time - 600) > 1
+    assert on_time / (on_time + off_time) == pytest.approx(0.25, abs=0.02)
+
+
+@pytest.mark.parametrize("delay, since, held", [(300, 100, True), (300, 300, False), (0, 100, False)])
+async def test_create_pwm_controller_applies_the_hot_water_delay(delay, since, held):
+    pwm = create_pwm_controller(CURVE, factory_options(**{CONF_HOT_WATER_DELAY: delay, CONF_AUTOMATIC_DUTY_CYCLE: True}))  # type: ignore[arg-type]
+    await first_update(pwm, since=since, duty=0.5)
+
+    assert pwm.status == (PWMStatus.OFF if held else PWMStatus.ON)

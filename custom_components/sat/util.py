@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from types import MappingProxyType
 from typing import Any
 from typing import TYPE_CHECKING
 
@@ -85,12 +84,11 @@ def _create_cycle_config(options: Mapping[str, Any], maximum_time: int) -> Cycle
     )
 
 
-def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulation_management: bool, config_data: MappingProxyType[str, Any], config_options: MappingProxyType[str, Any]) -> PWM:
+def create_pwm_controller(heating_curve: HeatingCurve, config_options: Mapping[str, Any]) -> PWM:
     """Create and return a PWM controller instance with the given configuration options."""
     # Extract the configuration options
     automatic_duty_cycle = bool(config_options.get(CONF_AUTOMATIC_DUTY_CYCLE))
     max_cycle_time = int(convert_time_str_to_seconds(config_options.get(CONF_DUTY_CYCLE)))
-    force = bool(config_data.get(CONF_MODE) == MODE_SWITCH) or bool(config_options.get(CONF_FORCE_PULSE_WIDTH_MODULATION))
     hot_water_delay = float(config_options.get(CONF_HOT_WATER_DELAY, OPTIONS_DEFAULTS[CONF_HOT_WATER_DELAY]))
 
     # Invalid mapping options fall back to the defaults, so heating keeps running
@@ -103,8 +101,7 @@ def create_pwm_controller(heating_curve: HeatingCurve, supports_relative_modulat
 
     # Return a new PWM controller instance with the given configuration options
     return PWM(
-        heating_curve=heating_curve, cycles=cycles, automatic_duty_cycle=automatic_duty_cycle,
-        supports_relative_modulation_management=supports_relative_modulation_management, force=force, hot_water_delay=hot_water_delay,
+        heating_curve=heating_curve, cycles=cycles, automatic_duty_cycle=automatic_duty_cycle, hot_water_delay=hot_water_delay,
     )
 
 

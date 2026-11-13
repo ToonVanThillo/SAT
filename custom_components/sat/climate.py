@@ -222,7 +222,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.minimum_setpoint = create_minimum_setpoint_controller(config_entry.data, config_options)
 
         # Create a PWM controller with given configuration options
-        self.pwm = create_pwm_controller(self.heating_curve, coordinator.supports_relative_modulation_management, config_entry.data, config_options)
+        self.pwm = create_pwm_controller(self.heating_curve, config_options)
 
         # The inputs of the cycle, each held through a short gap; the humidity only counts with thermal comfort
         self._held_target = HeldInput("target", "target temperature")

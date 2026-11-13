@@ -94,10 +94,9 @@ class PWMState:
 class PWM:
     """Implements Pulse Width Modulation (PWM) control for managing boiler operations."""
 
-    def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, supports_relative_modulation_management: bool, automatic_duty_cycle: bool, force: bool = False, hot_water_delay: float = 0):
+    def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, automatic_duty_cycle: bool, hot_water_delay: float = 0):
         """Initialize the PWM control; no pulse starts within `hot_water_delay` seconds after a hot water burn ends."""
         self._alpha: float = 0.2
-        self._force: bool = force
         self._hot_water_delay: float = hot_water_delay
         self._last_boiler_temperature: float | None = None
 
@@ -111,11 +110,10 @@ class PWM:
         # Initialize some helpers
         self._setpoint: Optional[float] = None
         self._setpoint_adjuster = SetpointAdjuster()
-        self._setpoint_offset: int = 0.5 if supports_relative_modulation_management else 1
 
         _LOGGER.debug(
-            "Initialized PWM control with cycles per hour %d at %.1f°C to %d at %.1f°C, Offset: %d°C",
-            cycles.cold_cycles_per_hour, cycles.cold_temperature, cycles.mild_cycles_per_hour, cycles.mild_temperature, self._setpoint_offset
+            "Initialized PWM control with cycles per hour %d at %.1f°C to %d at %.1f°C",
+            cycles.cold_cycles_per_hour, cycles.cold_temperature, cycles.mild_cycles_per_hour, cycles.mild_temperature
         )
 
         self._status: PWMStatus = PWMStatus.IDLE
