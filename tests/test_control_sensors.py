@@ -331,7 +331,7 @@ async def test_pwm_duty_cycle_at_the_low_duty_and_max_branches(hass, entry, clim
     flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     base = climate.heating_curve.base_offset
 
-    await pwm.update(boiler, flame, base + fraction * (50.0 - base))  # type: ignore[arg-type]
+    await pwm.update(boiler, flame, base + fraction * (50.0 - base), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     async_dispatcher_send(hass, SIGNAL_PWM_UPDATED.format(entry.entry_id), pwm.status)
     await hass.async_block_till_done()
 

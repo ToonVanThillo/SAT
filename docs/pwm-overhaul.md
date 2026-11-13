@@ -67,6 +67,9 @@ modulation mode:
 - Before the first pulse since start, a start is due at once.
 - There is no limit on the number of pulses per hour: the period follows the
   duty, and the minimum pulse and minimum off phase bound short cycling.
+- A start waits for the off-time of the current duty. A change to
+  UNRESTRICTED (100%, off-time 0) therefore shortens a running off phase to
+  its 180 s minimum.
 
 ## 100% duty and rollover
 - When a 100% period ends, the next period starts in the same update: the
@@ -76,8 +79,9 @@ modulation mode:
 - When the duty drops below 100% during a period, the pulse ends once the new
   on-time has passed since the period started, but not before 180 s since
   the pulse started.
-- A mode change during a pulse changes the requested setpoint and max
-  relative modulation in place; it never ends the pulse.
+- A mode change during a pulse starts a new period, as a rollover does: the
+  pulse goes on, and the duty of the new mode applies from then on. The
+  requested setpoint and max relative modulation change in place.
 - A start from OFF is a pulse start in either mode: it waits for the off
   phase and a hot water hold.
 
@@ -105,6 +109,8 @@ In HEAT, with all temperatures present and a valve open:
   UNRESTRICTED.
 - A reset logs "pwm OFF (reason)" once, on the first reset since PWM last
   ran.
+- A target change does not reset PWM: it only changes the calculated
+  setpoint, and PWM adapts.
 
 ## Consumers
 - Flame health: the PWM rules (`PWM_SHORT`, 8 cycles/h) apply to pulses
@@ -142,8 +148,9 @@ In HEAT, with all temperatures present and a valve open:
    OFF phase.
 4. PWM: the pulses-per-hour cap is removed; every off phase lasts at least
    180 s.
-5. PWM computes the modulation mode, and UNRESTRICTED gives a 100% duty; not
-   yet used: the climate does not allow unrestricted modulation yet.
+5. PWM computes the modulation mode, and UNRESTRICTED gives a 100% duty; a
+   mode change during a pulse starts a new period. Not yet used: the climate
+   does not allow unrestricted modulation yet.
 6. The climate always runs PWM and decides from the table above; max
    relative modulation follows the mode; dynamic minimum v1 requires
    UNRESTRICTED. Until step 9, unrestricted modulation is allowed unless
@@ -151,7 +158,8 @@ In HEAT, with all temperatures present and a valve open:
    and the stabilisation disable are removed. Until step 8, the climate
    treats PWM IDLE as OFF.
 7. The `pulse_width_modulation` service and PWM enable/disable are removed; a
-   control state reset resets the setpoint adjuster.
+   target change no longer resets PWM; a control state reset resets the
+   setpoint adjuster.
 8. The PWM status is ON or OFF; IDLE is removed. A reset ends a running
    pulse like a normal pulse end. Without a flow temperature, PWM keeps the
    last duty. An off phase follows only a pulse end.
@@ -165,5 +173,4 @@ In HEAT, with all temperatures present and a valve open:
 
 ## Open questions
 - Whether the mode needs hysteresis.
-- Which resets remain: a target or HVAC mode change only changes the duty in
-  this model.
+- Whether an HVAC mode change should reset PWM.

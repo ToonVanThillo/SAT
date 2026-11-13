@@ -233,11 +233,11 @@ async def test_a_hold_with_a_duty_below_the_minimum_never_starts_a_pulse(caplog)
         pwm = PWM(config(), CURVE, hot_water_delay=300)  # type: ignore[arg-type]
         pwm.update_cycles_per_hour(20)
         for duty in (0.01, 0.01):
-            await pwm.update(boiler(hot_water=True), flame(), setpoint_for(duty))  # type: ignore[arg-type]
+            await pwm.update(boiler(hot_water=True), flame(), setpoint_for(duty), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
             clock.tick(1000)
 
         # Hold ends, the duty is still too low: nothing starts
-        await pwm.update(boiler(), flame(since=400), setpoint_for(0.01))  # type: ignore[arg-type]
+        await pwm.update(boiler(), flame(since=400), setpoint_for(0.01), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.status != PWMStatus.ON
     assert not [r for r in caplog.records if r.getMessage().startswith("pwm ON")]

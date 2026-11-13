@@ -43,9 +43,9 @@ def flame(active: bool = False, latest: float | None = None, since: float | None
     return SimpleNamespace(is_active=active, is_inactive=not active, latest_on_time_seconds=latest, average_on_time_seconds=100, seconds_since_hot_water_burn=since)
 
 
-async def update(pwm: PWM, clock: Clock, seconds: float = 0, duty: float = 0.5, hot_water: bool = False, since: float | None = None) -> None:
+async def update(pwm: PWM, clock: Clock, seconds: float = 0, duty: float = 0.5, hot_water: bool = False, since: float | None = None, allow_unrestricted: bool = False) -> None:
     clock.tick(seconds)
-    await pwm.update(boiler(hot_water=hot_water), flame(since=since), setpoint_for(duty))  # type: ignore[arg-type]
+    await pwm.update(boiler(hot_water=hot_water), flame(since=since), setpoint_for(duty), minimum_setpoint=10.0, allow_unrestricted=allow_unrestricted)  # type: ignore[arg-type]
 
 
 def pwm_lines(caplog) -> list[str]:
@@ -270,10 +270,10 @@ async def test_the_setpoint_adjuster_does_not_adjust_during_a_hot_water_burn(clo
     pwm = make_pwm()
     burning = flame(active=True, latest=30)
 
-    await pwm.update(boiler(flame_active=True, hot_water=True, flow=60.0), burning, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler(flame_active=True, hot_water=True, flow=60.0), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.setpoint == MINIMUM_SETPOINT
 
-    await pwm.update(boiler(flame_active=True, flow=60.0), burning, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler(flame_active=True, flow=60.0), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.setpoint == 57.0
 
 
@@ -282,10 +282,10 @@ async def test_the_setpoint_adjuster_does_not_force_with_the_hot_water_flag_on(c
     short_burns = SimpleNamespace(**vars(flame()) | {"average_on_time_seconds": 30})
 
     # Flame off with a short average on time: the force step, paused while producing hot water
-    await pwm.update(boiler(hot_water=True, flow=60.0), short_burns, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler(hot_water=True, flow=60.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.setpoint == MINIMUM_SETPOINT
 
-    await pwm.update(boiler(flow=60.0), short_burns, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler(flow=60.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.setpoint == 70.0
 
 

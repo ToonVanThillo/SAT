@@ -5,7 +5,17 @@ from time import monotonic
 from typing import Optional, Tuple, TYPE_CHECKING
 
 from . import timeline
-from .const import HEATER_STARTUP_TIMEFRAME, MINIMUM_SETPOINT, BoilerStatus, PWMStatus
+from .const import (
+    BOILER_TEMPERATURE_SMOOTHING_TIME,
+    MAXIMUM_CYCLES_PER_HOUR,
+    MINIMUM_CYCLES_PER_HOUR,
+    MINIMUM_OFF_TIME,
+    MINIMUM_PULSE_TIME,
+    MINIMUM_SETPOINT,
+    BoilerStatus,
+    ModulationMode,
+    PWMStatus,
+)
 from .heating_curve import HeatingCurve
 from .setpoint_adjuster import SetpointAdjuster
 
@@ -14,13 +24,6 @@ if TYPE_CHECKING:
     from .boiler import BoilerState
 
 _LOGGER = logging.getLogger(__name__)
-
-# Range of the configurable cycles per hour, shared with the options flow
-MINIMUM_CYCLES_PER_HOUR = 1
-MAXIMUM_CYCLES_PER_HOUR = 6
-
-# Shortest off phase after a pulse end, in seconds; only a rollover goes from one period to the next without an off phase
-MINIMUM_OFF_TIME = 180
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -67,7 +70,7 @@ class CycleThresholds:
 
     @classmethod
     def from_cycles_per_hour(cls, cycles_per_hour: int) -> "CycleThresholds":
-        on_time_lower = 180
+        on_time_lower = MINIMUM_PULSE_TIME
         on_time_upper = 3600 / cycles_per_hour
         duty_cycle_lower = on_time_lower / on_time_upper
         duty_cycle_min = duty_cycle_lower / 2
@@ -91,6 +94,7 @@ class PWMState:
     enabled: bool
     status: PWMStatus
     duty_cycle: Optional[Tuple[int, int]]
+    mode: ModulationMode
 
 
 class PWM:
@@ -118,6 +122,7 @@ class PWM:
         )
 
         self._status: PWMStatus = PWMStatus.IDLE
+        self._mode: ModulationMode = ModulationMode.MINIMUM
         # Whether the current OFF phase follows a pulse end, so it lasts at least the minimum off time. Set at a pulse end; it stays set
         # through the next ON phase, which is harmless as a start needs a status other than ON. Cleared on entering IDLE (a reset or
         # missing values) and at IDLE -> OFF, so an OFF phase entered from IDLE never follows a pulse end
@@ -133,13 +138,14 @@ class PWM:
         """Reset the PWM control; leaving ON or OFF is logged on the timeline with `reason`."""
         self._go_idle(reason)
         self._set_held(None)
+        self._mode = ModulationMode.MINIMUM
         # A missing-values episode ends with the reset, so the next one is warned about again
         self._values_missing = False
 
         self._enabled = False
         # Last status change: the pulse start while ON, the pulse end while OFF
         self._last_update: float = monotonic()
-        # Start of the current period while ON: the pulse start, moved at each rollover of a 100% period
+        # Start of the current period while ON: the pulse start, moved at each rollover of a 100% period or a mode change while ON
         self._period_start: float = monotonic()
         self._duty_cycle: Tuple[int, int] | None = None
         self._latched_cycles_per_hour: int | None = None
@@ -168,11 +174,17 @@ class PWM:
             _LOGGER.info("Cycles per hour changed from %d to %d at an outside temperature of %.1f°C.", self._cycles_per_hour, cycles_per_hour, outside_temperature)
             self._cycles_per_hour = cycles_per_hour
 
-    async def update(self, boiler: "BoilerState", flame: "FlameState", requested_setpoint: float) -> None:
-        """Update the PWM state based on the output of a PID controller; the duty cycle and the setpoint adjuster read the reliable flow temperature."""
+    async def update(self, boiler: "BoilerState", flame: "FlameState", requested_setpoint: float, minimum_setpoint: float, allow_unrestricted: bool) -> None:
+        """
+        Update the PWM state based on the output of a PID controller; the duty cycle and the setpoint adjuster read the reliable flow temperature.
+
+        The modulation mode is UNRESTRICTED when `allow_unrestricted` is set and `requested_setpoint` is above the effective `minimum_setpoint`,
+        otherwise MINIMUM; UNRESTRICTED gives a 100% duty. A mode change while ON starts a new period, as a rollover does.
+        """
         flow_temperature = boiler.reliable_flow_temperature
         if not self._heating_curve.value or requested_setpoint is None or flow_temperature is None:
             self._go_idle("missing values")
+            self._mode = ModulationMode.MINIMUM
             self._last_update = monotonic()
             # Only shown in the timeline's cycle line, which shouldn't show a stale duty next to IDLE
             self._last_duty_cycle_percentage = None
@@ -193,6 +205,13 @@ class PWM:
             self._last_boiler_temperature = flow_temperature
             _LOGGER.debug("Initialized last boiler temperature to %.1f°C", flow_temperature)
 
+        # The mode is decided before the duty, which follows it; a mode change while ON starts a new period, so the new duty runs from now
+        mode = ModulationMode.UNRESTRICTED if allow_unrestricted and requested_setpoint > minimum_setpoint else ModulationMode.MINIMUM
+        if mode != self._mode:
+            self._mode = mode
+            if self._status == PWMStatus.ON:
+                self._start_period(monotonic(), flow_temperature)
+
         elapsed = monotonic() - self._last_update
         period_elapsed = monotonic() - self._period_start
         thresholds = CycleThresholds.from_cycles_per_hour(self.cycles_per_hour)
@@ -200,7 +219,7 @@ class PWM:
 
         # Update boiler temperature if the period has just started
         if self._status == PWMStatus.ON:
-            if period_elapsed <= HEATER_STARTUP_TIMEFRAME:
+            if period_elapsed <= BOILER_TEMPERATURE_SMOOTHING_TIME:
                 self._last_boiler_temperature = (self._alpha * flow_temperature + (1 - self._alpha) * self._last_boiler_temperature)
             else:
                 self._last_boiler_temperature = flow_temperature
@@ -229,7 +248,7 @@ class PWM:
 
         # State transitions for PWM; the off phase after a pulse end lasts at least the minimum, also when the duty has risen to 100% meanwhile
         off_time = max(self._duty_cycle[1], MINIMUM_OFF_TIME) if self._pulse_ended else self._duty_cycle[1]
-        start_due = self._status != PWMStatus.ON and self._duty_cycle[0] >= HEATER_STARTUP_TIMEFRAME and (
+        start_due = self._status != PWMStatus.ON and self._duty_cycle[0] >= MINIMUM_PULSE_TIME and (
             elapsed >= off_time or self._status == PWMStatus.IDLE or self._held is not None
         )
 
@@ -245,36 +264,39 @@ class PWM:
 
         if start_due:
             self._status = PWMStatus.ON
-            self._last_update = monotonic()
-            self._period_start = self._last_update
-            self._last_boiler_temperature = flow_temperature
-            self._latched_cycles_per_hour = self._cycles_per_hour
+            now = monotonic()
+            self._last_update = now
+            self._start_period(now, flow_temperature)
             self._minimum_pulse_held = False
             timeline.LOGGER.info("pwm ON (%d cycles/h)", self._latched_cycles_per_hour)
             return
 
-        # A 100% period that ends rolls over into the next: the pulse goes on, unaffected by a hold;
-        # the new period start restarts the 180 s boiler temperature smoothing, seeded by this update's flow temperature
+        # A 100% period that ends rolls over into the next: the pulse goes on, unaffected by a hold
         if self._status == PWMStatus.ON and self._duty_cycle[1] == 0 and period_elapsed >= self._duty_cycle[0]:
-            self._period_start = monotonic()
-            self._latched_cycles_per_hour = self._cycles_per_hour
+            self._start_period(monotonic(), flow_temperature)
             return
 
         # A started pulse runs at least the minimum on time
         if self._status == PWMStatus.ON and elapsed < thresholds.on_time_lower:
             # Logged once per pulse, when the duty cycle alone would end it
-            if not self._minimum_pulse_held and (self._duty_cycle[0] < HEATER_STARTUP_TIMEFRAME or period_elapsed >= self._duty_cycle[0]):
+            if not self._minimum_pulse_held and (self._duty_cycle[0] < MINIMUM_PULSE_TIME or period_elapsed >= self._duty_cycle[0]):
                 self._minimum_pulse_held = True
                 timeline.LOGGER.info("pwm ON held for the minimum pulse (%.0fs)", thresholds.on_time_lower)
             return
 
         # The on-time runs from the period start, the minimum pulse above from the pulse start
-        if self._status != PWMStatus.OFF and (self._duty_cycle[0] < HEATER_STARTUP_TIMEFRAME or period_elapsed >= self._duty_cycle[0] or self._status == PWMStatus.IDLE):
+        if self._status != PWMStatus.OFF and (self._duty_cycle[0] < MINIMUM_PULSE_TIME or period_elapsed >= self._duty_cycle[0] or self._status == PWMStatus.IDLE):
             self._pulse_ended = self._status == PWMStatus.ON
             self._status = PWMStatus.OFF
             self._last_update = monotonic()
             timeline.LOGGER.info("pwm OFF")
             return
+
+    def _start_period(self, now: float, flow_temperature: float) -> None:
+        """Start a period at `now`, at a pulse start, a rollover or a mode change while ON: latch the current cycles per hour and restart the boiler temperature smoothing window (`BOILER_TEMPERATURE_SMOOTHING_TIME`), seeded by `flow_temperature`."""
+        self._period_start = now
+        self._latched_cycles_per_hour = self._cycles_per_hour
+        self._last_boiler_temperature = flow_temperature
 
     def _hot_water_hold(self, boiler: "BoilerState", flame: "FlameState") -> str | None:
         """Why no pulse may start: the boiler produces hot water, or the hot water delay after a hot water burn runs; None if none applies."""
@@ -313,6 +335,11 @@ class PWM:
 
     def _duty_cycle_times(self, requested_setpoint: float, thresholds: CycleThresholds) -> tuple[float, float, str]:
         """Return the on and off times in seconds and a short name of the duty cycle branch that applied."""
+        # Unrestricted modulation is a 100% period
+        if self._mode == ModulationMode.UNRESTRICTED:
+            self._last_duty_cycle_percentage = 1.0
+            return thresholds.on_time_max, 0, "unrestricted"
+
         base_offset = self._heating_curve.base_offset
         boiler_temperature = self._last_boiler_temperature
 
@@ -351,8 +378,13 @@ class PWM:
         return self._status
 
     @property
+    def mode(self) -> ModulationMode:
+        """The modulation mode as of the last update; MINIMUM initially, after a reset and when values are missing."""
+        return self._mode
+
+    @property
     def cycles_per_hour(self) -> int:
-        """The cycles per hour in effect: the value latched at pulse start, and again at each rollover of a 100% period, during its ON phase and its OFF phase up to the cycle's maximum length, otherwise the current value."""
+        """The cycles per hour in effect: the value latched at pulse start, and again at each rollover of a 100% period or a mode change while ON, during its ON phase and its OFF phase up to the cycle's maximum length, otherwise the current value."""
         latched = self._latched_cycles_per_hour
         if latched is None or self._status == PWMStatus.IDLE:
             return self._cycles_per_hour
@@ -363,11 +395,12 @@ class PWM:
         return latched
 
     @property
-    def state(self):
+    def state(self) -> PWMState:
         return PWMState(
             status=self._status,
             enabled=self._enabled,
-            duty_cycle=self._duty_cycle
+            duty_cycle=self._duty_cycle,
+            mode=self._mode,
         )
 
     @property

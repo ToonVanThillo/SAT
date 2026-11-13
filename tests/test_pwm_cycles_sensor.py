@@ -257,7 +257,7 @@ def factory_options(**overrides) -> MappingProxyType:
 async def first_update(pwm, duty, since=None):
     boiler = SimpleNamespace(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water_active=False, flow_temperature=50.0, reliable_flow_temperature=50.0)
     flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=since)
-    await pwm.update(boiler, flame, 20.0 + duty * 30.0)  # type: ignore[arg-type]
+    await pwm.update(boiler, flame, 20.0 + duty * 30.0, minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
 
 async def test_create_pwm_controller_period_follows_the_cold_cycles_per_hour_before_an_outside_temperature():

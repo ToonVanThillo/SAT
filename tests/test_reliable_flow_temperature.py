@@ -333,7 +333,7 @@ async def test_the_duty_cycle_uses_the_reliable_flow_temperature(clock):
     pwm = make_pwm()
 
     # A requested setpoint of 35 over a base of 20: 50% of the way to a reliable 50, 30% of the way to a raw 70
-    await pwm.update(boiler_state(70.0, 50.0), flame_state(), setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(70.0, 50.0), flame_state(), setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.last_duty_cycle_percentage == 50.0
     assert pwm.duty_cycle == (450 * 2, 450 * 2)
@@ -342,11 +342,11 @@ async def test_the_duty_cycle_uses_the_reliable_flow_temperature(clock):
 
 async def test_the_stored_last_boiler_temperature_is_the_reliable_one(clock):
     pwm = make_pwm()
-    await pwm.update(boiler_state(70.0, 50.0), flame_state(), setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(70.0, 50.0), flame_state(), setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     # The pulse is on; a later raw 90 doesn't change the reference temperature of the duty cycle either
     clock.tick(10)
-    await pwm.update(boiler_state(90.0, 50.0), flame_state(), setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(90.0, 50.0), flame_state(), setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.last_duty_cycle_percentage == 50.0
 
@@ -354,7 +354,7 @@ async def test_the_stored_last_boiler_temperature_is_the_reliable_one(clock):
 async def test_a_missing_reliable_temperature_idles_the_pwm_whatever_the_raw_one(clock):
     pwm = make_pwm()
 
-    await pwm.update(boiler_state(50.0, None), flame_state(), setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(50.0, None), flame_state(), setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.status == PWMStatus.IDLE
 
@@ -362,7 +362,7 @@ async def test_a_missing_reliable_temperature_idles_the_pwm_whatever_the_raw_one
 async def test_the_setpoint_adjuster_follows_the_reliable_temperature_with_the_flame_on(clock):
     pwm = make_pwm()
 
-    await pwm.update(boiler_state(70.0, 50.0, flame_active=True), flame_state(True, latest=30), setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(70.0, 50.0, flame_active=True), flame_state(True, latest=30), setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.setpoint == 47.0
 
@@ -370,7 +370,7 @@ async def test_the_setpoint_adjuster_follows_the_reliable_temperature_with_the_f
 async def test_the_setpoint_adjuster_forces_the_reliable_temperature_plus_ten_with_the_flame_off(clock):
     pwm = make_pwm()
 
-    await pwm.update(boiler_state(80.0, 50.0), flame_state(average=30), setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(80.0, 50.0), flame_state(average=30), setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.setpoint == 60.0
 
@@ -381,20 +381,20 @@ async def test_the_force_step_is_skipped_while_hot_water_is_active_and_runs_afte
     pwm = make_pwm()
     short_burns = flame_state(average=30)
 
-    await pwm.update(boiler_state(60.0, 45.0, hot_water_active=True), short_burns, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(60.0, 45.0, hot_water_active=True), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.setpoint == MINIMUM_SETPOINT
 
-    await pwm.update(boiler_state(60.0, 45.0), short_burns, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(60.0, 45.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.setpoint == 55.0
 
 
 async def test_the_force_step_keeps_an_existing_adjusted_value_during_hot_water(clock):
     pwm = make_pwm()
     short_burns = flame_state(average=30)
-    await pwm.update(boiler_state(60.0, 45.0), short_burns, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(60.0, 45.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.setpoint == 55.0
 
-    await pwm.update(boiler_state(80.0, 70.0, hot_water_active=True), short_burns, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(80.0, 70.0, hot_water_active=True), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.setpoint == 55.0
 
@@ -406,7 +406,7 @@ async def test_a_stale_raw_flow_temperature_does_not_force_the_setpoint(clock):
     short_burns = flame_state(average=30)
 
     # The reliable temperature stays at 45 while the raw one reads 60 after the hot water draw
-    await pwm.update(boiler_state(60.0, 45.0), short_burns, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler_state(60.0, 45.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.setpoint == 55.0
     assert pwm.setpoint != 70.0

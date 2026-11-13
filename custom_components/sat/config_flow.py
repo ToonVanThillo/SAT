@@ -22,7 +22,6 @@ from .coordinator import SatDataUpdateCoordinator
 from .helpers import calculate_default_maximum_setpoint, snake_case
 from .manufacturer import ManufacturerFactory, MANUFACTURERS
 from .overshoot_protection import OvershootProtection
-from .pwm import MAXIMUM_CYCLES_PER_HOUR, MINIMUM_CYCLES_PER_HOUR
 from .validators import valid_serial_device
 
 DEFAULT_NAME = "Living Room"

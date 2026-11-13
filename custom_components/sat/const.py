@@ -24,7 +24,16 @@ MODE_SIMULATOR = "simulator"
 
 DEADBAND = 0.1
 BOILER_DEADBAND = 2
-HEATER_STARTUP_TIMEFRAME = 180
+# Minimum PWM pulse (on phase), in seconds
+MINIMUM_PULSE_TIME = 180
+# Window at the start of each PWM period in which the boiler temperature is smoothed, in seconds
+BOILER_TEMPERATURE_SMOOTHING_TIME = 180
+
+# Range of the configurable PWM cycles per hour, shared by PWM and the options flow
+MINIMUM_CYCLES_PER_HOUR = 1
+MAXIMUM_CYCLES_PER_HOUR = 6
+# Shortest PWM off phase after a pulse end, in seconds; only a rollover goes from one period to the next without an off phase
+MINIMUM_OFF_TIME = 180
 
 COLD_SETPOINT = 28.2
 MINIMUM_SETPOINT = 10
@@ -237,3 +246,9 @@ class PWMStatus(str, Enum):
     ON = "on"
     OFF = "off"
     IDLE = "idle"
+
+
+class ModulationMode(str, Enum):
+    """How the boiler modulates during a pulse: at the minimum setpoint and modulation, or unrestricted at the calculated setpoint"""
+    MINIMUM = "minimum"
+    UNRESTRICTED = "unrestricted"

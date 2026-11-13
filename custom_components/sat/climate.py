@@ -1057,7 +1057,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         elif not self.pulse_width_modulation_enabled:
             self.pwm.reset("not enabled")
         else:
-            await self.pwm.update(flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint)
+            # Unrestricted modulation is not allowed yet, so the mode stays MINIMUM
+            await self.pwm.update(
+                flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint,
+                minimum_setpoint=self.minimum_setpoint_value, allow_unrestricted=False,
+            )
 
         self.async_send_pwm_updated()
 

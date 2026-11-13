@@ -141,12 +141,12 @@ def setpoint_for(duty: float) -> float:
     return BASE + duty * (FLOW - BASE)
 
 
-async def step(pwm: PWM, clock: Clock, duty: float, seconds: float = 0, **boiler_args):
+async def step(pwm: PWM, clock: Clock, duty: float, seconds: float = 0, minimum_setpoint: float = 10.0, allow_unrestricted: bool = False, **boiler_args):
     flame_active = boiler_args.get("flame_active", False)
     flame_state = flame(flame_active)
     boiler_state = boiler(**boiler_args)
     clock.tick(seconds)
-    await pwm.update(boiler_state, flame_state, setpoint_for(duty))  # type: ignore[arg-type]
+    await pwm.update(boiler_state, flame_state, setpoint_for(duty), minimum_setpoint=minimum_setpoint, allow_unrestricted=allow_unrestricted)  # type: ignore[arg-type]
 
 
 async def start_pulse(pwm: PWM, clock: Clock, duty: float = 0.5) -> None:
@@ -364,9 +364,9 @@ async def test_setpoint_stabilization_disables_at_once(clock):
     # Active flame sets an adjusted setpoint (flow - 3); a higher request while cooling down disables PWM
     active = flame(True)
     active.latest_on_time_seconds = 60
-    await pwm.update(boiler(), active, setpoint_for(0.5))  # type: ignore[arg-type]
+    await pwm.update(boiler(), active, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     clock.tick(5)
-    await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), active, 60.0)  # type: ignore[arg-type]
+    await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), active, 60.0, minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.status == PWMStatus.IDLE
     assert not pwm.enabled
 
