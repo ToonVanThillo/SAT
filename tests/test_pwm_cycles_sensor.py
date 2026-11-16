@@ -29,6 +29,7 @@ from custom_components.sat.const import (
     PWMStatus,
 )
 from custom_components.sat.util import create_pwm_controller
+from tests.conftest import advance
 from tests.const import IDLE, ems_entry
 
 ENTITY_ID = "sensor.pwm_cycles_per_hour"
@@ -232,7 +233,7 @@ async def test_equal_temperatures_still_set_up_with_defaults(hass: HomeAssistant
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_sensor_updates_during_heat_cycles(hass: HomeAssistant, entry, climate: SatClimate, boiler_data) -> None:
+async def test_sensor_updates_during_heat_cycles(hass: HomeAssistant, entry, climate: SatClimate, boiler_data, freezer) -> None:
     await boiler_data(**IDLE | {"heatingoff": "on"})
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
@@ -240,7 +241,14 @@ async def test_sensor_updates_during_heat_cycles(hass: HomeAssistant, entry, cli
     await hass.async_block_till_done()
     assert hass.states.get(ENTITY_ID).state == "2"
 
+    # The first cycle started an unrestricted 100% period, which keeps the N latched at its start until it rolls over
     hass.states.async_set("sensor.test_outside_sensor", "-5")
+    await climate.async_control_heating_loop()
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY_ID).state == "2"
+
+    # The rollover after 2 * 3600 / 2 s latches the new N
+    await advance(hass, freezer, 3600)
     await climate.async_control_heating_loop()
     await hass.async_block_till_done()
 

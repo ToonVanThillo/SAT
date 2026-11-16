@@ -1,4 +1,4 @@
-"""Tests for BoilerSnapshot, RelativeModulation on a given boiler state, and the one-snapshot-per-cycle control loop."""
+"""Tests for BoilerSnapshot, the RelativeModulation decision, and the one-snapshot-per-cycle control loop."""
 import json
 from dataclasses import FrozenInstanceError, replace
 from unittest.mock import patch
@@ -10,10 +10,13 @@ from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 from custom_components.sat.boiler import BoilerState
 from custom_components.sat.const import (
     CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_MINIMUM_SETPOINT,
     CONF_MODE,
     MINIMUM_SETPOINT,
     MODE_FAKE,
     BoilerStatus,
+    ModulationMode,
+    PWMStatus,
 )
 from custom_components.sat.coordinator import BoilerSnapshot
 from custom_components.sat.fake import SatFakeConfig
@@ -66,30 +69,46 @@ async def test_snapshot_copies_the_coordinator_values_and_is_immutable(hass, ent
 
 # RelativeModulation
 
-@pytest.mark.parametrize(("hot_water", "setpoint", "pwm", "limits_hot_water", "expected"), [
-    (True, 40.0, True, True, RelativeModulationState.HOT_WATER),
-    (True, None, False, True, RelativeModulationState.HOT_WATER),
-    (True, MINIMUM_SETPOINT, True, True, RelativeModulationState.HOT_WATER),
-    (True, 40.0, True, False, RelativeModulationState.OFF),
-    (False, None, True, True, RelativeModulationState.COLD),
-    (False, MINIMUM_SETPOINT, False, True, RelativeModulationState.COLD),
-    (False, MINIMUM_SETPOINT - 1, True, True, RelativeModulationState.COLD),
-    (False, MINIMUM_SETPOINT + 0.1, True, True, RelativeModulationState.OFF),
-    (False, 40.0, True, True, RelativeModulationState.OFF),
-    (False, MINIMUM_SETPOINT + 0.1, False, True, RelativeModulationState.PULSE_WIDTH_MODULATION_OFF),
-    (False, 40.0, False, True, RelativeModulationState.PULSE_WIDTH_MODULATION_OFF),
+MINIMUM = ModulationMode.MINIMUM
+UNRESTRICTED = ModulationMode.UNRESTRICTED
+
+
+@pytest.mark.parametrize(("hot_water", "heater_off", "mode", "limits_hot_water", "expected"), [
+    # Hot water first, where the max relative modulation limits it
+    (True, False, MINIMUM, True, RelativeModulationState.HOT_WATER),
+    (True, True, MINIMUM, True, RelativeModulationState.HOT_WATER),
+    (True, True, UNRESTRICTED, True, RelativeModulationState.HOT_WATER),
+    # Then a heater OFF request, where the max relative modulation limits hot water
+    (False, True, MINIMUM, True, RelativeModulationState.HEATER_OFF_REQUESTED),
+    (False, True, UNRESTRICTED, True, RelativeModulationState.HEATER_OFF_REQUESTED),
+    # Then the PWM mode
+    (False, False, MINIMUM, True, RelativeModulationState.MINIMUM),
+    (False, False, UNRESTRICTED, True, RelativeModulationState.UNRESTRICTED),
+    # Where it doesn't limit hot water, neither hot water nor a heater OFF request matters
+    (True, False, MINIMUM, False, RelativeModulationState.MINIMUM),
+    (True, True, MINIMUM, False, RelativeModulationState.MINIMUM),
+    (False, True, MINIMUM, False, RelativeModulationState.MINIMUM),
+    (True, True, UNRESTRICTED, False, RelativeModulationState.UNRESTRICTED),
+    (False, True, UNRESTRICTED, False, RelativeModulationState.UNRESTRICTED),
 ])
-async def test_relative_modulation_state_follows_the_given_boiler(hot_water, setpoint, pwm, limits_hot_water, expected):
+async def test_relative_modulation_state_precedence(hot_water, heater_off, mode, limits_hot_water, expected):
     relative_modulation = RelativeModulation("radiators", limits_hot_water)
-    await relative_modulation.update(pwm)
-    boiler = replace(BOILER_STATE, hot_water_active=hot_water, setpoint=setpoint)
+    relative_modulation.update(replace(BOILER_STATE, hot_water_active=hot_water), mode, heater_off)
 
-    assert relative_modulation.state(boiler) == expected
-    assert relative_modulation.enabled(boiler) is (expected != RelativeModulationState.OFF)
+    assert relative_modulation.state == expected
+    assert relative_modulation.enabled is (expected != RelativeModulationState.MINIMUM)
 
 
-async def test_relative_modulation_defaults_to_pwm_disabled():
-    assert RelativeModulation("radiators", True).state(BOILER_STATE) == RelativeModulationState.PULSE_WIDTH_MODULATION_OFF
+@pytest.mark.parametrize("setpoint", [None, 0.0, MINIMUM_SETPOINT, 40.0])
+async def test_relative_modulation_ignores_the_read_back_setpoint(setpoint):
+    relative_modulation = RelativeModulation("radiators", True)
+    relative_modulation.update(replace(BOILER_STATE, setpoint=setpoint), MINIMUM, False)
+
+    assert relative_modulation.state == RelativeModulationState.MINIMUM
+
+
+async def test_relative_modulation_defaults_to_the_minimum_mode():
+    assert RelativeModulation("radiators", True).state == RelativeModulationState.MINIMUM
 
 
 # Control cycle
@@ -139,10 +158,12 @@ class TestEmsCycle:
         assert coordinator.data["heatingoff"] == "on"
 
 
+# A minimum above COLD_SETPOINT (28.2) and a boiler temperature, so the first cycle starts a pulse at the minimum with heater ON
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*forced_pwm_entry(**{CONF_MODE: MODE_FAKE}))
-async def test_fake_steps_after_the_setpoint_write_use_the_setpoint_from_before(entry, climate, coordinator):
+@pytest.mark.parametrize(*forced_pwm_entry(**{CONF_MODE: MODE_FAKE, CONF_MINIMUM_SETPOINT: 30}))
+async def test_fake_modulation_follows_the_cycles_heater_request_not_the_setpoint_read_back(entry, climate, coordinator):
     coordinator.config = SatFakeConfig(True, supports_relative_modulation_management=True)
+    await coordinator.async_set_boiler_temperature(40)
     written = []
     original = coordinator.async_set_control_max_relative_modulation
 
@@ -155,13 +176,15 @@ async def test_fake_steps_after_the_setpoint_write_use_the_setpoint_from_before(
     with patch.object(coordinator, "async_set_control_max_relative_modulation", record):
         await climate.async_control_heating_loop()
 
-    # Intended behaviour change of the snapshot step: the fake applies the new setpoint immediately,
-    # but modulation is decided from the setpoint before the write (none yet: COLD, so modulation stays at 100)
-    assert coordinator.setpoint is not None and coordinator.setpoint > MINIMUM_SETPOINT
-    assert written == [100]
+    # The snapshot has no setpoint yet, but modulation follows this cycle's heater ON request: the PWM minimum 0, not the maximum
+    assert climate.pwm.status == PWMStatus.ON
+    assert coordinator.setpoint == 30
+    assert climate.relative_modulation_state == RelativeModulationState.MINIMUM
+    assert written == [0]
 
 
-@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+# A minimum above COLD_SETPOINT (28.2), so the forced pulse requests heater ON and the minimum max relative modulation
+@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}, {CONF_MINIMUM_SETPOINT: 30}))
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry")
 async def test_manufacturer_resolved_by_the_update_step_applies_in_the_same_cycle(hass, entry, climate, mqtt_mock, published):
     for key, value in {"slave_memberid_code": "4", "TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF"}.items():
@@ -177,7 +200,8 @@ async def test_manufacturer_resolved_by_the_update_step_applies_in_the_same_cycl
     assert ("otgw/set/gw1/command", "MM=0", 1, False) not in published()
 
 
-@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+# A minimum above COLD_SETPOINT (28.2), so the forced pulse requests heater ON and the minimum max relative modulation
+@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}, {CONF_MINIMUM_SETPOINT: 30}))
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry", "no_publish_error")
 async def test_modulation_ignores_hot_water_arriving_mid_cycle(hass, entry, climate, coordinator, mqtt_mock, published):
     for key, value in {"TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF", "domestichotwater": "OFF"}.items():
@@ -202,9 +226,10 @@ async def test_presentation_reflects_changes_after_the_last_cycle(hass, entry, c
     await boiler_data(**IDLE)
     await climate.async_control_heating_loop()
     assert climate.hvac_action == HVACAction.IDLE
-    assert climate.relative_modulation_state == RelativeModulationState.PULSE_WIDTH_MODULATION_OFF
+    assert climate.relative_modulation_state == RelativeModulationState.UNRESTRICTED
 
     await boiler_data(**IDLE | {"heatingactive": "on", "selflowtemp": 0})
 
+    # The relative modulation state is the last cycle's decision, not derived from the later read-back
     assert climate.hvac_action == HVACAction.HEATING
-    assert climate.relative_modulation_state == RelativeModulationState.COLD
+    assert climate.relative_modulation_state == RelativeModulationState.UNRESTRICTED

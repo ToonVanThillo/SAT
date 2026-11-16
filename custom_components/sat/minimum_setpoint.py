@@ -6,7 +6,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import utcnow
 
 from .boiler import BoilerState
-from .const import PWMStatus
+from .const import ModulationMode
 from .helpers import clamp, to_int
 from .state import State, update_state
 
@@ -46,7 +46,8 @@ class MinimumSetpoint:
         if self._store:
             self._store.async_delay_save(self._data_to_save)
 
-    def calculate(self, boiler_state: BoilerState, pwm_state: PWMStatus) -> None:
+    def calculate(self, boiler_state: BoilerState, mode: ModulationMode) -> None:
+        """Recalculate the dynamic minimum setpoint; the normal mode requires the PWM modulation `mode` to be UNRESTRICTED."""
         self._relative_modulation_level = update_state(
             tolerance=0.01,
             previous=self._relative_modulation_level,
@@ -56,7 +57,7 @@ class MinimumSetpoint:
         if self._base_return_temperature.value is None or boiler_state.return_temperature is None:
             return
 
-        if self._is_running_normal_mode(boiler_state, pwm_state):
+        if self._is_running_normal_mode(boiler_state, mode):
             proportion = 1.0 - (boiler_state.relative_modulation_level / 100.0)
             proportional_candidate = (proportion * boiler_state.reliable_flow_temperature) - 3.0
             new_minimum = clamp(proportional_candidate, 30.0)
@@ -77,9 +78,9 @@ class MinimumSetpoint:
     def _data_to_save(self) -> dict:
         return {"base_return_temperature": self._base_return_temperature.value}
 
-    def _is_running_normal_mode(self, boiler_state: BoilerState, pwm_state: PWMStatus) -> bool:
+    def _is_running_normal_mode(self, boiler_state: BoilerState, mode: ModulationMode) -> bool:
         return (
-                pwm_state is PWMStatus.IDLE
+                mode is ModulationMode.UNRESTRICTED
                 and to_int(self._relative_modulation_level.value, 0) > 0
                 and (utcnow() - self._relative_modulation_level.last_changed).total_seconds() > 180
                 and math.isclose(boiler_state.reliable_flow_temperature, boiler_state.setpoint, abs_tol=1.0)

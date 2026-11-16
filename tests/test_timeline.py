@@ -292,7 +292,7 @@ async def test_setpoint_segment_shows_the_filter_input_curve_and_pid_terms(loop_
     await start_heating(climate, boiler_data, caplog)
     await climate.async_control_heating_loop()
 
-    assert setpoint_segment(caplog) == "setpoint calc=35.0 (normal) req=35.0 curve=32.8 p=+2.2 i=+0.0 d=+0.0"
+    assert setpoint_segment(caplog) == "setpoint calc=35.0 (pwm on unrestricted) req=35.0 curve=32.8 p=+2.2 i=+0.0 d=+0.0"
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -319,7 +319,7 @@ async def test_req_is_the_request_the_filter_got_not_a_later_recomputation(loop_
         await climate.async_control_heating_loop()
 
     # req is curve 32.8 + output -1.28 from before the change (a recomputation gives 36.5); calc = 0.2 * 31.5 + 0.8 * 35.0
-    assert setpoint_segment(caplog) == "setpoint calc=34.3 (normal) req=31.5 curve=32.8 p=-4.0 i=+5.0 d=+2.8"
+    assert setpoint_segment(caplog) == "setpoint calc=34.3 (pwm on unrestricted) req=31.5 curve=32.8 p=-4.0 i=+5.0 d=+2.8"
 
 
 @pytest.mark.parametrize(*ems_entry())

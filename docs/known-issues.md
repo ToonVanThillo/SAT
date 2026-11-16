@@ -5,8 +5,6 @@ unless a plan step is named. Tests that pin one are labelled "current behaviour,
 known bug".
 
 ## Control logic
-- Overshoot handling only enables PWM with the dynamic minimum setpoint (version
-  2); in the default config `pwm.reset()` undoes it in the same cycle.
 - `schedule_control_heating_loop(force=True)` only runs the loop immediately if
   a run is already pending; otherwise it waits the normal 10 s.
 - Closing all valves doesn't stop an active boiler; valves only gate turning
@@ -29,18 +27,12 @@ known bug".
   flame off for longer than `STUCK_OFF_SECONDS` (300 s), flame health reports
   STUCK_OFF although nothing is wrong. EMS-ESP reports `selflowtemp` 5 under
   `heatingoff` (status IDLE).
-- With PWM, a minimum setpoint ≤ `COLD_SETPOINT` (28.2 °C) makes the ON phase
-  request heater OFF; on EMS-ESP it then also releases the control setpoint.
-- With PWM, the OFF phase requests `MINIMUM_SETPOINT` (on EMS-ESP only until
-  the heater channel confirms heating off; then it releases the setpoint). The
-  boiler reads back ≤ 10 (EMS-ESP: 5 under `heatingoff`), so relative
-  modulation is COLD and requests the configured maximum. The first ON-phase
-  cycle still decides from that read-back and keeps the maximum; the next
-  requests 0 (or the floor) again. The max relative modulation is written twice
-  per PWM cycle, and the boiler starts each ON phase at the maximum. Observed
-  on EMS-ESP. The same happens after the valves reopen: the boiler reads back
-  ≤ 10, so the first heating cycle requests the configured maximum. Plan step 6
-  addresses this.
+- A minimum setpoint ≤ `COLD_SETPOINT` (28.2 °C) makes a MINIMUM pulse request
+  heater OFF. An UNRESTRICTED pulse whose calculated setpoint is ≤ 28.2 does
+  the same, and on backends without a release it then requests that calculated
+  setpoint, not 10 °C. On EMS-ESP the control setpoint is released. Entries
+  that skipped the calibration have the default minimum of 10 °C, so this
+  applies to all of them.
 - Flame health stores no average on-time when a cycle completes: the ON→OFF
   transition doesn't record the duration, and the next ON phase seeds the
   average from its first seconds. PWM treats a missing or short (< 60 s)
@@ -106,19 +98,22 @@ known bug".
   flame reports on before any update has run, so the stale value is visible
   from the moment the flame goes on.
 - A started PWM pulse is held ON for at least 180 s, while the exposed PWM
-  duty cycle keeps following the recalculated on time. With the automatic duty
-  cycle it can read 0 s on while the status is ON (the low-duty case), and
-  flame health's PWM_SHORT check cannot fire then. Follows from the
+  duty cycle keeps following the recalculated on time. It can read 0 s on
+  while the status is ON (the low-duty case), and flame health's PWM_SHORT
+  check cannot fire then. Follows from the
   minimum-pulse rule.
-- The "valves closed" PWM reset, like the other PWM resets, disables PWM and
-  leaves it IDLE, so the reopened valves start a pulse at once, without the
+- Flame health applies its PWM rules whenever PWM is ON, including
+  unrestricted 100% periods. It compares the median burn with the on-time of
+  2·3600/N, so a boiler that cycles on its own during what used to be
+  continuous heating shows PWM_SHORT instead of being judged by the continuous
+  rules.
+- The "valves closed" PWM reset, like the other PWM resets, resets PWM to
+  IDLE, so the reopened valves start a pulse at once, without the
   off phase after the pulse the reset ended. Valves that open and close
   quickly can thus start a pulse at each reopen; that is a configuration
-  problem SAT doesn't guard against. With the dynamic minimum setpoint
-  (version 2), PWM stays disabled after the valves reopen until overshoot
-  handling enables it again. The missing-temperature PWM reset does the same
-  once a missing temperature outlasts its 5-minute hold; a held input doesn't
-  reset PWM.
+  problem SAT doesn't guard against. The missing-temperature PWM reset does
+  the same once a missing temperature outlasts its 5-minute hold; a held input
+  doesn't reset PWM.
 - The PID's age reset (`sensor_max_value_age`) compares the time since the
   PID's last update, not the sensors' age. It fires whenever the PID hasn't
   updated for longer than the max age, which with a short max age means at
@@ -201,17 +196,11 @@ known bug".
   minimum open time switches to activity, and on closing, the return target of
   10 °C matches activity again, which `async_set_preset_mode` skips as already
   set.
-- The `pulse_width_modulation` service sets the PWM enabled flag, but the
-  climate decides every cycle from its configuration and setpoints whether PWM
-  runs (`pulse_width_modulation_enabled`), and resets PWM when it doesn't. The
-  flag only counts with overshoot protection, a calculated setpoint and
-  version 2 of the dynamic minimum setpoint, so otherwise the service lasts
-  only until the next cycle, enable or disable. The clearest case is forced
-  PWM, or a boiler without setpoint management: PWM always runs, so disabling
-  it through the service is undone by the next cycle. Where the flag counts,
-  any PWM reset clears it (valves closed, a missing temperature, an error
-  change, or an HVAC mode or target change), and overshoot handling sets it
-  each cycle, undoing a disable.
+- The `pulse_width_modulation` service sets the PWM enabled flag, which
+  nothing reads any more: the climate runs PWM every HEAT cycle with a valve
+  open. Enable has no effect. Disable resets PWM and the dynamic minimum v2
+  setpoint adjuster, which ends a running pulse; the next cycle starts a new
+  pulse at once from IDLE.
 - After the climate is renamed (HA removes and re-adds the entity), room
   temperature sensors are no longer tracked: their listeners are released on
   removal, but `_sensors` keeps their IDs, so `async_track_sensor_temperature`
@@ -224,6 +213,12 @@ known bug".
   sooner.
 
 ## Device communication
+- Only EMS-ESP is reviewed for always-on PWM (docs/pwm-overhaul.md, Scope). On
+  the other backends (OpenTherm over MQTT, serial, ESPHome, simulator, switch,
+  fake), PWM now runs every HEAT cycle and they get the same setpoint and max
+  relative modulation decisions, but their behaviour (heater switching,
+  read-backs, modulation encoding) has not been checked. Tests that fail for
+  this reason are strict xfail with this reason.
 - EMS-ESP on/off values are only recognised as "on"/"off"; with EMS-ESP's
   boolean format set to true/false or 1/0, `hot_water_active`, `device_active`
   and `flame_active` are always False, and the heater channel never gets a

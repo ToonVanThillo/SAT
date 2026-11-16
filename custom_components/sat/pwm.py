@@ -180,6 +180,7 @@ class PWM:
 
         The modulation mode is UNRESTRICTED when `allow_unrestricted` is set and `requested_setpoint` is above the effective `minimum_setpoint`,
         otherwise MINIMUM; UNRESTRICTED gives a 100% duty. A mode change while ON starts a new period, as a rollover does.
+        The setpoint adjuster adjusts (and forces) only when this update's mode is MINIMUM, whatever the PWM status.
         """
         flow_temperature = boiler.reliable_flow_temperature
         if not self._heating_curve.value or requested_setpoint is None or flow_temperature is None:
@@ -224,24 +225,17 @@ class PWM:
             else:
                 self._last_boiler_temperature = flow_temperature
 
-        # Control the adjusted setpoint; hot water says nothing about heating, so it doesn't adjust
-        if flame.is_active and not boiler.hot_water_active and boiler.status not in (BoilerStatus.PUMP_STARTING, BoilerStatus.OVERSHOOT_HANDLING) and flame.latest_on_time_seconds is not None and flame.latest_on_time_seconds > 6:
+        # Control the adjusted setpoint, only in MINIMUM mode: in an UNRESTRICTED burn the flow follows the calculated setpoint, which the
+        # adjuster would raise the minimum towards. Hot water says nothing about heating, so it doesn't adjust
+        minimum_mode = mode == ModulationMode.MINIMUM
+        if minimum_mode and flame.is_active and not boiler.hot_water_active and boiler.status not in (BoilerStatus.PUMP_STARTING, BoilerStatus.OVERSHOOT_HANDLING) and flame.latest_on_time_seconds is not None and flame.latest_on_time_seconds > 6:
             target = flow_temperature - 3
             self._setpoint = self._setpoint_adjuster.adjust(target_setpoint=target)
-        elif flame.is_inactive and not boiler.hot_water_active and (flame.average_on_time_seconds is None or flame.average_on_time_seconds < 60):
+        elif minimum_mode and flame.is_inactive and not boiler.hot_water_active and (flame.average_on_time_seconds is None or flame.average_on_time_seconds < 60):
             target = flow_temperature + 10
             self._setpoint = self._setpoint_adjuster.force(target_setpoint=target)
         elif self._setpoint_adjuster.current is not None:
             self._setpoint = self._setpoint_adjuster.current
-
-        if (
-                # Check if we are above the overshoot temperature
-                boiler.status == BoilerStatus.COOLING_DOWN and
-                self._setpoint_adjuster.current is not None and math.floor(requested_setpoint) > math.floor(self._setpoint)
-        ):
-            _LOGGER.info("Setpoint stabilization detected, disabling Pulse Width Modulation.")
-            self.disable("setpoint stabilization")
-            return
 
         # A pulse that is on is not affected by a hold
         self._hold = None if self._status == PWMStatus.ON else self._hot_water_hold(boiler, flame)

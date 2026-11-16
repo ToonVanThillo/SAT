@@ -1,3 +1,4 @@
 {
-  "agent": "architect"
+  "agent": "architect",
+  "idleCompaction": false
 }

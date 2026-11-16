@@ -24,6 +24,7 @@ from custom_components.sat.const import (
     DOMAIN,
     MINIMUM_SETPOINT,
     BoilerStatus,
+    ModulationMode,
     PWMStatus,
 )
 from custom_components.sat.fake import SatFakeCoordinator
@@ -418,7 +419,7 @@ async def test_a_stale_raw_flow_temperature_does_not_force_the_setpoint(clock):
 async def warmed_minimum_setpoint(freezer: FrozenDateTimeFactory, first: SimpleNamespace) -> MinimumSetpoint:
     minimum = MinimumSetpoint(adjustment_factor=1.0, configured_minimum_setpoint=30.0)
     minimum.warming_up(first)  # type: ignore[arg-type]
-    minimum.calculate(first, PWMStatus.IDLE)  # type: ignore[arg-type]
+    minimum.calculate(first, ModulationMode.UNRESTRICTED)  # type: ignore[arg-type]
     freezer.tick(200)
 
     return minimum
@@ -428,7 +429,7 @@ async def test_the_normal_mode_check_and_the_candidate_use_the_reliable_temperat
     state = boiler_state(100.0, 80.0, setpoint=80.0)
     minimum = await warmed_minimum_setpoint(freezer, state)
 
-    minimum.calculate(state, PWMStatus.IDLE)  # type: ignore[arg-type]
+    minimum.calculate(state, ModulationMode.UNRESTRICTED)  # type: ignore[arg-type]
 
     # Normal mode (the reliable 80 is at the setpoint, the raw 100 is not): (1 - 0.5) * 80 - 3
     assert minimum.current == 37.0
@@ -438,7 +439,7 @@ async def test_the_normal_mode_is_not_entered_from_a_raw_temperature_at_the_setp
     state = boiler_state(80.0, 60.0, setpoint=80.0)
     minimum = await warmed_minimum_setpoint(freezer, state)
 
-    minimum.calculate(state, PWMStatus.IDLE)  # type: ignore[arg-type]
+    minimum.calculate(state, ModulationMode.UNRESTRICTED)  # type: ignore[arg-type]
 
     # The adjusted configured minimum: 30 + (35 - 35) * 1
     assert minimum.current == 30.0

@@ -287,11 +287,11 @@ async def test_the_mode_is_minimum_when_values_are_missing(clock):
     assert pwm.mode == ModulationMode.MINIMUM
 
 
-# (j) Through the climate: unrestricted modulation is not allowed yet
+# (j) Through the climate: forced PWM does not allow unrestricted modulation
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
-async def test_the_climate_does_not_allow_unrestricted_modulation(climate, boiler_data, freezer):
+async def test_forced_pwm_does_not_allow_unrestricted_modulation(climate, boiler_data, freezer):
     cold_boiler = IDLE | {"selflowtemp": 25, "curflowtemp": 25, "rettemp": 25, "burnmaxpower": 0}
     await boiler_data(**cold_boiler)
     await climate.async_set_target_temperature(21.0)

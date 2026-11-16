@@ -53,7 +53,6 @@ async def test_scenario_1(hass: HomeAssistant, entry: MockConfigEntry, climate: 
     assert climate.setpoint == 57
     assert climate.heating_curve.value == 32.2
 
-    assert climate.pulse_width_modulation_enabled
     assert climate.pwm.last_duty_cycle_percentage == 23.83
     # 9.9 °C outside gives 2 cycles per hour
     assert climate.pwm.cycles_per_hour == 2
@@ -102,7 +101,6 @@ async def test_scenario_2(hass: HomeAssistant, entry: MockConfigEntry, climate: 
     assert climate.heating_curve.value == 27.8
     assert climate.requested_setpoint == 28.0
 
-    assert climate.pulse_width_modulation_enabled
     assert climate.pwm.last_duty_cycle_percentage == 2.6
     # 11.1 °C outside gives 2 cycles per hour
     assert climate.pwm.cycles_per_hour == 2
@@ -151,7 +149,6 @@ async def test_scenario_3(hass: HomeAssistant, entry: MockConfigEntry, climate: 
     assert climate.heating_curve.value == 32.5
     assert climate.requested_setpoint == 34.6
 
-    assert climate.pulse_width_modulation_enabled
     assert climate.pwm.last_duty_cycle_percentage == 53.62
     # -2.2 °C outside gives 4 cycles per hour
     assert climate.pwm.cycles_per_hour == 4

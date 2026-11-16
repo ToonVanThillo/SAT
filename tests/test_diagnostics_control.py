@@ -61,7 +61,7 @@ async def test_control_values_match_their_sources(hass, hass_client, entry, clim
     assert control["error_source"] == climate.max_error.entity_id == climate.entity_id
     assert control["control_setpoint"] == climate.setpoint
     assert control["relative_modulation_state"] == climate.relative_modulation_state.name
-    assert control["relative_modulation_value"] == climate.get_relative_modulation_value(coordinator.boiler)
+    assert control["relative_modulation_value"] == climate.get_relative_modulation_value()
     assert control["valves_open"] == climate.valves_open
     assert control["boiler_temperature_cold"] == coordinator.boiler_temperature_cold
     assert control["boiler_temperature_tracking"] == coordinator.boiler_temperature_tracking

@@ -80,8 +80,9 @@ def with_data(data: dict, options: dict | None = None) -> tuple[str, list[tuple]
     return names, [(domains, entry_data | data, entry_options, config)]
 
 
-def otgw_entry(options: dict | None = None) -> tuple[str, list[tuple]]:
-    """Return the `ems_entry` parametrization switched to the OpenTherm MQTT backend (device `gw1`, topic `otgw`)."""
-    names, [(domains, data, entry_options, config)] = ems_entry(options)
+def otgw_entry(options: dict | None = None, data: dict | None = None) -> tuple[str, list[tuple]]:
+    """Return the `ems_entry` parametrization switched to the OpenTherm MQTT backend (device `gw1`, topic `otgw`), with extra config entry data."""
+    names, [(domains, entry_data, entry_options, config)] = ems_entry(options)
+    backend = {CONF_MODE: MODE_MQTT_OPENTHERM, CONF_DEVICE: "gw1", CONF_MQTT_TOPIC: "otgw"}
 
-    return names, [(domains, data | {CONF_MODE: MODE_MQTT_OPENTHERM, CONF_DEVICE: "gw1", CONF_MQTT_TOPIC: "otgw"}, entry_options, config)]
+    return names, [(domains, entry_data | backend | (data or {}), entry_options, config)]

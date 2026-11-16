@@ -1,5 +1,7 @@
 """Characterization tests for the climate loop against the EMS MQTT backend, beyond the basic write sequences."""
 
+import logging
+
 import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.climate import HVACMode
@@ -19,8 +21,10 @@ from custom_components.sat.const import (
     CONF_MAXIMUM_SETPOINT,
     CONF_MINIMUM_SETPOINT,
     CONF_RADIATORS,
+    ModulationMode,
+    PWMStatus,
 )
-from tests.conftest import advance
+from tests.conftest import TIMELINE, advance
 from tests.const import IDLE, ems_entry, with_data
 from tests.test_climate_loop import message, run_loop
 
@@ -208,27 +212,16 @@ async def test_only_heater_off_after_hvac_off_until_heat_again(hass, entry, clim
 OVERSHOOT = IDLE | {"curflowtemp": 50, "selflowtemp": 40, "burngas": "on", "heatingactive": "on"}
 
 
-@pytest.mark.parametrize(*ems_entry())
-async def test_overshoot_does_not_enable_pwm_by_default(hass, entry, climate, boiler_data, mqtt_mock, published):
+@pytest.mark.parametrize(ems_entry()[0], [*ems_entry()[1], *ems_entry({CONF_DYNAMIC_MINIMUM_SETPOINT: True, CONF_DYNAMIC_MINIMUM_SETPOINT_VERSION: 2})[1]], ids=["default", "dynamic-v2"])
+async def test_overshoot_handling_leaves_pwm_alone(hass, entry, climate, boiler_data, mqtt_mock, published, caplog):
+    caplog.set_level(logging.INFO, logger=TIMELINE)
     await boiler_data(**OVERSHOOT)
-    await run_loop(climate, mqtt_mock, published)
 
-    # current behaviour, known bug: the loop enables PWM on overshoot, then resets (and so disables) it again
-    # because the PWM-enabled condition is not met
-    assert climate.pwm.enabled is False
-
-
-@pytest.mark.parametrize(*ems_entry({CONF_DYNAMIC_MINIMUM_SETPOINT: True, CONF_DYNAMIC_MINIMUM_SETPOINT_VERSION: 2}))
-async def test_overshoot_handling_enables_pwm(hass, entry, climate, boiler_data, mqtt_mock, published):
-    await boiler_data(**IDLE)
-    await run_loop(climate, mqtt_mock, published)
-    assert climate.pwm.enabled is False
-
-    await boiler_data(**OVERSHOOT)
-    await climate.async_control_heating_loop()
-
-    assert climate.pwm.enabled is True
-    assert climate.pulse_width_modulation_enabled
+    # The calculated setpoint (35) is above the minimum (20): an unrestricted pulse at the calculated setpoint, as without overshoot
+    assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 35}')
+    assert "overshoot handling started" in [r.getMessage() for r in caplog.records if r.name == TIMELINE]
+    assert climate.pwm.status == PWMStatus.ON
+    assert climate.pwm.mode == ModulationMode.UNRESTRICTED
 
 
 # Coordinator attributes

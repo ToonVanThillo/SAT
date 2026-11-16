@@ -38,11 +38,10 @@ from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.start import async_at_started
 
 from .area import Areas, SENSOR_TEMPERATURE_ID
-from .boiler import BoilerState
 from . import timeline
 from .channels import RELEASE, DesiredState, Quantity, Release, StatusChange, WriteRecord
 from .const import *
-from .const import PWMStatus
+from .const import ModulationMode, PWMStatus
 from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
 from .entity import SatEntity
 from .errors import Error
@@ -189,7 +188,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         self._simulation = bool(config_entry.data.get(CONF_SIMULATION))
         self._heating_system = str(config_entry.data.get(CONF_HEATING_SYSTEM))
-        self._overshoot_protection = bool(config_entry.data.get(CONF_OVERSHOOT_PROTECTION))
         self._push_setpoint_to_thermostat = bool(config_entry.data.get(CONF_PUSH_SETPOINT_TO_THERMOSTAT))
 
         # User Configuration
@@ -581,29 +579,13 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return False
 
     @property
-    def pulse_width_modulation_enabled(self) -> bool:
-        """Return True if pulse width modulation is enabled, False otherwise."""
-        if not self._coordinator.supports_setpoint_management or self._force_pulse_width_modulation:
-            return True
-
-        if not self._overshoot_protection or self._calculated_setpoint is None:
-            return False
-
-        if not self._dynamic_minimum_setpoint:
-            return self._coordinator.minimum_setpoint > self._calculated_setpoint
-
-        if self._minimum_setpoint_version == 1:
-            return self.minimum_setpoint.current > self._calculated_setpoint
-
-        return self.pwm.enabled
-
-    @property
     def relative_modulation_state(self) -> RelativeModulationState:
-        return self.relative_modulation.state(self._coordinator.boiler)
+        """The relative modulation state the last cycle that controlled the relative modulation decided."""
+        return self.relative_modulation.state
 
-    def get_relative_modulation_value(self, boiler: BoilerState) -> int:
-        """Return the maximum relative modulation to send for the given boiler state."""
-        if not self.relative_modulation.enabled(boiler) and self._coordinator.supports_relative_modulation_management:
+    def get_relative_modulation_value(self) -> int:
+        """Return the maximum relative modulation for the relative modulation state the last cycle decided."""
+        if not self.relative_modulation.enabled and self._coordinator.supports_relative_modulation_management:
             return MINIMUM_RELATIVE_MODULATION
 
         return self._maximum_relative_modulation
@@ -883,36 +865,35 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self._setpoint = MINIMUM_SETPOINT
             reason = "valves closed"
 
-        elif not self.pulse_width_modulation_enabled or pwm_state.status == PWMStatus.IDLE:
-            # Normal cycle without PWM
-            self._setpoint = self._calculated_setpoint
-            reason = "normal"
-
-            # Some final checks to see if it's even warm
-            if self._setpoint < COLD_SETPOINT:
-                self._setpoint = MINIMUM_SETPOINT
-                reason = "too cold"
-        elif pwm_state.status == PWMStatus.ON:
-            # PWM is enabled and actively controlling the cycle
-            self._setpoint = self.minimum_setpoint_value
-            reason = "pwm on"
-        else:
+        elif pwm_state.status != PWMStatus.ON:
+            # The PWM off phase; until IDLE is removed, IDLE counts as OFF
             self._setpoint = MINIMUM_SETPOINT
             reason = "pwm off"
 
+        elif pwm_state.mode == ModulationMode.UNRESTRICTED:
+            # A pulse with unrestricted modulation burns at the calculated setpoint
+            self._setpoint = self._calculated_setpoint
+            reason = "pwm on unrestricted"
+
+        else:
+            # A pulse with minimum modulation burns at the effective minimum setpoint
+            self._setpoint = self.minimum_setpoint_value
+            reason = "pwm on minimum"
+
         return min(self._setpoint, self._coordinator.maximum_setpoint), reason
 
-    async def _async_control_relative_modulation(self, snapshot: BoilerSnapshot) -> int | None:
-        """Decide the maximum relative modulation; returns None when it is unsupported."""
+    def _control_relative_modulation(self, snapshot: BoilerSnapshot, heater_state: DeviceState) -> int | None:
+        """Decide the maximum relative modulation from the snapshot, the PWM modulation mode and this cycle's heater request;
+        returns None when it is unsupported."""
         if not self._coordinator.supports_relative_modulation_management:
             _LOGGER.debug("Relative modulation management is not supported. Skipping control.")
             return None
 
-        # Update relative modulation state
-        await self.relative_modulation.update(self.pulse_width_modulation_enabled)
+        # Update the relative modulation state from this cycle's decisions
+        self.relative_modulation.update(snapshot.boiler, self.pwm.mode, heater_state == DeviceState.OFF)
 
         # Retrieve the relative modulation
-        relative_modulation_value = self.get_relative_modulation_value(snapshot.boiler)
+        relative_modulation_value = self.get_relative_modulation_value()
 
         # Apply some filters based on the manufacturer
         if isinstance(snapshot.manufacturer, Geminox):
@@ -1048,19 +1029,14 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self._overshoot_handling = overshoot_handling
             timeline.LOGGER.info("overshoot handling started" if overshoot_handling else "overshoot handling ended")
 
-        if overshoot_handling:
-            self.pwm.enable()
-
-        # Pulse Width Modulation
+        # Pulse Width Modulation runs whenever a valve is open; unrestricted modulation needs setpoint management and no forced PWM
         if not inputs.valves_open:
             self.pwm.reset("valves closed")
-        elif not self.pulse_width_modulation_enabled:
-            self.pwm.reset("not enabled")
         else:
-            # Unrestricted modulation is not allowed yet, so the mode stays MINIMUM
             await self.pwm.update(
                 flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint,
-                minimum_setpoint=self.minimum_setpoint_value, allow_unrestricted=False,
+                minimum_setpoint=self.minimum_setpoint_value,
+                allow_unrestricted=self._coordinator.supports_setpoint_management and not self._force_pulse_width_modulation,
             )
 
         self.async_send_pwm_updated()
@@ -1068,9 +1044,10 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Control setpoint to request, unless released below once heater off is confirmed
         control_setpoint: float | Release
         control_setpoint, setpoint_reason = self._control_setpoint(self.pwm.state, inputs.valves_open)
+        heater_state = self._heater_state(self._setpoint)
 
-        # Request the relative modulation value, if supported
-        relative_modulation = await self._async_control_relative_modulation(snapshot)
+        # Request the relative modulation value, if supported; it follows this cycle's heater request
+        relative_modulation = self._control_relative_modulation(snapshot, heater_state)
 
         # Control the integral (if exceeded the time limit)
         if self.heating_curve.value is not None:
@@ -1087,9 +1064,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 self.minimum_setpoint.warming_up(snapshot.boiler)
 
             # Calculate the dynamic minimum setpoint
-            self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.status)
+            self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.mode)
 
-        heater_state = self._heater_state(self._setpoint)
         if heater_state == DeviceState.OFF and self._heater_off_releases_setpoint():
             control_setpoint = RELEASE
 

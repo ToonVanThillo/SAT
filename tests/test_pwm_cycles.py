@@ -357,18 +357,18 @@ async def test_disable_ends_pulse_at_once(clock):
     assert not pwm.enabled
 
 
-async def test_setpoint_stabilization_disables_at_once(clock):
+async def test_a_higher_request_while_cooling_down_keeps_the_pulse(clock):
     pwm = make_pwm()
     pwm.enable()
     await start_pulse(pwm, clock, 0.5)
-    # Active flame sets an adjusted setpoint (flow - 3); a higher request while cooling down disables PWM
+    # Active flame sets an adjusted setpoint (flow - 3); a higher request while cooling down no longer disables PWM
     active = flame(True)
     active.latest_on_time_seconds = 60
     await pwm.update(boiler(), active, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     clock.tick(5)
     await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), active, 60.0, minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
-    assert pwm.status == PWMStatus.IDLE
-    assert not pwm.enabled
+    assert pwm.status == PWMStatus.ON
+    assert pwm.enabled
 
 
 # Low-duty branches

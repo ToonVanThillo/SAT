@@ -199,30 +199,12 @@ async def test_closing_valves_ends_a_running_pulse_at_once(hass, entry, climate,
 async def test_closed_valves_with_idle_pwm_log_nothing(hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     await prepare(hass, climate, boiler_data, heatingoff="on")
     close_valves(hass)
-    assert climate.pulse_width_modulation_enabled is False
 
     await run_loop(climate, mqtt_mock, published)
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
 
     # PWM was already IDLE: nothing is logged
     assert not timeline_info(caplog, "pwm IDLE")
-
-
-@pytest.mark.parametrize(*FORCED_PWM)
-async def test_valves_closed_is_the_reason_when_pwm_is_not_enabled_either(hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    await prepare(hass, climate, boiler_data, heatingoff="on")
-    open_valves(hass)
-    await run_loop(climate, mqtt_mock, published)
-    assert climate.pwm.status == PWMStatus.ON
-
-    # PWM is ON and, without the force, not enabled in the same cycle (calculated setpoint 35 above the minimum 30)
-    caplog.clear()
-    close_valves(hass)
-    with patch.object(climate, "_force_pulse_width_modulation", False):
-        assert climate.pulse_width_modulation_enabled is False
-        await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
-
-    assert timeline_info(caplog, "pwm IDLE") == ["pwm IDLE (valves closed)"]
 
 
 # The debug cycle line

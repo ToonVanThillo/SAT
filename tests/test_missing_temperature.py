@@ -259,7 +259,9 @@ async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_o
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_a_missing_temperature_without_pwm_active_does_not_log_a_pwm_reset(hass, entry, climate, boiler_data, freezer, mqtt_mock, published, caplog):
-    await heating(climate, boiler_data, freezer, mqtt_mock, published)
+    # PWM always runs in HEAT; without a flow temperature it stays IDLE
+    await heating(climate, boiler_data, freezer, mqtt_mock, published, curflowtemp=None)
+    assert climate.pwm.status == PWMStatus.IDLE
     hass.states.async_set(INSIDE, "unavailable")
     await missing_cycle(hass, climate, mqtt_mock)
 

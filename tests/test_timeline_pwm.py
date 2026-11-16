@@ -109,12 +109,12 @@ async def test_missing_heating_curve_value_logs_idle(clock, caplog):
     assert pwm.status == PWMStatus.IDLE
 
 
-async def test_setpoint_stabilization_disables_with_idle_line(clock, caplog):
+async def test_a_higher_request_while_cooling_down_logs_no_idle_line(clock, caplog):
     pwm = make_pwm()
     pwm.enable()
     await start_pulse(pwm, clock)
     assert pwm.enabled
-    # A burning flame lets the setpoint adjuster follow the boiler; then a cooling down boiler with a higher requested setpoint disables
+    # A burning flame lets the setpoint adjuster follow the boiler; a cooling down boiler with a higher requested setpoint no longer disables
     burning = SimpleNamespace(is_active=True, is_inactive=False, latest_on_time_seconds=30, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     clock.tick(5)
     await pwm.update(boiler(flame_active=True), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
@@ -123,10 +123,9 @@ async def test_setpoint_stabilization_disables_with_idle_line(clock, caplog):
     clock.tick(5)
     await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), burning, setpoint_for(1.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
-    assert pwm.enabled is False
-    assert pwm.status == PWMStatus.IDLE
-    assert len(idle_lines(caplog)) == 1
-    assert "stabili" in idle_lines(caplog)[0]
+    assert pwm.enabled is True
+    assert pwm.status == PWMStatus.ON
+    assert idle_lines(caplog) == []
 
 
 # Missing values warning

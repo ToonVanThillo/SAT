@@ -315,10 +315,17 @@ async def test_eco_mode_max_error_ignores_the_areas(hass, entry, climate):
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*with_data({}))
-async def test_relative_modulation_attributes(entry, climate, boiler_data):
+async def test_relative_modulation_attributes(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
-    boiler = climate.coordinator.boiler
 
-    assert climate.relative_modulation_state.name == "PULSE_WIDTH_MODULATION_OFF"
-    assert climate.relative_modulation.enabled(boiler) is True
-    assert climate.get_relative_modulation_value(boiler) == 100
+    # Before the first cycle the PWM mode is MINIMUM
+    assert climate.relative_modulation_state.name == "MINIMUM"
+    assert climate.relative_modulation.enabled is False
+    assert climate.get_relative_modulation_value() == 0
+
+    # A heat cycle with the calculated setpoint (35) above the minimum (20) runs unrestricted
+    await run_loop(climate, mqtt_mock, published)
+
+    assert climate.relative_modulation_state.name == "UNRESTRICTED"
+    assert climate.relative_modulation.enabled is True
+    assert climate.get_relative_modulation_value() == 100

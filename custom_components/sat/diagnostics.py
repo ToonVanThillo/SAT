@@ -52,7 +52,7 @@ def _control(climate: SatClimate, coordinator: SatDataUpdateCoordinator) -> dict
         "error_source": climate.max_error.entity_id,
         "control_setpoint": climate.setpoint,
         "relative_modulation_state": climate.relative_modulation_state.name,
-        "relative_modulation_value": climate.get_relative_modulation_value(coordinator.boiler),
+        "relative_modulation_value": climate.get_relative_modulation_value(),
         "valves_open": climate.valves_open,
         "boiler_temperature_cold": coordinator.boiler_temperature_cold,
         "boiler_temperature_tracking": coordinator.boiler_temperature_tracking,

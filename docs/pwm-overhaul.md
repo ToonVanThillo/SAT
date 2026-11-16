@@ -90,23 +90,29 @@ In HEAT, with all temperatures present and a valve open:
 
 | PWM              | Control setpoint           | Max relative modulation | Heater |
 |------------------|----------------------------|-------------------------|--------|
-| OFF              | minimum (10 °C) or release | by mode                 | OFF    |
-| ON, MINIMUM      | effective minimum setpoint | minimum                 | ON     |
+| OFF              | minimum (10 °C) or release | by mode¹                | OFF    |
+| ON, MINIMUM      | effective minimum setpoint | minimum¹                | ON     |
 | ON, UNRESTRICTED | calculated setpoint        | configured maximum      | ON     |
+
+¹ On backends whose max relative modulation limits hot water (not EMS-ESP),
+hot water and a cycle that requests the heater OFF give the configured
+maximum; this includes every OFF cycle.
 
 - Release on heater OFF, missing temperatures, no open valve and HVAC mode
   OFF are as in `design.md`. No open valve and a missing temperature reset
   PWM; a reset ends a running pulse like a normal pulse end, and the next
   pulse waits for the off phase.
-- Max relative modulation: hot water and cold (device setpoint at or below
-  10 °C) as today; otherwise MINIMUM gives the minimum and UNRESTRICTED the
-  configured maximum. The `PULSE_WIDTH_MODULATION_OFF` state is removed.
+- Max relative modulation: on backends where it limits hot water, hot water
+  and a cycle that requests the heater OFF give the configured maximum; this
+  is decided from the cycle's own request, not the boiler's read-back.
+  Otherwise MINIMUM gives the minimum and UNRESTRICTED the configured maximum.
+  The `PULSE_WIDTH_MODULATION_OFF` state is removed.
 - The PWM status has no IDLE: PWM is ON or OFF.
 - Overshoot handling remains a boiler status; it no longer changes PWM.
 - The heater is OFF whenever the requested setpoint is at or below the cold
   threshold, which only a legacy minimum can cause.
-- The relative modulation states are COLD, HOT_WATER, MINIMUM and
-  UNRESTRICTED.
+- The relative modulation states are HEATER_OFF_REQUESTED, HOT_WATER, MINIMUM
+  and UNRESTRICTED.
 - A reset logs "pwm OFF (reason)" once, on the first reset since PWM last
   ran.
 - A target change does not reset PWM: it only changes the calculated
@@ -118,7 +124,9 @@ In HEAT, with all temperatures present and a valve open:
 - Dynamic minimum setpoint v1: its normal mode requires UNRESTRICTED instead
   of PWM IDLE.
 - Dynamic minimum setpoint v2: the setpoint adjuster is reset on a control
-  state reset (target or HVAC mode change), as `disable()` did.
+  state reset (target or HVAC mode change), as `disable()` did. It adjusts
+  only in MINIMUM mode: during an UNRESTRICTED burn the flow follows the
+  calculated setpoint, and the adjuster would raise the minimum towards it.
 - Sensors: PWM Status shows ON or OFF; a diagnostic "PWM Mode" sensor
   (minimum, unrestricted, disabled by default, no attributes) shows the mode.
   PWM Duty Cycle shows 100% for 100% periods.
@@ -152,7 +160,8 @@ In HEAT, with all temperatures present and a valve open:
    mode change during a pulse starts a new period. Not yet used: the climate
    does not allow unrestricted modulation yet.
 6. The climate always runs PWM and decides from the table above; max
-   relative modulation follows the mode; dynamic minimum v1 requires
+   relative modulation follows the mode, except for hot water and heater-OFF
+   cycles on backends where it limits hot water; dynamic minimum v1 requires
    UNRESTRICTED. Until step 9, unrestricted modulation is allowed unless
    "Force pulse width modulation" is on. The PWM gate, the overshoot enable
    and the stabilisation disable are removed. Until step 8, the climate
@@ -172,5 +181,10 @@ In HEAT, with all temperatures present and a valve open:
 12. `design.md` and `known-issues.md` updated; this document is folded in.
 
 ## Open questions
-- Whether the mode needs hysteresis.
+- Whether the mode needs hysteresis. A probe showed that mode flips more often
+  than the MINIMUM on-time keep a MINIMUM pulse burning without an off phase,
+  since each flip during a pulse starts a new period. The recommended fix is a
+  band above the minimum: UNRESTRICTED only when the calculated setpoint
+  exceeds the effective minimum by more than 2 °C, back to MINIMUM only at or
+  below the effective minimum.
 - Whether an HVAC mode change should reset PWM.
