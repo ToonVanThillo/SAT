@@ -241,7 +241,6 @@ async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_o
 
     assert timeline(caplog, "pwm IDLE") == ["pwm IDLE (missing temperature)"]
     assert climate.pwm.status == PWMStatus.IDLE
-    assert not climate.pwm.state.enabled
     assert signals == [PWMStatus.IDLE]
     assert sent(published) == OFF_WRITES
 

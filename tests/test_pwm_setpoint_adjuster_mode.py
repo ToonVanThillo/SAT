@@ -156,3 +156,19 @@ async def test_the_adjuster_runs_in_minimum_mode_with_unrestricted_modulation_al
 
     assert pwm.mode == ModulationMode.MINIMUM
     assert pwm.setpoint == adjusted
+
+
+# Resetting the adjuster
+
+async def test_reset_setpoint_adjuster_restores_the_default_and_keeps_the_pulse(clock):
+    pwm = make_hot_water_pwm()
+    await update(pwm, burning(), False, flow=60.0)
+    assert (pwm.status, pwm.setpoint) == (PWMStatus.ON, 57.0)
+
+    pwm.reset_setpoint_adjuster()
+    assert (pwm.status, pwm.setpoint) == (PWMStatus.ON, MINIMUM_SETPOINT)
+
+    # The adjuster starts afresh at the flow - 3, instead of stepping from the old value towards it
+    clock.tick(30)
+    await update(pwm, burning(), False, flow=50.0)
+    assert pwm.setpoint == 47.0

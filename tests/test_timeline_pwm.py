@@ -52,24 +52,24 @@ async def test_reset_from_on_logs_idle_once(clock, caplog):
     assert pwm.status == PWMStatus.IDLE
 
 
-async def test_disable_from_on_and_from_off_logs_idle_once_each(clock, caplog):
+async def test_reset_from_off_logs_idle_once(clock, caplog):
     pwm = make_pwm()
-    await start_pulse(pwm, clock)
-    pwm.disable()
-    assert len(idle_lines(caplog)) == 1
-
     await start_pulse(pwm, clock)
     await step(pwm, clock, 0.5, 450)
     assert pwm.status == PWMStatus.OFF
     caplog.clear()
-    pwm.disable()
+
+    pwm.reset()
+    pwm.reset()
+
     assert len(idle_lines(caplog)) == 1
+    assert pwm.status == PWMStatus.IDLE
 
 
 async def test_no_idle_line_when_already_idle(clock, caplog):
     pwm = make_pwm()
     pwm.reset()
-    pwm.disable()
+    pwm.reset()
 
     assert idle_lines(caplog) == []
 
@@ -111,9 +111,7 @@ async def test_missing_heating_curve_value_logs_idle(clock, caplog):
 
 async def test_a_higher_request_while_cooling_down_logs_no_idle_line(clock, caplog):
     pwm = make_pwm()
-    pwm.enable()
     await start_pulse(pwm, clock)
-    assert pwm.enabled
     # A burning flame lets the setpoint adjuster follow the boiler; a cooling down boiler with a higher requested setpoint no longer disables
     burning = SimpleNamespace(is_active=True, is_inactive=False, latest_on_time_seconds=30, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     clock.tick(5)
@@ -123,7 +121,6 @@ async def test_a_higher_request_while_cooling_down_logs_no_idle_line(clock, capl
     clock.tick(5)
     await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), burning, setpoint_for(1.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
-    assert pwm.enabled is True
     assert pwm.status == PWMStatus.ON
     assert idle_lines(caplog) == []
 
@@ -151,16 +148,14 @@ async def test_missing_values_warning_is_logged_once_per_episode(clock, caplog):
     assert len(missing_warnings(caplog)) == 2
 
 
-@pytest.mark.parametrize("stop", ["reset", "disable"])
-async def test_a_reset_ends_the_missing_values_episode(clock, caplog, stop):
+async def test_a_reset_ends_the_missing_values_episode(clock, caplog):
     pwm = make_pwm()
     await start_pulse(pwm, clock)
     await step(pwm, clock, 0.5, 5, flow=None)
     assert len(missing_warnings(caplog)) == 1
 
-    # PWM stops being enabled while the values are still missing, then runs again with them still missing
-    getattr(pwm, stop)("not enabled")
-    pwm.enable()
+    # PWM is reset while the values are still missing, then runs again with them still missing
+    pwm.reset("valves closed")
     for _ in range(3):
         await step(pwm, clock, 0.5, 5, flow=None)
 

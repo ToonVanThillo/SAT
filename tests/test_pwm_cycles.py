@@ -291,15 +291,6 @@ async def test_reset_returns_to_current_n(clock):
     assert pwm.cycles_per_hour == 2
 
 
-async def test_disable_returns_to_current_n(clock):
-    pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
-    await start_pulse(pwm, clock)
-    pwm.update_cycles_per_hour(20)
-    pwm.disable()
-    assert pwm.cycles_per_hour == 2
-
-
 # Minimum pulse
 
 async def test_duty_drop_to_zero_does_not_end_pulse_before_180s(clock):
@@ -349,17 +340,8 @@ async def test_reset_ends_pulse_at_once(clock):
     assert pwm.status == PWMStatus.IDLE
 
 
-async def test_disable_ends_pulse_at_once(clock):
-    pwm = make_pwm()
-    await start_pulse(pwm, clock)
-    pwm.disable()
-    assert pwm.status == PWMStatus.IDLE
-    assert not pwm.enabled
-
-
 async def test_a_higher_request_while_cooling_down_keeps_the_pulse(clock):
     pwm = make_pwm()
-    pwm.enable()
     await start_pulse(pwm, clock, 0.5)
     # Active flame sets an adjusted setpoint (flow - 3); a higher request while cooling down no longer disables PWM
     active = flame(True)
@@ -368,7 +350,6 @@ async def test_a_higher_request_while_cooling_down_keeps_the_pulse(clock):
     clock.tick(5)
     await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), active, 60.0, minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     assert pwm.status == PWMStatus.ON
-    assert pwm.enabled
 
 
 # Low-duty branches

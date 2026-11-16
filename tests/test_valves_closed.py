@@ -153,8 +153,6 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
     assert desired.heater_state == DeviceState.OFF
     assert climate.setpoint == 10
     assert climate.pwm.status.name == "IDLE"
-    # Current behaviour, known bug: the "valves closed" PWM reset also disables PWM, even when forced (docs/known-issues.md, Control logic)
-    assert climate.pwm.enabled is False
     assert climate.calculated_setpoint == calculated
     assert hass.states.get("sensor.calculated_setpoint_test").state == str(calculated)
     assert f"setpoint calc={calculated} (valves closed)" in cycle_lines(caplog)[-1]
@@ -183,8 +181,6 @@ async def test_closing_valves_ends_a_running_pulse_at_once(hass, entry, climate,
 
     assert climate.pwm.status == PWMStatus.IDLE
     assert timeline_info(caplog, "pwm IDLE") == ["pwm IDLE (valves closed)"]
-    # Current behaviour, known bug: the reset also disables PWM (docs/known-issues.md, Control logic)
-    assert climate.pwm.enabled is False
 
     # Current behaviour, known bug: the reset leaves PWM IDLE, so the reopened valves start a pulse at once, also seconds after
     # the previous pulse start (docs/known-issues.md, Control logic)

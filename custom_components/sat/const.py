@@ -206,7 +206,6 @@ STORAGE_OVERSHOOT_PROTECTION_VALUE = "overshoot_protection_value"
 
 # Services
 SERVICE_RESET_INTEGRAL = "reset_integral"
-SERVICE_PULSE_WIDTH_MODULATION = "pulse_width_modulation"
 
 # Config steps
 STEP_SETUP_GATEWAY = "gateway"

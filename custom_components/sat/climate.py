@@ -814,8 +814,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.areas.heating_curves.update(self.current_outside_temperature)
         self.heating_curve.update(self.target_temperature, self.current_outside_temperature)
 
-        # The PID part of a reset skipped during a gap, under the reset branch's condition; PWM and the calculated setpoint were reset
-        # at the time of the change. A reset call runs the reset branch below instead.
+        # The PID part of a reset skipped during a gap, under the reset branch's condition. The rest was done at the time of the change: a
+        # thermostat target change cleared the calculated setpoint and the setpoint adjuster, an HVAC mode change also reset PWM, and an area
+        # change clears nothing. A reset call runs the reset branch below instead.
         if self._pid_reset_pending and not reset and max_error.value != self.pid.last_error:
             _LOGGER.debug("Running the PID reset deferred while the inside or target temperature was missing (error %s).", max_error.value)
             self.pid.update_reset(error=max_error, heating_curve_value=self.heating_curve.value)
@@ -845,8 +846,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
             self.pid.update_reset(error=max_error, heating_curve_value=self.heating_curve.value)
             self._calculated_setpoint = None
-            self.pwm.reset("error reset")
-            self.async_send_pwm_updated()
 
         self.async_write_ha_state()
 
@@ -925,10 +924,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         """Notify the PWM sensors of the current PWM status."""
         async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
 
-    def reset_control_state(self):
-        """Reset control state when major changes occur."""
-        self.pwm.disable("control state reset")
-        self.async_send_pwm_updated()
+    def reset_control_state(self) -> None:
+        """Reset the control state on a target or HVAC mode change: the setpoint adjuster and the calculated setpoint; it doesn't reset PWM."""
+        self.pwm.reset_setpoint_adjuster()
         self._calculated_setpoint = None
 
     def async_track_sensor_temperature(self, entity_id):
@@ -1207,8 +1205,10 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Reset the PID controller
         self._async_control_pid(True)
 
-        # Reset the climate
+        # Reset the climate and PWM
         self.reset_control_state()
+        self.pwm.reset("hvac mode change")
+        self.async_send_pwm_updated()
 
         # Collect which climates to control
         climates = self._radiators[:]

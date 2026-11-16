@@ -239,18 +239,14 @@ async def test_a_hold_ends_when_the_start_is_no_longer_due(clock, caplog):
     assert pwm.status == PWMStatus.OFF
 
 
-@pytest.mark.parametrize("end, lines", [
-    (lambda pwm: pwm.reset(), ["pwm IDLE (reset)", "pwm hold ended"]),
-    (lambda pwm: pwm.disable(), ["pwm IDLE (disabled)", "pwm hold ended"]),
-])
-async def test_a_reset_or_disable_ends_a_hold(clock, caplog, end, lines):
+async def test_a_reset_ends_a_hold(clock, caplog):
     pwm = make_pwm()
     await update(pwm, clock, hot_water=True)
     caplog.clear()
 
-    end(pwm)
+    pwm.reset()
 
-    assert pwm_lines(caplog) == lines
+    assert pwm_lines(caplog) == ["pwm IDLE (reset)", "pwm hold ended"]
 
 
 async def test_missing_values_end_a_hold(clock, caplog):

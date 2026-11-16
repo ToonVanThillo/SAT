@@ -167,7 +167,6 @@ async def test_control_state_is_not_restored(hass, entry, climate, restore):
     assert climate.heating_curve.value != 44.0
     assert climate.max_error.value != 9.0
     assert climate.setpoint != 55.0
-    assert climate.pwm.enabled is False
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)
@@ -175,7 +174,6 @@ async def test_control_state_is_not_restored(hass, entry, climate, restore):
 async def test_control_state_matches_a_fresh_start_without_extra_data(hass, entry, climate, restore):
     assert (climate.pid.integral, climate.pid.raw_derivative) == (0, 0)
     assert climate.setpoint != 55.0
-    assert climate.pwm.enabled is False
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)

@@ -115,18 +115,19 @@ maximum; this includes every OFF cycle.
   and UNRESTRICTED.
 - A reset logs "pwm OFF (reason)" once, on the first reset since PWM last
   ran.
-- A target change does not reset PWM: it only changes the calculated
-  setpoint, and PWM adapts.
+- A target change, also of an area, does not reset PWM: it only changes the
+  calculated setpoint, and PWM adapts. An HVAC mode change resets PWM.
 
 ## Consumers
 - Flame health: the PWM rules (`PWM_SHORT`, 8 cycles/h) apply to pulses
   below 100% duty; the continuous rules (3 cycles/h) to 100% periods.
 - Dynamic minimum setpoint v1: its normal mode requires UNRESTRICTED instead
   of PWM IDLE.
-- Dynamic minimum setpoint v2: the setpoint adjuster is reset on a control
-  state reset (target or HVAC mode change), as `disable()` did. It adjusts
-  only in MINIMUM mode: during an UNRESTRICTED burn the flow follows the
-  calculated setpoint, and the adjuster would raise the minimum towards it.
+- Dynamic minimum setpoint v2: a control state reset (a thermostat target
+  change or an HVAC mode change, not an area target change) resets the
+  setpoint adjuster and the setpoint it gave. It adjusts only in MINIMUM
+  mode: during an UNRESTRICTED burn the flow follows the calculated setpoint,
+  and the adjuster would raise the minimum towards it.
 - Sensors: PWM Status shows ON or OFF; a diagnostic "PWM Mode" sensor
   (minimum, unrestricted, disabled by default, no attributes) shows the mode.
   PWM Duty Cycle shows 100% for 100% periods.
@@ -147,6 +148,7 @@ maximum; this includes every OFF cycle.
   cycle".
 - The pulses-per-hour cap: its counter, hour window, "cycles cap
   reached/lifted" timeline lines and the pulse count in the "pwm ON" line.
+- The PWM reset on a target change.
 
 ## Plan
 1. Remove dead code: `_force`, `_setpoint_offset`, unregistered overshoot
@@ -167,8 +169,8 @@ maximum; this includes every OFF cycle.
    and the stabilisation disable are removed. Until step 8, the climate
    treats PWM IDLE as OFF.
 7. The `pulse_width_modulation` service and PWM enable/disable are removed; a
-   target change no longer resets PWM; a control state reset resets the
-   setpoint adjuster.
+   target change, also of an area, no longer resets PWM; an HVAC mode change
+   still does; a control state reset resets the setpoint adjuster.
 8. The PWM status is ON or OFF; IDLE is removed. A reset ends a running
    pulse like a normal pulse end. Without a flow temperature, PWM keeps the
    last duty. An off phase follows only a pulse end.

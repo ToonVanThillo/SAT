@@ -196,11 +196,6 @@ known bug".
   minimum open time switches to activity, and on closing, the return target of
   10 °C matches activity again, which `async_set_preset_mode` skips as already
   set.
-- The `pulse_width_modulation` service sets the PWM enabled flag, which
-  nothing reads any more: the climate runs PWM every HEAT cycle with a valve
-  open. Enable has no effect. Disable resets PWM and the dynamic minimum v2
-  setpoint adjuster, which ends a running pulse; the next cycle starts a new
-  pulse at once from IDLE.
 - After the climate is renamed (HA removes and re-adds the entity), room
   temperature sensors are no longer tracked: their listeners are released on
   removal, but `_sensors` keeps their IDs, so `async_track_sensor_temperature`

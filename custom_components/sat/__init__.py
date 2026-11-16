@@ -18,8 +18,6 @@ from .const import (
     CONF_MODE,
     CONF_DEVICE,
     CONF_ERROR_MONITORING,
-    SERVICE_RESET_INTEGRAL,
-    SERVICE_PULSE_WIDTH_MODULATION,
 )
 from .coordinator import SatDataUpdateCoordinatorFactory
 from .services import async_register_services

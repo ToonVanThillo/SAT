@@ -91,7 +91,6 @@ class PWMState:
     """
     Encapsulates the state of the PWM control.
     """
-    enabled: bool
     status: PWMStatus
     duty_cycle: Optional[Tuple[int, int]]
     mode: ModulationMode
@@ -142,7 +141,6 @@ class PWM:
         # A missing-values episode ends with the reset, so the next one is warned about again
         self._values_missing = False
 
-        self._enabled = False
         # Last status change: the pulse start while ON, the pulse end while OFF
         self._last_update: float = monotonic()
         # Start of the current period while ON: the pulse start, moved at each rollover of a 100% period or a mode change while ON
@@ -154,15 +152,10 @@ class PWM:
         self._duty_cycle_branch: str | None = None
         self._hold: str | None = None
 
-    def enable(self) -> None:
-        """Enable the PWM control."""
-        self._enabled = True
-
-    def disable(self, reason: str = "disabled") -> None:
-        """Disable the PWM control; leaving ON or OFF is logged on the timeline with `reason`."""
-        self.reset(reason)
-        self._enabled = False
+    def reset_setpoint_adjuster(self) -> None:
+        """Reset the setpoint adjuster and drop the setpoint it gave, so `setpoint` is the default minimum again; PWM itself is not reset."""
         self._setpoint_adjuster.reset()
+        self._setpoint = None
 
     def update_cycles_per_hour(self, outside_temperature: float | None) -> None:
         """Set the current cycles per hour from the outside temperature; a missing temperature keeps the last value."""
@@ -364,10 +357,6 @@ class PWM:
         return thresholds.on_time_max, 0, "max"
 
     @property
-    def enabled(self) -> bool:
-        return self._enabled
-
-    @property
     def status(self) -> PWMStatus:
         return self._status
 
@@ -392,7 +381,6 @@ class PWM:
     def state(self) -> PWMState:
         return PWMState(
             status=self._status,
-            enabled=self._enabled,
             duty_cycle=self._duty_cycle,
             mode=self._mode,
         )

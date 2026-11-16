@@ -3,13 +3,3 @@ reset_integral:
     entity:
       domain: climate
       integration: "sat"
-
-pulse_width_modulation:
-  target:
-    entity:
-      domain: climate
-      integration: "sat"
-  fields:
-    enabled:
-      required: true
-      example: true

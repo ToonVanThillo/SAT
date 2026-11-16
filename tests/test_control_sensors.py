@@ -314,8 +314,8 @@ async def test_pwm_duty_cycle_unknown_after_reset(hass, entry, climate, boiler_d
     await hass.async_block_till_done()
     assert value(hass, DUTY[0]) != STATE_UNKNOWN
 
-    # A target change resets the PWM, which signals the sensor
-    await climate.async_set_target_temperature(23.0)
+    # An HVAC mode change resets the PWM, which signals the sensor
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
     await hass.async_block_till_done()
 
     assert climate.pwm.duty_cycle is None

@@ -13,9 +13,10 @@ from custom_components.sat.const import (
     CONF_FORCE_PULSE_WIDTH_MODULATION,
     CONF_MINIMUM_SETPOINT,
     CONF_RADIATORS,
+    MINIMUM_PULSE_TIME,
 )
 from custom_components.sat.coordinator import DeviceState, SatDataUpdateCoordinator
-from tests.conftest import TIMELINE, advance
+from tests.conftest import TIMELINE, advance, run_one_loop
 from tests.const import IDLE, ems_entry, otgw_entry, with_data
 from tests.test_climate_loop import message, run_loop
 
@@ -248,7 +249,7 @@ def heater_status(coordinator: SatDataUpdateCoordinator) -> ChannelStatus:
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_stale_readback_does_not_confirm_heater_off(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
+async def test_stale_readback_does_not_confirm_heater_off(hass: HomeAssistant, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
     caplog.set_level(logging.INFO)
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**IDLE | {"heatingoff": "on", "selflowtemp": 5})
@@ -259,18 +260,23 @@ async def test_stale_readback_does_not_confirm_heater_off(entry, climate, coordi
     assert (setpoint_status(coordinator), heater_status(coordinator)) == (ChannelStatus.PENDING, ChannelStatus.PENDING)
     assert "35.0" in requested_setpoints(caplog)
 
-    # Cycle N+1: heater OFF requested, the only read-back is the stale one from before cycle N
+    # The pulse runs past its minimum
+    await advance(hass, freezer, MINIMUM_PULSE_TIME)
+    assert "pwm OFF" not in caplog.text
+
+    # Cycle N+1: heater OFF requested, the only read-back is the stale one from before cycle N; the lower target's duty of 0 ends the pulse
     caplog.clear()
     freezer.tick(1)
-    await climate.async_set_target_temperature(15.0)
     mqtt_mock.async_publish.reset_mock()
-    await climate.async_control_heating_loop()
+    await climate.async_set_target_temperature(15.0)
+    await run_one_loop(hass, climate, caplog, 0)
+    assert "pwm OFF" in caplog.text
     calls = published()
     assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
     assert HEATER_OFF in calls
     assert (setpoint_status(coordinator), heater_status(coordinator)) == (ChannelStatus.PENDING, ChannelStatus.PENDING)
     assert coordinator.confirmed_value(Quantity.HEATER_STATE) is None
-    assert "10" in requested_setpoints(caplog)
+    assert requested_setpoints(caplog) == ["10"]
     assert not logged(caplog, RELEASED)
 
     # Cycle N+2: the read-back after the OFF send arrives
