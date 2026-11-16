@@ -175,7 +175,7 @@ def test_none_keeps_last_n(clock):
     assert pwm.cycles_per_hour == 2
 
 
-def test_idle_uses_current_n(clock):
+def test_without_a_latch_the_current_n_applies(clock):
     pwm = make_pwm()
     for temperature, expected in [(20, 2), (6, 3), (-5, 4)]:
         pwm.update_cycles_per_hour(temperature)
@@ -234,26 +234,6 @@ async def test_n_change_mid_off_is_latched(clock):
     assert pwm.state.status == PWMStatus.OFF
 
 
-async def test_idle_releases_the_latch_before_a_low_duty_off_phase(clock):
-    pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
-    await start_pulse(pwm, clock, 0.5)
-    assert pwm.cycles_per_hour == 4
-
-    # Missing values end the pulse; N changes while idle
-    CURVE.value = None
-    await step(pwm, clock, 0.5, 10)
-    assert pwm.state.status == PWMStatus.IDLE
-    CURVE.value = 30.0
-    pwm.update_cycles_per_hour(20)
-
-    # Below the minimum duty the PWM goes from idle to off without a pulse
-    await step(pwm, clock, 0.0, 10)
-
-    assert pwm.state.status == PWMStatus.OFF
-    assert pwm.cycles_per_hour == 2
-
-
 async def test_off_phase_beyond_twice_the_cycle_releases_latch(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)
@@ -281,13 +261,19 @@ async def test_next_pulse_start_latches_the_new_n(clock):
     assert pwm.cycles_per_hour == 2
 
 
-async def test_reset_returns_to_current_n(clock):
+async def test_a_reset_keeps_the_latch_through_the_off_phase_like_a_pulse_end(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock)
     pwm.update_cycles_per_hour(20)
     assert pwm.cycles_per_hour == 4
+
+    # The reset ends the pulse like a normal pulse end: N stays latched up to the cycle's maximum length (2 * 3600 / 4) into the off phase
     pwm.reset()
+    assert pwm.cycles_per_hour == 4
+    clock.tick(1800)
+    assert pwm.cycles_per_hour == 4
+    clock.tick(1)
     assert pwm.cycles_per_hour == 2
 
 
@@ -318,26 +304,58 @@ async def test_normal_end_applies_after_180s(clock):
     assert pwm.state.status == PWMStatus.OFF
 
 
-async def test_missing_flow_temperature_ends_pulse_at_once(clock):
+async def test_a_missing_flow_temperature_keeps_the_last_duty_and_its_pulse_timing(clock):
     pwm = make_pwm()
-    await start_pulse(pwm, clock)
-    await step(pwm, clock, 0.5, 5, flow=None)
-    assert pwm.state.status == PWMStatus.IDLE
+    pwm.update_cycles_per_hour(-5)
+    await start_pulse(pwm, clock, 0.5)  # N=4: (450, 450)
+
+    # The request drops, but without a flow temperature the duty formula skips: the pulse runs on the last duty
+    await step(pwm, clock, 0.2, 5, flow=None)
+    assert pwm.state.status == PWMStatus.ON
+    assert pwm.state.duty_cycle == (450, 450)
+    await step(pwm, clock, 0.2, 444, flow=None)  # 449 s
+    assert pwm.state.status == PWMStatus.ON
+    await step(pwm, clock, 0.2, 1, flow=None)  # 450 s
+    assert pwm.state.status == PWMStatus.OFF
+
+    # The off phase runs on the last duty too
+    await step(pwm, clock, 0.2, 449, flow=None)
+    assert pwm.state.status == PWMStatus.OFF
+    await step(pwm, clock, 0.2, 1, flow=None)
+    assert pwm.state.status == PWMStatus.ON
+    assert pwm.state.duty_cycle == (450, 450)
 
 
-async def test_missing_heating_curve_ends_pulse_at_once(clock):
+async def test_a_missing_flow_at_a_period_start_is_seeded_by_the_next_flow_temperature(clock):
     pwm = make_pwm()
-    await start_pulse(pwm, clock)
-    CURVE.value = None  # type: ignore[assignment]
-    await step(pwm, clock, 0.5, 5)
-    assert pwm.state.status == PWMStatus.IDLE
+    pwm.update_cycles_per_hour(-5)
+    await start_pulse(pwm, clock, 1.0)  # N=4, at a flow of 50: the max branch, (1800, 0)
+
+    # The 100% period rolls over while the flow is missing: the new period has no boiler temperature yet
+    await step(pwm, clock, 1.0, 1800, flow=None)
+    assert pwm.state.status == PWMStatus.ON
+
+    # The next flow of 60 seeds it: a request of 50 is 75% of the way from the base of 20 to 60, not 100% of the way to the old 50
+    await step(pwm, clock, 1.0, 1, flow=60.0)
+    assert pwm.state.duty_cycle == (675, 225)
 
 
-async def test_reset_ends_pulse_at_once(clock):
+async def test_a_reset_ends_a_pulse_at_once_and_the_next_start_waits_for_the_minimum_off_phase(clock):
     pwm = make_pwm()
-    await start_pulse(pwm, clock)
+    pwm.update_cycles_per_hour(-5)
+    await start_pulse(pwm, clock, 1.0)  # N=4: (1800, 0)
+    clock.tick(10)
+
+    # Before the minimum pulse of 180 s
     pwm.reset()
-    assert pwm.status == PWMStatus.IDLE
+    assert pwm.status == PWMStatus.OFF
+    assert pwm.duty_cycle is None
+
+    # The duty's off time is 0, so the off phase lasts the 180 s minimum from the reset
+    await step(pwm, clock, 1.0, 179)
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, 1.0, 1)
+    assert pwm.status == PWMStatus.ON
 
 
 async def test_a_higher_request_while_cooling_down_keeps_the_pulse(clock):
@@ -349,6 +367,47 @@ async def test_a_higher_request_while_cooling_down_keeps_the_pulse(clock):
     await pwm.update(boiler(), active, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
     clock.tick(5)
     await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), active, 60.0, minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    assert pwm.status == PWMStatus.ON
+
+
+# A reset ends a pulse; the next start waits for the off phase from the reset
+
+@pytest.mark.parametrize(("duty", "off_time"), [(1.0, 0), (0.85, 180), (0.5, 450), (0.15, 1020)])
+@pytest.mark.parametrize("back_after", [60, 200])
+async def test_a_reset_mid_pulse_then_demand_returns_after_the_off_phase_from_the_reset(clock, duty, off_time, back_after):
+    pwm = make_pwm()
+    pwm.update_cycles_per_hour(-5)  # N=4
+    await start_pulse(pwm, clock, duty)
+    clock.tick(5)
+    pwm.reset("valves closed")
+    assert pwm.status == PWMStatus.OFF
+
+    clock.tick(back_after)
+    await step(pwm, clock, duty)
+    assert pwm.state.duty_cycle is not None and pwm.state.duty_cycle[1] == off_time
+    started = back_after >= max(off_time, 180)
+    assert (pwm.status == PWMStatus.ON) == started
+
+    # The off phase lasts max(180, off time) from the reset, not longer
+    wait = max(off_time, 180) - back_after
+    if not started:
+        await step(pwm, clock, duty, wait - 1)
+        assert pwm.status == PWMStatus.OFF
+        await step(pwm, clock, duty, 1)
+        assert pwm.status == PWMStatus.ON
+
+
+async def test_a_reset_during_the_off_phase_of_a_long_duty_does_not_shorten_it(clock):
+    pwm = make_pwm()
+    pwm.update_cycles_per_hour(-5)
+    await start_pulse(pwm, clock, 0.5)  # (450, 450)
+    await step(pwm, clock, 0.5, 450)  # the pulse ends
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, 0.5, 100)
+    pwm.reset()
+    await step(pwm, clock, 0.5, 349)  # 449 s since the pulse end
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, 0.5, 1)
     assert pwm.status == PWMStatus.ON
 
 
@@ -495,7 +554,7 @@ async def test_a_mid_duty_cycle_fills_the_period_exactly(clock, temperature, dut
 # Minimum off phase: an off phase after a pulse end lasts at least 180 s
 
 def pwm_lines(caplog) -> list[str]:
-    return [r.getMessage() for r in caplog.records if r.getMessage().startswith(("pwm ON", "pwm OFF", "pwm IDLE", "pwm hold"))]
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith(("pwm ON", "pwm OFF", "pwm hold"))]
 
 
 async def max_pulse_ended_late_in_its_period(pwm: PWM, clock: Clock) -> None:
@@ -561,49 +620,55 @@ async def test_a_rollover_after_an_earlier_pulse_end_has_no_off_phase(clock, cap
 
 
 @pytest.mark.parametrize("duty", [1.0, 0.85])
-async def test_a_start_from_idle_after_a_reset_is_not_held_by_the_minimum_off_phase(clock, duty):
+async def test_a_reset_after_a_pulse_end_keeps_the_minimum_off_phase(clock, duty):
     pwm = make_pwm()
     await max_pulse_ended_late_in_its_period(pwm, clock)
     pwm.reset()
 
+    # Both duties have an off time below the 180 s minimum
     await step(pwm, clock, duty, 10)  # 10 s after the pulse end and the reset
-
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, duty, 169)  # 179 s
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, duty, 1)  # 180 s
     assert pwm.status == PWMStatus.ON
 
 
-async def test_an_off_phase_entered_after_a_reset_is_not_held_by_the_minimum_off_phase(clock, caplog):
+async def test_a_reset_in_an_off_phase_keeps_the_original_off_phase(clock, caplog):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: (450, 450) at 0.5
     with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
-        await start_pulse(pwm, clock, 0.5)
-        await step(pwm, clock, 0.5, 450)
-        assert pwm.status == PWMStatus.OFF
-        pwm.reset()
-
-        # A due start held by hot water goes from idle to off
-        await step(pwm, clock, 0.5, hot_water=True)
-        assert pwm.status == PWMStatus.OFF
-        assert pwm.hold == "hot water"
-        # Below the minimum duty no start is due, so the hold ends and the off phase goes on
-        await step(pwm, clock, 0.05, hot_water=True)
+        await max_pulse_ended_late_in_its_period(pwm, clock)  # the pulse ends at 0 s
+        clock.tick(60)
+        pwm.reset()  # 60 s
         assert pwm.status == PWMStatus.OFF
 
-        # At 100%, whose off time is 0: the off phase doesn't follow a pulse end
-        await step(pwm, clock, 1.0, 10)
+        # Demand at 100%, whose off time is 0: the start waits for the 180 s off phase from the pulse end, not from the reset
+        await step(pwm, clock, 1.0, 30)  # 90 s
+        assert pwm.status == PWMStatus.OFF
+        await step(pwm, clock, 1.0, 89)  # 179 s
+        assert pwm.status == PWMStatus.OFF
+        await step(pwm, clock, 1.0, 1)  # 180 s
         assert pwm.status == PWMStatus.ON
-    assert pwm_lines(caplog) == [
-        "pwm ON (4 cycles/h)", "pwm OFF", "pwm IDLE (reset)", "pwm hold (hot water)", "pwm OFF", "pwm hold ended", "pwm ON (4 cycles/h)",
-    ]
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm OFF", "pwm OFF (reset)", "pwm ON (4 cycles/h)"]
 
 
-async def test_an_off_phase_before_the_first_pulse_is_not_held_by_the_minimum_off_phase(clock):
+async def test_before_the_first_pulse_a_start_is_due_at_once(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)  # N=4
-    # Below the minimum duty the PWM goes from idle to off without a pulse
+    # Below the minimum duty no pulse starts; there is no off phase, as no pulse has ended
     await step(pwm, clock, 0.05)
     assert pwm.status == PWMStatus.OFF
 
     await step(pwm, clock, 1.0, 10)
+
+    assert pwm.status == PWMStatus.ON
+
+
+async def test_before_the_first_pulse_a_reset_adds_no_off_phase(clock):
+    pwm = make_pwm()
+    pwm.reset()
+
+    await step(pwm, clock, 0.5)
 
     assert pwm.status == PWMStatus.ON
 
@@ -642,18 +707,21 @@ async def test_branches_hard_coded(clock, temperature, duty, flame_active, expec
 
 # Gaps from the review
 
-async def test_idle_after_missing_values_uses_current_n(clock, caplog):
+async def test_a_pulse_through_missing_values_keeps_its_latch_and_the_next_pulse_latches_the_current_n(clock, caplog):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)
-    await start_pulse(pwm, clock)
+    await start_pulse(pwm, clock)  # N=4: (450, 450)
     pwm.update_cycles_per_hour(20)
     assert pwm.cycles_per_hour == 4
 
     await step(pwm, clock, 0.5, 5, flow=None)
-    assert pwm.status == PWMStatus.IDLE
-    assert pwm.cycles_per_hour == 2
+    assert pwm.status == PWMStatus.ON
+    assert pwm.cycles_per_hour == 4
+    await step(pwm, clock, 0.5, 445, flow=None)  # 450 s
+    assert pwm.status == PWMStatus.OFF
 
+    # The off phase still uses the latched N; the next pulse latches the current one
     with caplog.at_level(logging.INFO, logger="custom_components.sat.timeline"):
-        await step(pwm, clock, 0.5, 5)
+        await step(pwm, clock, 0.5, 450)
     assert pwm.status == PWMStatus.ON
     assert "pwm ON (2 cycles/h)" in caplog.text

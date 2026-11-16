@@ -14,6 +14,7 @@ from custom_components.sat.const import (
     CONF_MINIMUM_SETPOINT,
     CONF_SENSOR_MAX_VALUE_AGE,
     CONF_THERMAL_COMFORT,
+    MINIMUM_OFF_TIME,
     SIGNAL_PWM_UPDATED,
     PWMStatus,
 )
@@ -203,11 +204,13 @@ async def test_humidity_is_no_trigger_without_thermal_comfort(hass, entry, clima
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_a_missing_flow_temperature_is_no_trigger(hass, entry, climate, boiler_data, freezer, mqtt_mock, published, caplog):
+async def test_a_missing_flow_temperature_is_no_trigger(hass, entry, climate, coordinator, boiler_data, freezer, mqtt_mock, published, caplog):
     readback = await heating(climate, boiler_data, freezer, mqtt_mock, published)
-    await boiler_data(**{key: value for key, value in IDLE.items() if key != "curflowtemp"} | readback)
+    await boiler_data(**IDLE | readback | {"curflowtemp": None})
     await missing_cycle(hass, climate, mqtt_mock)
 
+    # The cycle ran without a flow temperature
+    assert coordinator._snapshot.boiler.reliable_flow_temperature is None
     assert not [m for m in timeline(caplog, "cycle ") if "missing temperature" in m]
     assert "heater=ON" in timeline(caplog, "cycle ")[-1]
     assert not [p for p in sent(published) if json.loads(p)["cmd"] == "heatingoff"]
@@ -233,38 +236,50 @@ async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_o
     readback = echo(published)
     await boiler_data(**IDLE | readback)
     pulses = timeline(caplog, "pwm ON")
+    resets = len(timeline(caplog, "pwm OFF ("))
     signals.clear()
 
     hass.states.async_set(sensor, "unavailable")
     await missing_cycle(hass, climate, mqtt_mock)
     await hass.async_block_till_done()
 
-    assert timeline(caplog, "pwm IDLE") == ["pwm IDLE (missing temperature)"]
-    assert climate.pwm.status == PWMStatus.IDLE
-    assert signals == [PWMStatus.IDLE]
+    # The reset ends the pulse at once, before its minimum pulse
+    assert timeline(caplog, "pwm OFF (")[resets:] == ["pwm OFF (missing temperature)"]
+    assert climate.pwm.status == PWMStatus.OFF
+    assert signals == [PWMStatus.OFF]
     assert sent(published) == OFF_WRITES
 
-    # The temperature returns: the old pulse doesn't resume. Current behaviour, known bug: as after closed valves, the reset left
-    # PWM IDLE, so a fresh pulse starts at once, seconds after the previous pulse start (docs/known-issues.md, Control logic)
+    # The temperature returns: the old pulse doesn't resume, and the next pulse waits for the off phase after the pulse the reset ended
     hass.states.async_set(sensor, "20.9" if sensor == INSIDE else "9.9")
     freezer.tick(1)
     await boiler_data(**IDLE | echo(published))
     await climate.async_control_heating_loop()
     assert "missing temperature" not in timeline(caplog, "cycle ")[-1]
-    assert len(timeline(caplog, "pwm ON")) == len(pulses) + 1
-    assert timeline(caplog, "pwm OFF") == []
+    assert climate.pwm.status == PWMStatus.OFF
+    assert timeline(caplog, "pwm ON") == pulses
+
+    # The off phase lasts the duty's off time, at least 180 s, from the reset
+    assert climate.pwm.duty_cycle is not None
+    off_time = max(climate.pwm.duty_cycle[1], MINIMUM_OFF_TIME)
+    freezer.tick(off_time - 2)
+    await climate.async_control_heating_loop()
+    assert climate.pwm.status == PWMStatus.OFF
+    freezer.tick(1)
+    await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.ON
+    assert len(timeline(caplog, "pwm ON")) == len(pulses) + 1
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_a_missing_temperature_without_pwm_active_does_not_log_a_pwm_reset(hass, entry, climate, boiler_data, freezer, mqtt_mock, published, caplog):
-    # PWM always runs in HEAT; without a flow temperature it stays IDLE
-    await heating(climate, boiler_data, freezer, mqtt_mock, published, curflowtemp=None)
-    assert climate.pwm.status == PWMStatus.IDLE
+async def test_a_missing_temperature_logs_a_pwm_reset_at_every_cycle(hass, entry, climate, boiler_data, freezer, mqtt_mock, published, caplog):
+    await heating(climate, boiler_data, freezer, mqtt_mock, published)
+    resets = len(timeline(caplog, "pwm OFF ("))
     hass.states.async_set(INSIDE, "unavailable")
-    await missing_cycle(hass, climate, mqtt_mock)
 
-    assert timeline(caplog, "pwm IDLE") == []
+    for _ in range(3):
+        await missing_cycle(hass, climate, mqtt_mock)
+
+    assert timeline(caplog, "pwm OFF (")[resets:] == ["pwm OFF (missing temperature)"] * 3
 
 
 # HVAC OFF is checked first

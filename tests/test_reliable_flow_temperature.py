@@ -352,12 +352,14 @@ async def test_the_stored_last_boiler_temperature_is_the_reliable_one(clock):
     assert pwm.last_duty_cycle_percentage == 50.0
 
 
-async def test_a_missing_reliable_temperature_idles_the_pwm_whatever_the_raw_one(clock):
+async def test_a_missing_reliable_temperature_skips_the_duty_cycle_whatever_the_raw_one(clock):
     pwm = make_pwm()
 
     await pwm.update(boiler_state(50.0, None), flame_state(), setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
-    assert pwm.status == PWMStatus.IDLE
+    # No duty yet in MINIMUM, so no pulse starts
+    assert pwm.duty_cycle is None
+    assert pwm.status == PWMStatus.OFF
 
 
 async def test_the_setpoint_adjuster_follows_the_reliable_temperature_with_the_flame_on(clock):

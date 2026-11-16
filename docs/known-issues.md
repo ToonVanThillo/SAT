@@ -107,13 +107,10 @@ known bug".
   2·3600/N, so a boiler that cycles on its own during what used to be
   continuous heating shows PWM_SHORT instead of being judged by the continuous
   rules.
-- The "valves closed" PWM reset, like the other PWM resets, resets PWM to
-  IDLE, so the reopened valves start a pulse at once, without the
-  off phase after the pulse the reset ended. Valves that open and close
-  quickly can thus start a pulse at each reopen; that is a configuration
-  problem SAT doesn't guard against. The missing-temperature PWM reset does
-  the same once a missing temperature outlasts its 5-minute hold; a held input
-  doesn't reset PWM.
+- A PWM reset (valves closed, a missing temperature after its 5-minute hold,
+  an HVAC mode change) ends a running pulse at once, also before its 180 s
+  minimum pulse; the off phase that follows still lasts at least 180 s. A held
+  input doesn't reset PWM.
 - The PID's age reset (`sensor_max_value_age`) compares the time since the
   PID's last update, not the sensors' age. It fires whenever the PID hasn't
   updated for longer than the max age, which with a short max age means at

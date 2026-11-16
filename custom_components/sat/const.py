@@ -244,7 +244,6 @@ class PWMStatus(str, Enum):
     """The current state of Pulse Width Modulation"""
     ON = "on"
     OFF = "off"
-    IDLE = "idle"
 
 
 class ModulationMode(str, Enum):

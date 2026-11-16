@@ -376,7 +376,7 @@ class SatChannelSynchroSensor(SatEntity, SensorEntity):
 
 
 class SatPWMStatusSensor(SatEntity, SensorEntity):
-    """Diagnostic status of the PWM controller; ON during the on-phase, OFF during the off-phase, IDLE when PWM is not active."""
+    """Diagnostic status of the PWM controller; ON during the on-phase, otherwise OFF."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -386,7 +386,7 @@ class SatPWMStatusSensor(SatEntity, SensorEntity):
     def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry) -> None:
         super().__init__(coordinator, config_entry)
 
-        self._status = PWMStatus.IDLE
+        self._status = PWMStatus.OFF
         self._attr_name = "PWM Status"
         self._attr_unique_id = f"{config_entry.data[CONF_NAME].lower()}-pwm-status"
 

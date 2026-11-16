@@ -13,14 +13,15 @@ from custom_components.sat.const import (
     CONF_HOT_WATER_DELAY,
     CONF_MINIMUM_SETPOINT,
     MINIMUM_SETPOINT,
+    ModulationMode,
     PWMStatus,
 )
 from custom_components.sat.pwm import PWM
 from tests.conftest import TIMELINE
 from tests.const import IDLE, with_data
-from tests.test_pwm_cycles import CURVE, Clock, boiler, config, setpoint_for
+from tests.test_pwm_cycles import CURVE, FLOW, Clock, boiler, config, setpoint_for
 
-PWM_LINES = ("pwm ON", "pwm OFF", "pwm IDLE", "pwm hold")
+PWM_LINES = ("pwm ON", "pwm OFF", "pwm hold")
 
 
 @pytest.fixture
@@ -43,9 +44,12 @@ def flame(active: bool = False, latest: float | None = None, since: float | None
     return SimpleNamespace(is_active=active, is_inactive=not active, latest_on_time_seconds=latest, average_on_time_seconds=100, seconds_since_hot_water_burn=since)
 
 
-async def update(pwm: PWM, clock: Clock, seconds: float = 0, duty: float = 0.5, hot_water: bool = False, since: float | None = None, allow_unrestricted: bool = False) -> None:
+async def update(
+        pwm: PWM, clock: Clock, seconds: float = 0, duty: float = 0.5, hot_water: bool = False, since: float | None = None, allow_unrestricted: bool = False,
+        flow: float | None = FLOW,
+) -> None:
     clock.tick(seconds)
-    await pwm.update(boiler(hot_water=hot_water), flame(since=since), setpoint_for(duty), minimum_setpoint=10.0, allow_unrestricted=allow_unrestricted)  # type: ignore[arg-type]
+    await pwm.update(boiler(hot_water=hot_water, flow=flow), flame(since=since), setpoint_for(duty), minimum_setpoint=10.0, allow_unrestricted=allow_unrestricted)  # type: ignore[arg-type]
 
 
 def pwm_lines(caplog) -> list[str]:
@@ -72,7 +76,7 @@ async def test_no_pulse_starts_while_the_boiler_produces_hot_water(clock, caplog
 
     assert pwm.status == PWMStatus.ON
     assert pwm.hold is None
-    assert pwm_lines(caplog) == ["pwm hold (hot water)", "pwm OFF", "pwm hold ended", "pwm ON (2 cycles/h)"]
+    assert pwm_lines(caplog) == ["pwm hold (hot water)", "pwm hold ended", "pwm ON (2 cycles/h)"]
 
 
 @pytest.mark.parametrize("since, held", [(0, True), (299, True), (300, False), (None, False)])
@@ -109,7 +113,7 @@ async def test_a_held_start_in_the_off_phase_starts_once_the_hold_ends(clock, ca
     assert pwm_lines(caplog)[-1] == "pwm ON (2 cycles/h)"
 
 
-async def test_a_start_held_from_idle_starts_at_the_next_cycle_after_the_hold(clock):
+async def test_a_start_held_before_the_first_pulse_starts_at_the_next_cycle_after_the_hold(clock):
     pwm = make_pwm(hot_water_delay=300)
     await update(pwm, clock, since=0)
     assert pwm.status == PWMStatus.OFF
@@ -142,21 +146,20 @@ async def test_a_held_start_latches_no_cycles_per_hour(clock):
     assert pwm.cycles_per_hour == 4
 
 
-async def test_a_held_start_after_idle_does_not_revive_an_old_latch(clock):
+async def test_a_held_start_after_the_latch_ran_out_does_not_revive_it(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)
-    await update(pwm, clock)
+    await update(pwm, clock)  # N=4: (450, 450)
     assert pwm.cycles_per_hour == 4
+    await update(pwm, clock, 450)
+    assert pwm.status == PWMStatus.OFF
 
-    # Missing values end the pulse; N changes while idle
-    CURVE.value = None
-    await update(pwm, clock, 10)
-    CURVE.value = 30.0
+    # N changes in the off phase; the latch runs out 2 * 3600 / 4 s after the pulse end, and the due start is held
     pwm.update_cycles_per_hour(20)
-
-    await update(pwm, clock, 10, hot_water=True)
+    await update(pwm, clock, 1801, hot_water=True)
 
     assert pwm.status == PWMStatus.OFF
+    assert pwm.hold == "hot water"
     assert pwm.cycles_per_hour == 2
 
 
@@ -209,7 +212,6 @@ async def test_hold_lines_are_logged_on_change_of_the_reason(clock, caplog):
 
     assert pwm_lines(caplog) == [
         "pwm hold (hot water)",
-        "pwm OFF",
         "pwm hold (hot water delay)",
         "pwm hold ended",
         "pwm ON (2 cycles/h)",
@@ -246,18 +248,88 @@ async def test_a_reset_ends_a_hold(clock, caplog):
 
     pwm.reset()
 
-    assert pwm_lines(caplog) == ["pwm IDLE (reset)", "pwm hold ended"]
+    assert pwm_lines(caplog) == ["pwm OFF (reset)", "pwm hold ended"]
 
 
-async def test_missing_values_end_a_hold(clock, caplog):
+async def test_a_missing_flow_temperature_keeps_a_hold(clock, caplog):
     pwm = make_pwm()
     await update(pwm, clock, hot_water=True)
     caplog.clear()
 
-    CURVE.value = None
-    await update(pwm, clock, 10, hot_water=True)
+    # The start stays due on the last duty, and stays held
+    await update(pwm, clock, 10, hot_water=True, flow=None)
 
-    assert pwm_lines(caplog) == ["pwm IDLE (missing values)", "pwm hold ended"]
+    assert pwm.status == PWMStatus.OFF
+    assert pwm.hold == "hot water"
+    assert pwm_lines(caplog) == []
+
+
+async def test_a_reset_during_a_hold_before_the_first_pulse_ends_it_and_adds_no_off_phase(clock, caplog):
+    pwm = make_pwm()
+    await update(pwm, clock, hot_water=True)
+    assert pwm.hold == "hot water"
+
+    pwm.reset("test")
+    assert pwm.hold is None
+    assert pwm_lines(caplog) == ["pwm hold (hot water)", "pwm OFF (test)", "pwm hold ended"]
+
+    # No pulse has ended: a start is due at once when hot water stops
+    await update(pwm, clock, 1)
+    assert pwm.status == PWMStatus.ON
+
+
+async def test_a_reset_while_off_does_not_restart_the_off_phase(clock, caplog):
+    pwm = make_pwm()
+    await update(pwm, clock)
+    await update(pwm, clock, 900)  # the pulse ends
+    assert pwm.status == PWMStatus.OFF
+    await update(pwm, clock, 900, hot_water=True)  # the start is due, and held
+    assert pwm.hold == "hot water"
+    pwm.reset("test")
+    assert pwm.hold is None
+
+    # The off phase from the pulse end 900 s ago is over, so the start is due as soon as the duty is back
+    await update(pwm, clock, 1)
+    assert pwm.status == PWMStatus.ON
+    assert pwm_lines(caplog).count("pwm hold ended") == 1
+
+
+async def held_at_the_minimum_off_phase_in_unrestricted(pwm: PWM, clock: Clock) -> None:
+    """At N=2: a pulse at a duty of 0.5 (900 s on, 900 s off) ends; 180 s later UNRESTRICTED (off time 0) makes a start due, held by hot water."""
+    await update(pwm, clock)
+    await update(pwm, clock, 900)
+    assert pwm.status == PWMStatus.OFF
+
+    await update(pwm, clock, 180, hot_water=True, allow_unrestricted=True)
+    assert pwm.mode == ModulationMode.UNRESTRICTED
+    assert pwm.status == PWMStatus.OFF
+    assert pwm.hold == "hot water"
+
+
+async def test_a_held_start_survives_a_mode_change_while_the_new_duty_allows_a_pulse(clock, caplog):
+    pwm = make_pwm()
+    await held_at_the_minimum_off_phase_in_unrestricted(pwm, clock)
+
+    # Back in MINIMUM at 0.5, whose 900 s off time hasn't passed: the held start stays due and held
+    await update(pwm, clock, 10, hot_water=True)
+    assert pwm.mode == ModulationMode.MINIMUM
+    assert pwm.status == PWMStatus.OFF
+
+    await update(pwm, clock, 10)
+    assert pwm.status == PWMStatus.ON
+    assert pwm_lines(caplog) == ["pwm ON (2 cycles/h)", "pwm OFF", "pwm hold (hot water)", "pwm hold ended", "pwm ON (2 cycles/h)"]
+
+
+async def test_a_held_start_is_dropped_when_the_new_duty_is_below_the_minimum_pulse(clock, caplog):
+    pwm = make_pwm()
+    await held_at_the_minimum_off_phase_in_unrestricted(pwm, clock)
+
+    # Accepted: back in MINIMUM at a duty below the minimum pulse no start is due, so the hold ends while hot water still runs
+    await update(pwm, clock, 10, duty=0.0, hot_water=True)
+
+    assert pwm.mode == ModulationMode.MINIMUM
+    assert pwm.status == PWMStatus.OFF
+    assert pwm_lines(caplog)[-1] == "pwm hold ended"
 
 
 # The setpoint adjuster

@@ -21,7 +21,7 @@ from tests.test_pwm_cycles import Clock, make_pwm, setpoint_for, start_pulse, st
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
 from tests.test_pwm_hot_water import update as hot_water_update
 
-PWM_LINES = ("pwm ON", "pwm OFF", "pwm IDLE", "pwm hold")
+PWM_LINES = ("pwm ON", "pwm OFF", "pwm hold")
 
 
 @pytest.fixture
@@ -115,12 +115,14 @@ async def test_an_unrestricted_start_after_a_pulse_end_waits_for_the_minimum_off
     assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm OFF", "pwm ON (4 cycles/h)"]
 
 
-async def test_an_unrestricted_start_from_idle_is_at_once(clock):
+async def test_an_unrestricted_start_after_a_reset_waits_for_the_minimum_off_phase(clock):
     pwm = make_pwm()
     await start_pulse(pwm, clock, 0.5)
     pwm.reset()
-    assert pwm.status == PWMStatus.IDLE
+    assert pwm.status == PWMStatus.OFF
 
+    await step(pwm, clock, 0.5, 179, allow_unrestricted=True)
+    assert pwm.status == PWMStatus.OFF
     await step(pwm, clock, 0.5, 1, allow_unrestricted=True)
     assert pwm.status == PWMStatus.ON
     assert pwm.mode == ModulationMode.UNRESTRICTED
@@ -141,7 +143,7 @@ async def test_a_hot_water_hold_holds_an_unrestricted_start(clock, caplog):
     assert pwm_lines(caplog) == ["pwm ON (2 cycles/h)", "pwm OFF", "pwm hold (hot water)", "pwm hold ended", "pwm ON (2 cycles/h)"]
 
 
-async def test_a_hot_water_hold_holds_an_unrestricted_start_from_idle(clock):
+async def test_a_hot_water_hold_holds_an_unrestricted_start_before_the_first_pulse(clock):
     pwm = make_hot_water_pwm()
     await hot_water_update(pwm, clock, hot_water=True, allow_unrestricted=True)
     assert pwm.status == PWMStatus.OFF
@@ -279,12 +281,96 @@ async def test_the_mode_is_minimum_initially_and_after_a_reset(clock):
     assert pwm.state.mode == ModulationMode.MINIMUM
 
 
-async def test_the_mode_is_minimum_when_values_are_missing(clock):
+async def test_the_mode_is_computed_without_a_flow_temperature(clock):
     pwm = make_pwm()
-    await step(pwm, clock, 0.5, allow_unrestricted=True)
-    await step(pwm, clock, 0.5, 10, allow_unrestricted=True, flow=None)
-    assert pwm.status == PWMStatus.IDLE
+    await step(pwm, clock, 0.5, flow=None)
     assert pwm.mode == ModulationMode.MINIMUM
+
+    await step(pwm, clock, 0.5, 10, allow_unrestricted=True, flow=None)
+    assert pwm.mode == ModulationMode.UNRESTRICTED
+
+
+async def test_without_a_flow_temperature_unrestricted_gives_a_100_percent_pulse(clock, caplog):
+    pwm = make_pwm()  # N=4: a 100% period is 1800 s on, 0 s off
+
+    await step(pwm, clock, 0.5, allow_unrestricted=True, flow=None)
+    assert pwm.status == PWMStatus.ON
+    assert pwm.duty_cycle == (1800, 0)
+
+    # It rolls over as usual
+    await step(pwm, clock, 0.5, 1800, allow_unrestricted=True, flow=None)
+    await step(pwm, clock, 0.5, 10, allow_unrestricted=True, flow=None)
+    assert pwm.status == PWMStatus.ON
+    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)"]
+
+
+async def test_without_a_flow_temperature_minimum_starts_no_pulse_before_the_first_duty(clock):
+    pwm = make_pwm()
+
+    await step(pwm, clock, 0.5, flow=None)
+    await step(pwm, clock, 0.5, 600, flow=None)
+    assert pwm.status == PWMStatus.OFF
+    assert pwm.duty_cycle is None
+
+    # With the flow back the duty is computed; no pulse has ended, so the start is due at once
+    await step(pwm, clock, 0.5, 1)
+    assert pwm.status == PWMStatus.ON
+
+
+async def test_without_a_flow_temperature_minimum_starts_no_pulse_after_a_reset(clock):
+    pwm = make_pwm()  # N=4: a duty of 0.5 gives (450, 450)
+    await start_pulse(pwm, clock, 0.5)
+    assert pwm.duty_cycle == (450, 450)
+    pwm.reset()
+
+    # The reset cleared the duty: past the off phase the last duty would start a pulse, but there is none
+    await step(pwm, clock, 0.5, flow=None)
+    await step(pwm, clock, 0.5, 451, flow=None)
+    assert pwm.status == PWMStatus.OFF
+    assert pwm.duty_cycle is None
+
+    # With the flow back the duty is computed, and the off phase is over
+    await step(pwm, clock, 0.5, 1)
+    assert pwm.status == PWMStatus.ON
+
+
+async def test_a_missing_flow_through_unrestricted_then_minimum_then_back(clock):
+    pwm = make_pwm()  # N=4
+    await step(pwm, clock, 0.5, allow_unrestricted=True, flow=None)
+    assert (pwm.status, pwm.mode, pwm.duty_cycle) == (PWMStatus.ON, ModulationMode.UNRESTRICTED, (1800, 0))
+
+    # MINIMUM without a flow keeps the 100% duty and runs it on from the mode change at 100 s
+    await step(pwm, clock, 0.5, 100, flow=None)
+    assert pwm.mode == ModulationMode.MINIMUM
+    assert pwm.duty_cycle == (1800, 0)
+    assert pwm.status == PWMStatus.ON
+
+    # The flow returns: the duty is computed again; the period started at the mode change, 10 s ago
+    await step(pwm, clock, 0.5, 10)
+    assert pwm.duty_cycle == (450, 450)
+    assert pwm.status == PWMStatus.ON
+    await step(pwm, clock, 0.5, 439)  # 549 s: 449 s from the mode change
+    assert pwm.status == PWMStatus.ON
+    await step(pwm, clock, 0.5, 1)  # 450 s from the mode change
+    assert pwm.status == PWMStatus.OFF
+
+
+async def test_the_duty_rising_to_100_percent_in_an_off_phase_from_a_reset_keeps_the_180_s_minimum(clock):
+    pwm = make_pwm()  # N=4
+    await start_pulse(pwm, clock, 0.5)
+    clock.tick(10)
+    pwm.reset("test")
+
+    await step(pwm, clock, 0.5, 30)  # an off time of 450 s
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, 0.5, 60, allow_unrestricted=True)  # 90 s: 100%, off time 0
+    assert pwm.mode == ModulationMode.UNRESTRICTED
+    assert pwm.duty_cycle == (1800, 0)
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, 0.5, 89, allow_unrestricted=True)  # 179 s
+    assert pwm.status == PWMStatus.OFF
+    await step(pwm, clock, 0.5, 1, allow_unrestricted=True)  # 180 s
+    assert pwm.status == PWMStatus.ON
 
 
 # (j) Through the climate: forced PWM does not allow unrestricted modulation

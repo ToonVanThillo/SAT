@@ -1,6 +1,6 @@
 """Always-on PWM (overhaul plan step 6): in HEAT with a valve open the climate always runs PWM and decides from its status and mode.
 
-PWM OFF (and IDLE, until it is removed) requests heater OFF at the minimum setpoint of 10 °C, released once heater OFF is confirmed; ON
+PWM OFF requests heater OFF at the minimum setpoint of 10 °C, released once heater OFF is confirmed; ON
 with MINIMUM requests the effective minimum setpoint and the minimum max relative modulation; ON with UNRESTRICTED requests the calculated
 setpoint and the configured maximum. Unrestricted modulation needs setpoint management and no forced PWM. With the default inputs the
 calculated setpoint is 35.
@@ -157,18 +157,23 @@ class TestDecideAtTheEmsBoundary:
         assert climate.setpoint == 10
         assert RELEASED in timeline_info(caplog)
 
-    # (c) IDLE counts as OFF until it is removed: without a flow temperature PWM is IDLE and the heater goes off
+    # (c) Without a flow temperature PWM keeps running: a running pulse continues and the heater stays on
 
     @pytest.mark.parametrize(*entries(("unrestricted", {CONF_MINIMUM_SETPOINT: 30}, {})))
-    async def test_idle_without_a_flow_temperature_turns_the_heater_off(self, entry, climate, boiler_data, mqtt_mock, published, caplog):
-        await boiler_data(**IDLE | {"heatingoff": "off", "curflowtemp": None})
+    async def test_a_missing_flow_temperature_keeps_a_running_pulse(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
+        await boiler_data(**IDLE | {"heatingoff": "on"})
+        await run_loop(climate, mqtt_mock, published)
+        assert climate.pwm.status == PWMStatus.ON
 
-        calls = await run_loop(climate, mqtt_mock, published)
+        calls = await burn(hass, climate, boiler_data, mqtt_mock, published, freezer, curflowtemp=None)
 
-        assert climate.pwm.status == PWMStatus.IDLE
-        assert [call for call in calls if '"selflowtemp"' in call[1]] == [selflowtemp(0)]
-        assert heater_writes(calls) == [HEATER_OFF]
-        assert "(pwm off)" in last_cycle_line(caplog)
+        # The cycle ran without a flow temperature
+        assert coordinator._snapshot.boiler.reliable_flow_temperature is None
+
+        assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
+        assert heater_writes(calls) == []
+        assert climate.setpoint == 35.0
+        assert "(pwm on unrestricted)" in last_cycle_line(caplog)
 
     # (d) MINIMUM -> UNRESTRICTED during a burn: the setpoint and modulation change in place, the heater stays on
 

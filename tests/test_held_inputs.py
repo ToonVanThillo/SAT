@@ -699,6 +699,9 @@ async def test_a_flapping_sensor_never_resets_pwm_or_cuts_a_pulse(hass, climate,
     await start(21.0)
     assert climate.pwm.status == PWMStatus.ON
     pulses = pwm_lines(caplog, "pwm ON")
+    # The reset of the switch to HEAT
+    offs = pwm_lines(caplog, "pwm OFF")
+    assert offs == ["pwm OFF (hvac mode change)"]
 
     # Missing for a cycle or two every few cycles, while the pulse runs
     for good in (True, False, True, True, False, False, True, False, True, True, False, True):
@@ -709,8 +712,8 @@ async def test_a_flapping_sensor_never_resets_pwm_or_cuts_a_pulse(hass, climate,
         assert climate.pwm.status == PWMStatus.ON
         assert not set(result["writes"]) & set(OFF_WRITES)
 
-    assert pwm_lines(caplog, "pwm IDLE") == []
-    assert pwm_lines(caplog, "pwm OFF") == []
+    # No reset and no pulse end
+    assert pwm_lines(caplog, "pwm OFF") == offs
     assert pwm_lines(caplog, "pwm ON") == pulses
 
 
@@ -719,6 +722,7 @@ async def test_a_flapping_sensor_never_resets_pwm_or_cuts_a_pulse(hass, climate,
 async def test_a_hold_that_runs_out_resets_pwm_and_turns_the_heater_off(hass, climate, start, run, caplog):
     await start(21.0)
     assert climate.pwm.status == PWMStatus.ON
+    resets = len(pwm_lines(caplog, "pwm OFF ("))
     hass.states.async_set(INSIDE, "unavailable")
 
     for _ in range(2):
@@ -730,7 +734,7 @@ async def test_a_hold_that_runs_out_resets_pwm_and_turns_the_heater_off(hass, cl
     result = await run(100)
 
     assert "missing temperature: inside" in result["line"]
-    assert pwm_lines(caplog, "pwm IDLE") == ["pwm IDLE (missing temperature)"]
-    assert climate.pwm.status == PWMStatus.IDLE
+    assert pwm_lines(caplog, "pwm OFF (")[resets:] == ["pwm OFF (missing temperature)"]
+    assert climate.pwm.status == PWMStatus.OFF
     assert result["writes"] == OFF_WRITES
     assert "inside temperature still missing after 5 min, no longer held" in info(caplog)

@@ -15,7 +15,6 @@ from custom_components.sat.const import (
     CONF_SENSOR_MAX_VALUE_AGE,
     CONF_THERMAL_COMFORT,
     MINIMUM_SETPOINT,
-    PWMStatus,
 )
 from tests.conftest import TIMELINE, run_one_loop
 from tests.const import IDLE, with_data
@@ -55,6 +54,11 @@ def resets(caplog) -> int:
     return len([r for r in caplog.records if r.name == CLIMATE_LOGGER and r.getMessage().endswith("(Reset: True)")])
 
 
+# The PWM reset of the switch to HEAT in `steady`; the tests that set an HVAC mode afterwards switch to OFF, as setting the active mode
+# again changes nothing
+HEAT_SWITCH_RESET = ["pwm OFF (hvac mode change)"]
+
+
 def timeline(caplog, prefix: str) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == TIMELINE and r.getMessage().startswith(prefix)]
 
@@ -88,7 +92,8 @@ async def steady(hass, climate, boiler_data, freezer, caplog, target: float = 21
         assert climate.pid.previous_error == pytest.approx(1.0)
     assert climate.pid.last_error != climate.pid.previous_error
     assert climate.pid.derivative != 0
-    assert climate.pwm.status != PWMStatus.IDLE
+    # PWM runs: it computed a duty since the reset of the switch to HEAT
+    assert climate.pwm.duty_cycle is not None
 
     return kept(climate)
 
@@ -111,7 +116,7 @@ async def test_an_outside_change_during_an_inside_gap_leaves_the_pid_and_pwm_alo
 
     assert kept(climate) == before
     assert skips(caplog) == skipped + 1
-    assert timeline(caplog, "pwm IDLE") == []
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
 @pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
@@ -147,7 +152,7 @@ async def test_a_humidity_change_during_an_inside_gap_leaves_the_pid_and_pwm_alo
 
     assert kept(climate) == before
     assert skips(caplog) == skipped + 1
-    assert timeline(caplog, "pwm IDLE") == []
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
 @pytest.mark.parametrize(*with_data(FORCED | {CONF_ROOMS: [ROOM]}, FORCE_PWM))
@@ -164,7 +169,7 @@ async def test_an_area_climate_change_during_an_inside_gap_leaves_the_pid_and_pw
 
     assert kept(climate) == before
     assert skips(caplog) >= skipped + 1
-    assert timeline(caplog, "pwm IDLE") == []
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
 # The entry points that still reset the control state afterwards
@@ -185,7 +190,7 @@ async def test_a_target_change_during_an_inside_gap_skips_the_pid_reset_but_not_
     # reset_control_state is outside the guard: it resets the setpoint adjuster, not PWM
     assert climate.pwm.setpoint == MINIMUM_SETPOINT
     assert climate.pwm.state == before["pwm"]
-    assert timeline(caplog, "pwm IDLE") == []
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
 @pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
@@ -195,7 +200,7 @@ async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not
     skipped = skips(caplog)
     assert climate.pwm.setpoint != MINIMUM_SETPOINT
 
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
 
     pid_before = {key: value for key, value in before.items() if key not in ("pwm", "requested_setpoint")}
@@ -203,7 +208,7 @@ async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not
     assert skips(caplog) == skipped + 1
     # The control state reset and the PWM reset are outside the guard
     assert climate.pwm.setpoint == MINIMUM_SETPOINT
-    assert timeline(caplog, "pwm IDLE") == ["pwm IDLE (hvac mode change)"]
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET + ["pwm OFF (hvac mode change)"]
 
 
 # The target guard
@@ -272,7 +277,7 @@ async def test_a_target_change_resets_the_pid_without_a_derivative_kick_with_or_
     # No PWM reset on the target change or on return: the pulse runs on
     assert climate.pwm.state == pwm_after_change
     assert len(timeline(caplog, "pwm ")) == lines_before
-    assert timeline(caplog, "pwm IDLE") == []
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
 @pytest.mark.parametrize(*with_data(FORCED | {CONF_ROOMS: [ROOM]}, FORCE_PWM))
@@ -294,14 +299,14 @@ async def test_an_area_change_in_a_gap_defers_the_reset_and_leaves_a_running_pul
     assert climate.pid.last_error == climate.pid.previous_error != before["last_error"]
     # The area change doesn't reset the control state: the pulse runs on, PWM is never reset
     assert climate.pwm.state == before["pwm"]
-    assert timeline(caplog, "pwm IDLE") == []
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
 @pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
 async def test_an_hvac_mode_set_in_a_gap_defers_the_reset(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
     assert deferred(caplog) == []
 
@@ -314,14 +319,14 @@ async def test_an_hvac_mode_set_in_a_gap_defers_the_reset(hass, entry, climate, 
     assert climate.pid.last_error == pytest.approx(0.7)
     assert climate.pid.previous_error == pytest.approx(0.7)
     # The only PWM reset is the HVAC mode change's own; the deferred reset adds none
-    assert timeline(caplog, "pwm IDLE") == ["pwm IDLE (hvac mode change)"]
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET + ["pwm OFF (hvac mode change)"]
 
 
 @pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
 async def test_the_deferred_reset_runs_once(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
     freezer.tick(10)
     hass.states.async_set(INSIDE, "20.8")
     await hass.async_block_till_done()
@@ -380,7 +385,7 @@ async def test_when_the_first_call_after_the_gap_is_a_reset_the_reset_branch_run
 
     assert deferred(caplog) == []
     assert resets(caplog) == resets_before + 1
-    assert timeline(caplog, "pwm IDLE") == []
+    assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
     assert climate.pid.last_error == climate.pid.previous_error
 
     # The flag was cleared by that call
@@ -408,7 +413,7 @@ async def test_a_plain_gap_leaves_nothing_to_defer(hass, entry, climate, boiler_
 async def test_an_equal_error_defers_nothing_and_clears_the_flag(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
 
     # The sensor returns with the reading it had: the error equals the PID's last error
     freezer.tick(10)
@@ -437,7 +442,7 @@ async def test_a_missing_outside_temperature_does_not_set_the_flag(hass, entry, 
     skipped = skips(caplog)
 
     # A reset request that stops at the outside check: no PID work, no skip line, nothing pending
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
     assert skips(caplog) == skipped
 
@@ -454,7 +459,7 @@ async def test_a_missing_outside_temperature_does_not_set_the_flag(hass, entry, 
 async def test_a_missing_outside_temperature_does_not_clear_the_flag(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
 
     # Calls that stop at the outside check, with the flag pending
     hass.states.async_set(OUTSIDE, "unavailable")

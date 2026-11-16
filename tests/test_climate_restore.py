@@ -3,7 +3,7 @@ import json
 from typing import Any
 
 import pytest
-from homeassistant.components.climate import HVACMode
+from homeassistant.components.climate import HVACAction, HVACMode
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.restore_state import ExtraStoredData
@@ -247,6 +247,19 @@ async def test_hvac_mode_target_and_preset_come_from_the_old_state(hass, entry, 
     assert climate.hvac_mode == HVACMode.OFF
     assert climate.target_temperature == 19.0
     assert climate.preset_mode == "away"
+
+
+@pytest.mark.parametrize(*ROOMS_ENTRY)
+@pytest.mark.parametrize("restore", [(old_state("unavailable", temperature=19.0), None)], indirect=True)
+async def test_selecting_off_after_an_unavailable_restored_mode_switches_off(hass, entry, climate, restore):
+    # The restored mode reads as OFF, but it isn't OFF yet: the climate doesn't report the OFF action
+    assert climate.hvac_mode == HVACMode.OFF
+    assert climate.hvac_action != HVACAction.OFF
+
+    await climate.async_set_hvac_mode(HVACMode.OFF)
+
+    assert climate.hvac_mode == HVACMode.OFF
+    assert climate.hvac_action == HVACAction.OFF
 
 
 @pytest.mark.parametrize(*ROOMS_ENTRY)

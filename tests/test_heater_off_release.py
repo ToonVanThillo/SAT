@@ -14,6 +14,7 @@ from custom_components.sat.const import (
     CONF_MINIMUM_SETPOINT,
     CONF_RADIATORS,
     MINIMUM_PULSE_TIME,
+    PWMStatus,
 )
 from custom_components.sat.coordinator import DeviceState, SatDataUpdateCoordinator
 from tests.conftest import TIMELINE, advance, run_one_loop
@@ -262,7 +263,7 @@ async def test_stale_readback_does_not_confirm_heater_off(hass: HomeAssistant, e
 
     # The pulse runs past its minimum
     await advance(hass, freezer, MINIMUM_PULSE_TIME)
-    assert "pwm OFF" not in caplog.text
+    assert climate.pwm.status == PWMStatus.ON
 
     # Cycle N+1: heater OFF requested, the only read-back is the stale one from before cycle N; the lower target's duty of 0 ends the pulse
     caplog.clear()

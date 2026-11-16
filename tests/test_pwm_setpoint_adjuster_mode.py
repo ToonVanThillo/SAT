@@ -135,10 +135,24 @@ async def test_a_forced_value_is_kept_when_the_mode_turns_unrestricted_in_the_of
     assert (pwm.status, pwm.mode, pwm.setpoint) == (PWMStatus.OFF, ModulationMode.UNRESTRICTED, 60.0)
 
 
-async def test_the_force_branch_runs_in_the_idle_status_in_minimum_mode(clock):
+async def test_a_missing_flow_temperature_keeps_the_setpoint_adjuster_and_its_setpoint(clock):
+    pwm = make_hot_water_pwm()
+    burning = flame(active=True, latest=30)
+
+    await update(pwm, burning, False, flow=60.0)
+    assert pwm.setpoint == 57.0
+    clock.tick(30)
+    await update(pwm, burning, False, flow=None)
+    assert pwm.setpoint == 57.0
+    clock.tick(30)
+    await update(pwm, flame(active=False), False, flow=None)  # the force branch would give flow + 10
+    assert pwm.setpoint == 57.0
+
+
+async def test_the_force_branch_runs_before_the_first_pulse_in_minimum_mode(clock):
     pwm = make_hot_water_pwm()
 
-    # A duty of 0 starts no pulse: the first update moves PWM from IDLE to OFF, and the force branch runs in that same update
+    # A duty of 0 starts no pulse: PWM stays OFF, and the force branch runs in the first update
     await pwm.update(boiler(flow=60.0), cold(None), setpoint_for(0.0), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert (pwm.status, pwm.mode) == (PWMStatus.OFF, ModulationMode.MINIMUM)

@@ -61,9 +61,10 @@ modulation mode:
   starts.
 
 ## Off phase
-- Every off phase lasts at least 180 s, also when the duty has risen to 100%
-  meanwhile; only a rollover goes from one period to the next without an off
-  phase. Of the duty formula's off-times, only the 100% one is shorter.
+- An off phase follows only a pulse end, also one caused by a reset, and
+  lasts at least 180 s, also when the duty has risen to 100% meanwhile; only a
+  rollover goes from one period to the next without an off phase. Of the duty
+  formula's off-times, only the 100% one is shorter.
 - Before the first pulse since start, a start is due at once.
 - There is no limit on the number of pulses per hour: the period follows the
   duty, and the minimum pulse and minimum off phase bound short cycling.
@@ -113,16 +114,16 @@ maximum; this includes every OFF cycle.
   threshold, which only a legacy minimum can cause.
 - The relative modulation states are HEATER_OFF_REQUESTED, HOT_WATER, MINIMUM
   and UNRESTRICTED.
-- A reset logs "pwm OFF (reason)" once, on the first reset since PWM last
-  ran.
+- A reset logs "pwm OFF (reason)" every time, so once per control loop while
+  it lasts. A reset while OFF leaves a running off phase as it is.
 - A target change, also of an area, does not reset PWM: it only changes the
   calculated setpoint, and PWM adapts. An HVAC mode change resets PWM.
+  Selecting the HVAC mode that is already active changes nothing.
 
 ## Consumers
 - Flame health: the PWM rules (`PWM_SHORT`, 8 cycles/h) apply to pulses
   below 100% duty; the continuous rules (3 cycles/h) to 100% periods.
-- Dynamic minimum setpoint v1: its normal mode requires UNRESTRICTED instead
-  of PWM IDLE.
+- Dynamic minimum setpoint v1: its normal mode requires UNRESTRICTED.
 - Dynamic minimum setpoint v2: a control state reset (a thermostat target
   change or an HVAC mode change, not an area target change) resets the
   setpoint adjuster and the setpoint it gave. It adjusts only in MINIMUM
@@ -166,8 +167,7 @@ maximum; this includes every OFF cycle.
    cycles on backends where it limits hot water; dynamic minimum v1 requires
    UNRESTRICTED. Until step 9, unrestricted modulation is allowed unless
    "Force pulse width modulation" is on. The PWM gate, the overshoot enable
-   and the stabilisation disable are removed. Until step 8, the climate
-   treats PWM IDLE as OFF.
+   and the stabilisation disable are removed.
 7. The `pulse_width_modulation` service and PWM enable/disable are removed; a
    target change, also of an area, no longer resets PWM; an HVAC mode change
    still does; a control state reset resets the setpoint adjuster.

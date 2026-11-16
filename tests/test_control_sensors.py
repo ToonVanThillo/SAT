@@ -73,6 +73,15 @@ async def test_diagnostic_entities_are_disabled_by_default(hass, entry):
         assert hass.states.get(entity_id) is None, entity_id
 
 
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_pwm_status_sensor_shows_off_at_startup_and_offers_only_on_and_off(hass, entry):
+    state = hass.states.get("sensor.pwm_status")
+
+    assert state.state == "off"
+    assert state.attributes["options"] == ["on", "off"]
+
+
 @pytest.mark.parametrize(*ems_entry())
 async def test_synchro_sensors_are_disabled_by_default(hass, entry):
     items = [i for i in er.async_get(hass).entities.values() if i.entity_id.endswith("_synchro")]
@@ -315,7 +324,7 @@ async def test_pwm_duty_cycle_unknown_after_reset(hass, entry, climate, boiler_d
     assert value(hass, DUTY[0]) != STATE_UNKNOWN
 
     # An HVAC mode change resets the PWM, which signals the sensor
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
 
     assert climate.pwm.duty_cycle is None

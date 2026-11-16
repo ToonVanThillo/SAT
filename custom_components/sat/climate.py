@@ -150,7 +150,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self._sensors = []
         self._rooms: dict[str, float] | None = None
         self._setpoint = None
-        self._calculated_setpoint = None
+        self._calculated_setpoint: float | None = None
         self._last_boiler_temperature = None
         self._unreadable_entities: set[str] = set()
 
@@ -864,8 +864,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self._setpoint = MINIMUM_SETPOINT
             reason = "valves closed"
 
-        elif pwm_state.status != PWMStatus.ON:
-            # The PWM off phase; until IDLE is removed, IDLE counts as OFF
+        elif pwm_state.status == PWMStatus.OFF:
+            # The PWM off phase
             self._setpoint = MINIMUM_SETPOINT
             reason = "pwm off"
 
@@ -1185,7 +1185,10 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return await self.async_set_target_temperature(temperature)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode, cascade: bool = True) -> None:
-        """Set the heating/cooling mode for the devices and update the state."""
+        """Set the heating/cooling mode for the devices and update the state; selecting the HVAC mode that is already active changes nothing."""
+        if hvac_mode == self._hvac_mode:
+            return
+
         # Only allow the hvac mode to be set to heat or off
         if hvac_mode == HVACMode.HEAT:
             self._hvac_mode = HVACMode.HEAT

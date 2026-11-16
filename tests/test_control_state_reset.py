@@ -5,6 +5,7 @@ target change and an HVAC mode change reset the control state, which drops the a
 resets PWM, and the PWM sensors follow. Other PWM resets keep the adjuster. Of the services, only `reset_integral` is registered.
 """
 import logging
+from unittest.mock import patch
 
 import pytest
 from homeassistant.components.climate import HVACMode
@@ -197,31 +198,27 @@ async def test_a_pwm_reset_by_the_control_loop_keeps_the_setpoint_adjuster(hass,
     freezer.tick(MISSING_INPUT_GRACE + 1)
     await run_one_loop(hass, climate, caplog, len(caplog.records))
 
-    assert climate.pwm.status == PWMStatus.IDLE
+    assert timeline(caplog, "pwm OFF (")[-1] == "pwm OFF (missing temperature)"
+    assert climate.pwm.status == PWMStatus.OFF
     assert climate.pwm.setpoint == adjusted
 
 
 # An HVAC mode change
 
 @pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
-async def test_an_hvac_mode_change_while_idle_logs_no_pwm_line(hass, entry, climate, boiler_data, caplog):
-    assert climate.pwm.status == PWMStatus.IDLE
+async def test_an_hvac_mode_change_before_any_pulse_logs_its_reset(hass, entry, climate, boiler_data, caplog):
+    assert climate.hvac_mode == HVACMode.OFF
+    assert climate.pwm.status == PWMStatus.OFF
 
-    await climate.async_set_hvac_mode(HVACMode.OFF)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
     await hass.async_block_till_done()
 
-    assert timeline(caplog, "pwm ") == []
+    assert timeline(caplog, "pwm ") == ["pwm OFF (hvac mode change)"]
 
 
-@pytest.mark.parametrize(("hvac_mode", "signals", "after"), [
-    # HVAC mode OFF runs a control loop at once, which still signals the running pulse, before the reset
-    (HVACMode.OFF, [PWMStatus.ON, PWMStatus.IDLE], PWMStatus.IDLE),
-    # Setting HEAT again while heating resets PWM too; the next loop starts a new pulse
-    (HVACMode.HEAT, [PWMStatus.IDLE], PWMStatus.ON),
-], ids=["off", "heat"])
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
 @pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
-async def test_an_hvac_mode_change_resets_pwm_and_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog, hvac_mode, signals, after):
+async def test_an_hvac_mode_change_resets_pwm_and_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     assert climate.pwm.status == PWMStatus.ON
     assert climate.pwm.setpoint != MINIMUM_SETPOINT
@@ -234,16 +231,95 @@ async def test_an_hvac_mode_change_resets_pwm_and_the_setpoint_adjuster(hass, en
 
     async_dispatcher_connect(hass, SIGNAL_PWM_UPDATED.format(entry.entry_id), receive)
 
-    await climate.async_set_hvac_mode(hvac_mode)
+    mark = len(timeline(caplog, "pwm "))
+    await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
 
-    assert climate.pwm.status == PWMStatus.IDLE
+    # HVAC mode OFF runs a control loop at once, which still signals the running pulse, before the reset ends it
+    assert climate.pwm.status == PWMStatus.OFF
     assert climate.pwm.setpoint == MINIMUM_SETPOINT
-    assert timeline(caplog, "pwm IDLE") == ["pwm IDLE (hvac mode change)"]
-    assert received == signals
-    assert hass.states.get(STATUS).state == PWMStatus.IDLE.value
+    assert timeline(caplog, "pwm ")[mark:] == ["pwm OFF (hvac mode change)"]
+    assert received == [PWMStatus.ON, PWMStatus.OFF]
+    assert hass.states.get(STATUS).state == PWMStatus.OFF.value
 
-    # The loop the change scheduled
+    # The loop the change scheduled runs in HVAC mode OFF and leaves PWM alone
     await advance(hass, freezer, 11)
-    assert climate.pwm.status == after
-    assert hass.states.get(STATUS).state == after.value
+    assert climate.pwm.status == PWMStatus.OFF
+    assert hass.states.get(STATUS).state == PWMStatus.OFF.value
+
+
+async def heating_with_a_pulse(hass, climate, boiler_data, freezer, caplog) -> dict:
+    """Heating with a running pulse and an adjusted setpoint; returns what setting the active HVAC mode again must leave as it is."""
+    before = await steady(hass, climate, boiler_data, freezer, caplog)
+    assert before["pwm"].status == PWMStatus.ON
+    assert climate.pwm.setpoint != MINIMUM_SETPOINT
+
+    return before | {"setpoint": climate.pwm.setpoint, "pwm lines": len(timeline(caplog, "pwm "))}
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+async def test_setting_the_active_hvac_mode_again_changes_nothing(hass, entry, climate, boiler_data, freezer, caplog):
+    before = await heating_with_a_pulse(hass, climate, boiler_data, freezer, caplog)
+    received: list[PWMStatus] = []
+    async_dispatcher_connect(hass, SIGNAL_PWM_UPDATED.format(entry.entry_id), received.append)
+
+    with patch.object(climate, "_async_control_pid") as pid, patch.object(climate, "reset_control_state") as control_state, \
+            patch.object(climate, "async_write_ha_state") as write, patch.object(climate, "schedule_control_heating_loop") as schedule:
+        await climate.async_set_hvac_mode(HVACMode.HEAT)
+        await hass.async_block_till_done()
+
+    for spy in (pid, control_state, write, schedule):
+        spy.assert_not_called()
+    assert climate.pwm.state == before["pwm"]
+    assert climate.pwm.setpoint == before["setpoint"]
+    assert len(timeline(caplog, "pwm ")) == before["pwm lines"]
+    assert received == []
+    assert hass.states.get(STATUS).state == PWMStatus.ON.value
+
+
+@pytest.mark.parametrize("service", ["set_hvac_mode", "turn_on"])
+@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+async def test_the_climate_services_selecting_the_active_hvac_mode_change_nothing(hass, entry, climate, boiler_data, freezer, caplog, service):
+    before = await heating_with_a_pulse(hass, climate, boiler_data, freezer, caplog)
+
+    with patch.object(climate, "async_set_hvac_mode", wraps=climate.async_set_hvac_mode) as set_mode, \
+            patch.object(climate, "_async_control_pid") as pid, patch.object(climate, "schedule_control_heating_loop") as schedule:
+        data = {"entity_id": climate.entity_id} | ({"hvac_mode": HVACMode.HEAT} if service == "set_hvac_mode" else {})
+        await hass.services.async_call("climate", service, data, blocking=True)
+        await hass.async_block_till_done()
+
+    # Home Assistant passes the call on; the climate ignores it
+    set_mode.assert_awaited_once_with(HVACMode.HEAT)
+    pid.assert_not_called()
+    schedule.assert_not_called()
+    assert climate.hvac_mode == HVACMode.HEAT
+    assert climate.pwm.state == before["pwm"]
+    assert climate.pwm.setpoint == before["setpoint"]
+    assert len(timeline(caplog, "pwm ")) == before["pwm lines"]
+
+
+@pytest.mark.parametrize("service", ["turn_off", "set_hvac_mode"])
+@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+async def test_turning_off_while_already_off_changes_nothing(hass, entry, climate, boiler_data, caplog, service):
+    await boiler_data(**IDLE | {"heatingoff": "on"})
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_set_hvac_mode(HVACMode.OFF)
+    await hass.async_block_till_done()
+    assert climate.hvac_mode == HVACMode.OFF
+    lines = len(timeline(caplog, "pwm "))
+
+    data = {"entity_id": climate.entity_id} | ({"hvac_mode": HVACMode.OFF} if service == "set_hvac_mode" else {})
+    with patch.object(climate, "async_set_hvac_mode", wraps=climate.async_set_hvac_mode) as set_mode, \
+            patch.object(climate, "_async_control_pid") as pid, patch.object(climate, "reset_control_state") as control_state, \
+            patch.object(climate, "async_write_ha_state") as write, patch.object(climate, "schedule_control_heating_loop") as schedule, \
+            patch.object(climate.pwm, "reset") as reset:
+        await hass.services.async_call("climate", service, data, blocking=True)
+        await hass.async_block_till_done()
+
+    set_mode.assert_awaited_once_with(HVACMode.OFF)
+    for spy in (pid, control_state, write, schedule, reset):
+        spy.assert_not_called()
+    assert len(timeline(caplog, "pwm ")) == lines
+    assert climate.pwm.status == PWMStatus.OFF

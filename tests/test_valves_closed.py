@@ -14,6 +14,7 @@ from custom_components.sat.const import (
     CONF_MINIMUM_SETPOINT,
     CONF_RADIATORS,
     CONF_ROOMS,
+    MINIMUM_OFF_TIME,
     MINIMUM_SETPOINT,
     PWMStatus,
 )
@@ -152,7 +153,7 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
     assert desired.control_setpoint == MINIMUM_SETPOINT
     assert desired.heater_state == DeviceState.OFF
     assert climate.setpoint == 10
-    assert climate.pwm.status.name == "IDLE"
+    assert climate.pwm.status == PWMStatus.OFF
     assert climate.calculated_setpoint == calculated
     assert hass.states.get("sensor.calculated_setpoint_test").state == str(calculated)
     assert f"setpoint calc={calculated} (valves closed)" in cycle_lines(caplog)[-1]
@@ -179,28 +180,35 @@ async def test_closing_valves_ends_a_running_pulse_at_once(hass, entry, climate,
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
 
-    assert climate.pwm.status == PWMStatus.IDLE
-    assert timeline_info(caplog, "pwm IDLE") == ["pwm IDLE (valves closed)"]
+    # Every cycle with closed valves resets PWM and logs it
+    assert climate.pwm.status == PWMStatus.OFF
+    assert timeline_info(caplog, "pwm OFF (") == ["pwm OFF (valves closed)"] * 2
 
-    # Current behaviour, known bug: the reset leaves PWM IDLE, so the reopened valves start a pulse at once, also seconds after
-    # the previous pulse start (docs/known-issues.md, Control logic)
+    # The reopened valves wait for the off phase after the pulse that ended, by the reset (ON) or before it (OFF)
     caplog.clear()
     open_valves(hass)
+    await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
+    assert climate.pwm.status == PWMStatus.OFF
+    assert not timeline_info(caplog, "pwm ON")
+
+    assert climate.pwm.duty_cycle is not None
+    freezer.tick(max(climate.pwm.duty_cycle[1], MINIMUM_OFF_TIME))
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
     assert climate.pwm.status == PWMStatus.ON
     assert timeline_info(caplog, "pwm ON") == [f"pwm ON ({climate.pwm.cycles_per_hour} cycles/h)"]
 
 
 @pytest.mark.parametrize(*WITH_RADIATOR)
-async def test_closed_valves_with_idle_pwm_log_nothing(hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
+async def test_closed_valves_log_a_pwm_reset_every_cycle_also_without_a_pulse(hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     await prepare(hass, climate, boiler_data, heatingoff="on")
     close_valves(hass)
 
     await run_loop(climate, mqtt_mock, published)
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
 
-    # PWM was already IDLE: nothing is logged
-    assert not timeline_info(caplog, "pwm IDLE")
+    # No pulse ran, and each cycle still logs its reset
+    assert not timeline_info(caplog, "pwm ON")
+    assert timeline_info(caplog, "pwm OFF (valves closed)") == ["pwm OFF (valves closed)"] * 2
 
 
 # The debug cycle line
@@ -289,12 +297,13 @@ async def test_reopening_valves_requests_the_setpoint_again(hass, entry, climate
 
 
 @pytest.mark.parametrize(*FORCED_PWM)
-async def test_reopening_valves_starts_a_pulse_at_once(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
+async def test_reopening_valves_before_any_pulse_starts_a_pulse_at_once(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
     await boiler_data(**IDLE | {"heatingoff": "on"})
     close_valves(hass)
     await run_loop(climate, mqtt_mock, published)
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
-    assert climate.pwm.status == PWMStatus.IDLE
+    # The resets ended no pulse, as none ran: there is no off phase
+    assert climate.pwm.status == PWMStatus.OFF
 
     caplog.clear()
     open_valves(hass)
@@ -350,7 +359,7 @@ async def test_setpoint_and_heater_follow_the_captured_valves(hass, entry, clima
 @pytest.mark.parametrize(*FORCED_PWM)
 @pytest.mark.parametrize(("before", "during", "status", "setpoint"), [
     ("heating", "idle", PWMStatus.ON, 30),
-    ("idle", "heating", PWMStatus.IDLE, 10),
+    ("idle", "heating", PWMStatus.OFF, 10),
 ])
 async def test_pwm_follows_the_captured_valves(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, before, during, status, setpoint):
     await prepare(hass, climate, boiler_data, heatingoff="on")

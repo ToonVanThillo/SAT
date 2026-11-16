@@ -72,6 +72,7 @@ async def test_cold_setpoint_sends_zero_and_stops_heater(entry, climate, boiler_
 @pytest.mark.parametrize(*ems_entry())
 async def test_hvac_off_stops_an_enabled_heater_until_it_reads_back_off(entry, climate, boiler_data, mqtt_mock, published, freezer):
     await boiler_data(**IDLE | {"heatingoff": "off"})
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
 
     # Switching off stops the heater right away
     await climate.async_set_hvac_mode(HVACMode.OFF)

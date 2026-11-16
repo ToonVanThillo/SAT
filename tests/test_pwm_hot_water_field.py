@@ -121,7 +121,8 @@ async def test_hot_water_during_a_pulse_does_not_end_or_hold_it(hass, entry, cli
     await boiler_data(**OFF)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.ON
-    assert not timeline_lines(caplog, "pwm IDLE")
+    # The only OFF line is the reset of the switch to HEAT: no reset and no pulse end since
+    assert timeline_lines(caplog, "pwm OFF") == ["pwm OFF (hvac mode change)"]
     assert len(timeline_lines(caplog, "pwm ON")) == 1
 
 
@@ -307,8 +308,8 @@ async def test_the_timeline_shows_the_hold_sequence_of_the_field_scenario(hass, 
 
     assert info_lines(caplog) == [
         "flame on",
+        "pwm OFF (hvac mode change)",
         "pwm hold (hot water)",
-        "pwm OFF",
         "flame off after 30.0s, hot water (flag), not counted",
         "pwm hold (hot water delay)",
         "pwm hold ended",

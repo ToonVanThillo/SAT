@@ -11,7 +11,7 @@ from tests.test_pwm_cycles import Clock, make_pwm, start_pulse, step
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
 from tests.test_pwm_hot_water import update as hot_water_update
 
-PWM_LINES = ("pwm ON", "pwm OFF", "pwm IDLE", "pwm hold")
+PWM_LINES = ("pwm ON", "pwm OFF", "pwm hold")
 
 
 @pytest.fixture
