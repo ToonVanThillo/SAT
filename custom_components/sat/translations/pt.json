@@ -2,12 +2,14 @@
   "config": {
     "abort": {
       "already_configured": "O Gateway já está configurado.",
-      "reconfigure_successful": "O Gateway foi reconfigurado com sucesso.",
-      "unable_to_calibrate": "O processo de calibração encontrou um problema e não pôde ser concluído com sucesso. Por favor, assegure-se de que o seu sistema de aquecimento está a funcionar corretamente e que todos os sensores necessários estão ligados e a funcionar corretamente.\n\nSe continuar a ter problemas com a calibração, considere contactar-nos para obter mais assistência. Pedimos desculpa por qualquer inconveniente causado."
+      "reconfigure_successful": "O Gateway foi reconfigurado com sucesso."
     },
     "error": {
       "connection": "Não foi possível ligar ao gateway.",
-      "mqtt_component": "O componente MQTT não está disponível."
+      "mqtt_component": "O componente MQTT não está disponível.",
+      "minimum_setpoint_too_low": "O setpoint mínimo tem de estar acima de 28,2 °C.",
+      "calibration_failed": "A calibração falhou; introduza o setpoint mínimo manualmente.",
+      "calibration_too_low": "O setpoint mínimo calibrado é igual ou inferior a 28,2 °C; introduza o setpoint mínimo manualmente."
     },
     "progress": {
       "calibration": "A calibrar e a encontrar o valor de proteção contra overshoot...\n\nPor favor, aguarde enquanto otimizamos o seu sistema de aquecimento. Este processo pode demorar aproximadamente 20 minutos."
@@ -29,11 +31,10 @@
         "title": "Ganhos Automáticos"
       },
       "calibrate_system": {
-        "description": "Otimize o seu sistema de aquecimento determinando automaticamente os valores PID ótimos para a sua configuração. Ao selecionar Ganhos Automáticos, por favor note que o sistema passará por um processo de calibração que pode demorar aproximadamente 20 minutos a completar.\n\nGanhos Automáticos é recomendado para a maioria dos utilizadores, pois simplifica o processo de configuração e assegura desempenho ideal. No entanto, se estiver familiarizado com controlo PID e preferir definir os valores manualmente, pode optar por ignorar os Ganhos Automáticos.\n\nPor favor note que escolher ignorar os Ganhos Automáticos requer um bom entendimento de controlo PID e pode requerer ajustes manuais adicionais para alcançar desempenho ótimo.",
+        "description": "O SAT precisa do setpoint mínimo da sua caldeira: a temperatura de ida mais baixa que consegue manter com a modulação mínima (o valor de proteção contra overshoot). Calibre-o automaticamente, o que demora aproximadamente 20 minutos, ou introduza-o manualmente. Tem de estar acima de 28,2 °C. Os ganhos automáticos ou os valores PID manuais são escolhidos no passo seguinte.",
         "menu_options": {
           "calibrate": "Calibrar e determinar o valor de proteção contra overshoot (aprox. 20 min).",
-          "overshoot_protection": "Introduzir manualmente o valor de proteção contra overshoot.",
-          "pid_controller": "Introduzir manualmente os valores PID (não recomendado)."
+          "overshoot_protection": "Introduzir manualmente o valor de proteção contra overshoot."
         },
         "title": "Calibrar Sistema"
       },
@@ -41,7 +42,7 @@
         "description": "O processo de calibração foi concluído com sucesso.\n\nParabéns! O seu Termóstato Smart Autotune (SAT) foi calibrado para otimizar o desempenho de aquecimento do seu sistema. Durante o processo de calibração, o SAT analisou cuidadosamente as características de aquecimento e determinou o valor apropriado de proteção contra overshoot para assegurar controlo de temperatura preciso.\n\nValor de Proteção contra Overshoot: {minimum_setpoint} °C\n\nEste valor representa a quantidade máxima de overshoot permitida durante o processo de aquecimento. O SAT irá monitorizar ativamente e ajustar o aquecimento para prevenir overshoot excessivo, mantendo uma experiência de aquecimento confortável e eficiente na sua casa.\n\nPor favor note que o valor de proteção contra overshoot pode variar dependendo das características específicas do seu sistema de aquecimento e fatores ambientais. Foi afinado para fornecer desempenho ótimo com base nos resultados da calibração.",
         "menu_options": {
           "calibrate": "Repetir calibração",
-          "finish": "Continuar com a calibração atual"
+          "automatic_gains": "Continuar com a calibração atual"
         },
         "title": "Calibração Concluída"
       },
@@ -80,7 +81,10 @@
         "data": {
           "minimum_setpoint": "Valor"
         },
-        "description": "Ao fornecer o valor de proteção contra overshoot, o SAT ajustará os parâmetros de controlo em conformidade para manter um ambiente de aquecimento confortável e estável. Esta configuração manual permite-lhe afinar o sistema com base na sua configuração específica.\n\nNota: Se não tiver certeza sobre o valor de proteção contra overshoot ou não tiver realizado o processo de calibração, é recomendado cancelar a configuração e passar pelo processo de calibração para permitir que o SAT determine automaticamente o valor para desempenho ótimo.",
+        "data_description": {
+          "minimum_setpoint": "O setpoint mínimo em °C. Tem de estar acima de 28,2 °C."
+        },
+        "description": "Introduza o setpoint mínimo da sua caldeira: a temperatura de ida mais baixa que consegue manter com a modulação mínima (o valor de proteção contra overshoot). Tem de estar acima de 28,2 °C. Se não o souber, volte atrás e calibre, ou consulte o README para saber como o encontrar.",
         "title": "Proteção contra Overshoot"
       },
       "pid_controller": {
@@ -150,7 +154,7 @@
           "error_monitoring": "Ativar monitoramento de erros",
           "climate_valve_offset": "Offset da válvula do clima",
           "dynamic_minimum_setpoint": "Setpoint Mínimo Dinâmico (Experimental)",
-          "force_pulse_width_modulation": "Forçar Modulação por Largura de Pulso",
+          "allow_unrestricted_modulation": "Permitir modulação sem restrições",
           "maximum_consumption": "Consumo Máximo",
           "maximum_relative_modulation": "Modulação Relativa Máxima",
           "maximum_relative_modulation_floor": "Mínimo da modulação relativa máxima",
@@ -163,6 +167,7 @@
           "thermal_comfort": "Conforto Térmico"
         },
         "data_description": {
+          "allow_unrestricted_modulation": "Quando o setpoint calculado está acima do setpoint mínimo, a caldeira queima continuamente no setpoint calculado com modulação livre; quando desativado, funciona sempre no setpoint mínimo e com a modulação mínima, por impulsos quando é necessário menos calor.",
           "climate_valve_offset": "Offset para ajustar o grau de abertura da válvula do clima.",
           "dynamic_minimum_setpoint": "Ativa o ajuste dinâmico do setpoint com base na temperatura de retorno da caldeira, o que também ajuda a identificar se alguma válvula está fechada.",
           "maximum_consumption": "O consumo máximo de gás quando a caldeira está ativa.",

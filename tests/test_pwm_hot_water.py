@@ -9,7 +9,7 @@ import pytest
 from homeassistant.components.climate import HVACMode
 
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HOT_WATER_DELAY,
     CONF_MINIMUM_SETPOINT,
     MINIMUM_SETPOINT,
@@ -360,7 +360,7 @@ async def test_the_setpoint_adjuster_does_not_force_with_the_hot_water_flag_on(c
 # Through the climate loop on EMS-ESP
 
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_HOT_WATER_DELAY: 300}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_HOT_WATER_DELAY: 300}))
 async def test_pwm_waits_for_the_hot_water_delay_after_a_hot_water_burn(hass, entry, climate, boiler_data, freezer, caplog):
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**IDLE)

@@ -2,12 +2,14 @@
   "config": {
     "abort": {
       "already_configured": "La puerta de enlace ya está configurada.",
-      "reconfigure_successful": "La puerta de enlace ha sido reconfigurada.",
-      "unable_to_calibrate": "El proceso de calibración ha encontrado un problema y no se pudo completar con éxito. Por favor, asegúrese de que su sistema de calefacción está funcionando correctamente y que todos los sensores necesarios están conectados y funcionando correctamente.\n\nSi continúa experimentando problemas con la calibración, considere contactarnos para obtener más ayuda. Pedimos disculpas por cualquier inconveniente causado."
+      "reconfigure_successful": "La puerta de enlace ha sido reconfigurada."
     },
     "error": {
       "connection": "No se puede conectar a la puerta de enlace.",
-      "mqtt_component": "El componente MQTT no está disponible."
+      "mqtt_component": "El componente MQTT no está disponible.",
+      "minimum_setpoint_too_low": "El punto de ajuste mínimo debe estar por encima de 28,2 °C.",
+      "calibration_failed": "La calibración ha fallado; introduzca el punto de ajuste mínimo manualmente.",
+      "calibration_too_low": "El punto de ajuste mínimo calibrado es igual o inferior a 28,2 °C; introduzca el punto de ajuste mínimo manualmente."
     },
     "progress": {
       "calibration": "Calibrando y encontrando el valor de protección contra sobrecalentamiento...\n\nPor favor, espere mientras optimizamos su sistema de calefacción. Este proceso puede tomar aproximadamente 20 minutos."
@@ -29,11 +31,10 @@
         "title": "Ganancias Automáticas"
       },
       "calibrate_system": {
-        "description": "Optimice su sistema de calefacción determinando automáticamente los valores PID óptimos para su configuración. Al seleccionar Ganancias Automáticas, tenga en cuenta que el sistema pasará por un proceso de calibración que puede tardar aproximadamente 20 minutos en completarse.\n\nSe recomienda Ganancias Automáticas para la mayoría de los usuarios, ya que simplifica el proceso de configuración y asegura un rendimiento óptimo. Sin embargo, si está familiarizado con el control PID y prefiere configurar los valores manualmente, puede optar por omitir las Ganancias Automáticas.\n\nTenga en cuenta que elegir omitir las Ganancias Automáticas requiere un buen entendimiento del control PID y puede requerir ajustes manuales adicionales para lograr un rendimiento óptimo.",
+        "description": "SAT necesita el punto de ajuste mínimo de su caldera: la temperatura de impulsión más baja que puede mantener con la modulación mínima (el valor de protección contra sobrecalentamiento). Calíbrelo automáticamente, lo que tarda aproximadamente 20 minutos, o introdúzcalo manualmente. Debe estar por encima de 28,2 °C. Las ganancias automáticas o los valores PID manuales se eligen en el siguiente paso.",
         "menu_options": {
           "calibrate": "Calibrar y determinar su valor de protección contra sobrecalentamiento (aprox. 20 min).",
-          "overshoot_protection": "Introducir manualmente el valor de protección contra sobrecalentamiento.",
-          "pid_controller": "Introducir manualmente los valores PID (no recomendado)."
+          "overshoot_protection": "Introducir manualmente el valor de protección contra sobrecalentamiento."
         },
         "title": "Calibrar Sistema"
       },
@@ -41,7 +42,7 @@
         "description": "El proceso de calibración se ha completado con éxito.\n\n¡Felicitaciones! Su Smart Autotune Thermostat (SAT) ha sido calibrado para optimizar el rendimiento de calefacción de su sistema. Durante el proceso de calibración, SAT analizó cuidadosamente las características de calefacción y determinó el valor de protección contra sobrecalentamiento adecuado para asegurar un control preciso de la temperatura.\n\nValor de Protección contra Sobrecalentamiento: {minimum_setpoint} °C\n\nEste valor representa la cantidad máxima de sobrecalentamiento permitido durante el proceso de calefacción. SAT monitorizará activamente y ajustará la calefacción para prevenir un sobrecalentamiento excesivo, manteniendo una experiencia de calefacción cómoda y eficiente en su hogar.\n\nTenga en cuenta que el valor de protección contra sobrecalentamiento puede variar dependiendo de las características específicas de su sistema de calefacción y factores ambientales. Ha sido ajustado finamente para proporcionar un rendimiento óptimo basado en los resultados de calibración.",
         "menu_options": {
           "calibrate": "Reintentar calibración",
-          "finish": "Continuar con la calibración actual"
+          "automatic_gains": "Continuar con la calibración actual"
         },
         "title": "Calibración Completada"
       },
@@ -80,7 +81,10 @@
         "data": {
           "minimum_setpoint": "Valor"
         },
-        "description": "Al proporcionar el valor de protección contra sobrecalentamiento, SAT ajustará los parámetros de control en consecuencia para mantener un ambiente de calefacción estable y cómodo. Esta configuración manual le permite ajustar el sistema en base a su configuración específica.\n\nNota: Si no está seguro sobre el valor de protección contra sobrecalentamiento o no ha realizado el proceso de calibración, se recomienda cancelar la configuración y pasar por el proceso de calibración para permitir que SAT determine automáticamente el valor para un rendimiento óptimo.",
+        "data_description": {
+          "minimum_setpoint": "El punto de ajuste mínimo en °C. Debe estar por encima de 28,2 °C."
+        },
+        "description": "Introduzca el punto de ajuste mínimo de su caldera: la temperatura de impulsión más baja que puede mantener con la modulación mínima (el valor de protección contra sobrecalentamiento). Debe estar por encima de 28,2 °C. Si no lo conoce, vuelva atrás y calibre, o consulte el README para saber cómo encontrarlo.",
         "title": "Protección contra Sobrecalentamiento"
       },
       "pid_controller": {
@@ -150,7 +154,7 @@
           "error_monitoring": "Habilitar monitoreo de errores",
           "climate_valve_offset": "Compensación de la Válvula Climática",
           "dynamic_minimum_setpoint": "Punto de Ajuste Mínimo Dinámico (Experimental)",
-          "force_pulse_width_modulation": "Forzar Modulación de Ancho de Pulso",
+          "allow_unrestricted_modulation": "Permitir modulación sin restricciones",
           "maximum_consumption": "Consumo Máximo",
           "maximum_relative_modulation": "Modulación Relativa Máxima",
           "maximum_relative_modulation_floor": "Mínimo de la modulación relativa máxima",
@@ -163,6 +167,7 @@
           "thermal_comfort": "Confort Térmico"
         },
         "data_description": {
+          "allow_unrestricted_modulation": "Cuando el punto de ajuste calculado está por encima del punto de ajuste mínimo, la caldera quema de forma continua al punto de ajuste calculado con modulación libre; si está desactivado, funciona siempre al punto de ajuste mínimo y con la modulación mínima, por pulsos cuando se necesita menos calor.",
           "climate_valve_offset": "Compensación para ajustar el grado de apertura de la válvula climática.",
           "dynamic_minimum_setpoint": "Activa el ajuste dinámico del punto de consigna mínimo basado en la temperatura de retorno de la caldera, lo que también ayuda a identificar si alguna válvula está cerrada.",
           "maximum_consumption": "El consumo máximo de gas cuando la caldera está activa.",

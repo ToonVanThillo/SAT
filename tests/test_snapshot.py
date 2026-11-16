@@ -9,7 +9,7 @@ from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
 from custom_components.sat.boiler import BoilerState
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
     CONF_MODE,
     MINIMUM_SETPOINT,
@@ -113,9 +113,9 @@ async def test_relative_modulation_defaults_to_the_minimum_mode():
 
 # Control cycle
 
-def forced_pwm_entry(**data) -> tuple:
-    """Return the parametrization of the EMS entry with forced PWM, with the given data overrides."""
-    names, [(domains, entry_data, options, config)] = ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True})
+def unrestricted_disallowed_entry(**data) -> tuple:
+    """Return the parametrization of the EMS entry with unrestricted modulation disallowed, with the given data overrides."""
+    names, [(domains, entry_data, options, config)] = ems_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False})
     return names, [(domains, entry_data | data, options, config)]
 
 
@@ -160,7 +160,7 @@ class TestEmsCycle:
 
 # A minimum above COLD_SETPOINT (28.2) and a boiler temperature, so the first cycle starts a pulse at the minimum with heater ON
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*forced_pwm_entry(**{CONF_MODE: MODE_FAKE, CONF_MINIMUM_SETPOINT: 30}))
+@pytest.mark.parametrize(*unrestricted_disallowed_entry(**{CONF_MODE: MODE_FAKE, CONF_MINIMUM_SETPOINT: 30}))
 async def test_fake_modulation_follows_the_cycles_heater_request_not_the_setpoint_read_back(entry, climate, coordinator):
     coordinator.config = SatFakeConfig(True, supports_relative_modulation_management=True)
     await coordinator.async_set_boiler_temperature(40)
@@ -183,8 +183,8 @@ async def test_fake_modulation_follows_the_cycles_heater_request_not_the_setpoin
     assert written == [0]
 
 
-# A minimum above COLD_SETPOINT (28.2), so the forced pulse requests heater ON and the minimum max relative modulation
-@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}, {CONF_MINIMUM_SETPOINT: 30}))
+# A minimum above COLD_SETPOINT (28.2), so the MINIMUM pulse requests heater ON and the minimum max relative modulation
+@pytest.mark.parametrize(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}, {CONF_MINIMUM_SETPOINT: 30}))
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry")
 async def test_manufacturer_resolved_by_the_update_step_applies_in_the_same_cycle(hass, entry, climate, mqtt_mock, published):
     for key, value in {"slave_memberid_code": "4", "TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF"}.items():
@@ -195,13 +195,13 @@ async def test_manufacturer_resolved_by_the_update_step_applies_in_the_same_cycl
     with patch.object(ManufacturerFactory, "resolve_by_member_id", return_value=[Geminox()]):
         await run_loop(climate, mqtt_mock, published)
 
-    # Forced PWM without hot water would turn modulation down to 0, but a Geminox needs at least 10
+    # MINIMUM mode without hot water would turn modulation down to 0, but a Geminox needs at least 10
     assert ("otgw/set/gw1/command", "MM=10", 1, False) in published()
     assert ("otgw/set/gw1/command", "MM=0", 1, False) not in published()
 
 
-# A minimum above COLD_SETPOINT (28.2), so the forced pulse requests heater ON and the minimum max relative modulation
-@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}, {CONF_MINIMUM_SETPOINT: 30}))
+# A minimum above COLD_SETPOINT (28.2), so the MINIMUM pulse requests heater ON and the minimum max relative modulation
+@pytest.mark.parametrize(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}, {CONF_MINIMUM_SETPOINT: 30}))
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry", "no_publish_error")
 async def test_modulation_ignores_hot_water_arriving_mid_cycle(hass, entry, climate, coordinator, mqtt_mock, published):
     for key, value in {"TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF", "domestichotwater": "OFF"}.items():

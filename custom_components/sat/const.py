@@ -92,10 +92,9 @@ CONF_AUTOMATIC_GAINS_VALUE = "automatic_gains_value"
 CONF_DERIVATIVE_TIME_WEIGHT = "derivative_time_weight"
 CONF_CLIMATE_VALVE_OFFSET = "climate_valve_offset"
 CONF_SENSOR_MAX_VALUE_AGE = "sensor_max_value_age"
-CONF_OVERSHOOT_PROTECTION = "overshoot_protection"
 CONF_SYNC_CLIMATES_WITH_MODE = "sync_climates_with_mode"
 CONF_SYNC_CLIMATES_WITH_PRESET = "sync_climates_with_preset"
-CONF_FORCE_PULSE_WIDTH_MODULATION = "force_pulse_width_modulation"
+CONF_ALLOW_UNRESTRICTED_MODULATION = "allow_unrestricted_modulation"
 CONF_TARGET_TEMPERATURE_STEP = "target_temperature_step"
 CONF_INSIDE_SENSOR_ENTITY_ID = "inside_sensor_entity_id"
 CONF_OUTSIDE_SENSOR_ENTITY_ID = "outside_sensor_entity_id"
@@ -141,7 +140,6 @@ OPTIONS_DEFAULTS = {
     CONF_AUTOMATIC_GAINS: True,
     CONF_AUTOMATIC_GAINS_VALUE: 2.0,
     CONF_DERIVATIVE_TIME_WEIGHT: 2.5,
-    CONF_OVERSHOOT_PROTECTION: False,
     CONF_DYNAMIC_MINIMUM_SETPOINT: False,
     CONF_MINIMUM_SETPOINT_ADJUSTMENT_FACTOR: 0.2,
 
@@ -167,7 +165,7 @@ OPTIONS_DEFAULTS = {
     CONF_HOT_WATER_FLOW_TEMPERATURE: None,
     # Seconds after a hot water burn in which PWM starts no pulse
     CONF_HOT_WATER_DELAY: 0,
-    CONF_FORCE_PULSE_WIDTH_MODULATION: False,
+    CONF_ALLOW_UNRESTRICTED_MODULATION: True,
 
     CONF_MINIMUM_CONSUMPTION: 0,
     CONF_MAXIMUM_CONSUMPTION: 0,

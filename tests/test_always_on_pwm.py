@@ -2,7 +2,7 @@
 
 PWM OFF requests heater OFF at the minimum setpoint of 10 °C, released once heater OFF is confirmed; ON
 with MINIMUM requests the effective minimum setpoint and the minimum max relative modulation; ON with UNRESTRICTED requests the calculated
-setpoint and the configured maximum. Unrestricted modulation needs setpoint management and no forced PWM. With the default inputs the
+setpoint and the configured maximum. Unrestricted modulation needs setpoint management and the option allowing it. With the default inputs the
 calculated setpoint is 35.
 """
 import json
@@ -22,7 +22,7 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
 
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HOT_WATER_DELAY,
     CONF_MAXIMUM_RELATIVE_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
@@ -109,8 +109,8 @@ class TestDecideAtTheEmsBoundary:
     # (a) ON with MINIMUM: the minimum setpoint, and the minimum max relative modulation raised to the configured floor
 
     @pytest.mark.parametrize(*entries(
-        ("forced", {CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}),
-        ("forced-floor", {CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 20}),
+        ("unrestricted-disallowed", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}),
+        ("unrestricted-disallowed-floor", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 20}),
         ("calculated-below-minimum", {CONF_MINIMUM_SETPOINT: 42}, {}),
     ))
     async def test_on_minimum_requests_the_minimum_setpoint_and_minimum_modulation(self, entry, options, climate, boiler_data, mqtt_mock, published, caplog):
@@ -135,7 +135,7 @@ class TestDecideAtTheEmsBoundary:
 
     # (c) OFF: heater OFF at the 10 °C minimum (sent as 0 on EMS-ESP), released once heater OFF is confirmed
 
-    @pytest.mark.parametrize(*entries(("forced", {CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True})))
+    @pytest.mark.parametrize(*entries(("unrestricted-disallowed", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False})))
     async def test_the_off_phase_turns_the_heater_off_then_releases(self, hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
         await boiler_data(**IDLE | {"heatingoff": "on"})
         await run_loop(climate, mqtt_mock, published)
@@ -260,7 +260,7 @@ class TestDecideAtTheEmsBoundary:
     # A hot water draw during a MINIMUM pulse, on the climate side: on EMS-ESP no heater OFF is published, the setpoint stays the minimum of
     # 30 and the relative modulation state stays MINIMUM. The draws fall within the minimum pulse, so PWM's own pulse handling isn't tested
 
-    @pytest.mark.parametrize(*entries(("forced", {CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_HOT_WATER_DELAY: 300})))
+    @pytest.mark.parametrize(*entries(("unrestricted-disallowed", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_HOT_WATER_DELAY: 300})))
     async def test_a_hot_water_draw_does_not_interrupt_a_minimum_pulse(self, hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
         await boiler_data(**IDLE | {"heatingoff": "on"})
         await run_loop(climate, mqtt_mock, published)
@@ -302,7 +302,7 @@ class TestDecideAtTheEmsBoundary:
     # The PWM modulation mode reaches dynamic minimum setpoint v1: the cycle passes it to `MinimumSetpoint.calculate`
 
     @pytest.mark.parametrize(*entries(
-        ("minimum", {CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}),
+        ("minimum", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}),
         ("unrestricted", {CONF_MINIMUM_SETPOINT: 30}, {}),
     ))
     async def test_the_pwm_mode_reaches_dynamic_minimum_v1(self, entry, options, climate, boiler_data, mqtt_mock, published):
@@ -311,7 +311,7 @@ class TestDecideAtTheEmsBoundary:
         with patch.object(climate.minimum_setpoint, "calculate", wraps=climate.minimum_setpoint.calculate) as calculate:
             await run_loop(climate, mqtt_mock, published)
 
-        expected = ModulationMode.MINIMUM if options.get(CONF_FORCE_PULSE_WIDTH_MODULATION) else ModulationMode.UNRESTRICTED
+        expected = ModulationMode.UNRESTRICTED if options.get(CONF_ALLOW_UNRESTRICTED_MODULATION, True) else ModulationMode.MINIMUM
         assert climate.pwm.mode == expected
         calculate.assert_called_once()
         assert calculate.call_args.args[1] == expected
@@ -319,7 +319,7 @@ class TestDecideAtTheEmsBoundary:
     # (h) The relative modulation state in the diagnostics download
 
     @pytest.mark.parametrize(*entries(
-        ("minimum", {CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}),
+        ("minimum", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}),
         ("unrestricted", {CONF_MINIMUM_SETPOINT: 30}, {}),
     ))
     @pytest.mark.parametrize("read_back_5", [False, True], ids=["live", "read-back-5"])
@@ -333,15 +333,15 @@ class TestDecideAtTheEmsBoundary:
         control = (await get_diagnostics_for_config_entry(hass, hass_client, entry))["control"]
 
         # The diagnostics show the last cycle's decision, which a later read-back doesn't change
-        forced = bool(options.get(CONF_FORCE_PULSE_WIDTH_MODULATION))
-        expected = ("MINIMUM", 0) if forced else ("UNRESTRICTED", 100)
+        disallowed = not options.get(CONF_ALLOW_UNRESTRICTED_MODULATION, True)
+        expected = ("MINIMUM", 0) if disallowed else ("UNRESTRICTED", 100)
         assert (control["relative_modulation_state"], control["relative_modulation_value"]) == expected
 
     # A MINIMUM pulse through its off phase: EMS-ESP's `burnmaxpower` doesn't limit hot water, so the heater OFF request doesn't raise it
 
     @pytest.mark.parametrize(*entries(
-        ("forced", {CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}),
-        ("forced-floor", {CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 20}),
+        ("unrestricted-disallowed", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}),
+        ("unrestricted-disallowed-floor", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 20}),
     ))
     async def test_a_minimum_pulse_never_publishes_the_maximum_modulation(self, hass, entry, options, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
         await boiler_data(**IDLE | {"heatingoff": "on"})
@@ -374,17 +374,17 @@ class TestDecideAtTheEmsBoundary:
 
 
 # (h) HOT_WATER and HEATER_OFF_REQUESTED: EMS-ESP's max relative modulation doesn't limit hot water, so OpenTherm over MQTT shows them,
-# and otherwise the mode. A minimum at or below COLD_SETPOINT (28.2) makes the forced pulse request heater OFF.
+# and otherwise the mode. A minimum at or below COLD_SETPOINT (28.2) makes the MINIMUM pulse request heater OFF.
 
-def otgw_forced(minimum: float, hot_water: str, expected: tuple[str, int], name: str) -> Any:
-    return pytest.param(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}, {CONF_MINIMUM_SETPOINT: minimum})[1][0], hot_water, expected, id=name)
+def otgw_disallowed(minimum: float, hot_water: str, expected: tuple[str, int], name: str) -> Any:
+    return pytest.param(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}, {CONF_MINIMUM_SETPOINT: minimum})[1][0], hot_water, expected, id=name)
 
 
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry")
 @pytest.mark.parametrize(otgw_entry()[0] + ", hot_water, expected", [
-    otgw_forced(30, "ON", ("HOT_WATER", 100), "hot-water"),
-    otgw_forced(20, "OFF", ("HEATER_OFF_REQUESTED", 100), "heater-off"),
-    otgw_forced(30, "OFF", ("MINIMUM", 0), "minimum"),
+    otgw_disallowed(30, "ON", ("HOT_WATER", 100), "hot-water"),
+    otgw_disallowed(20, "OFF", ("HEATER_OFF_REQUESTED", 100), "heater-off"),
+    otgw_disallowed(30, "OFF", ("MINIMUM", 0), "minimum"),
 ])
 async def test_diagnostics_show_the_hot_water_state(hass, hass_client, entry, climate, mqtt_mock, published, hot_water, expected):
     for key, value in {"TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF", "domestichotwater": hot_water}.items():
@@ -415,7 +415,7 @@ async def otgw_cycle(hass: HomeAssistant, climate: SatClimate, mqtt_mock, publis
     return [payload for topic, payload, *_ in calls if topic == OTGW_COMMAND]
 
 
-@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}, {CONF_MINIMUM_SETPOINT: 30}))
+@pytest.mark.parametrize(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}, {CONF_MINIMUM_SETPOINT: 30}))
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry")
 async def test_opentherm_requests_the_maximum_while_off_and_the_minimum_with_the_heater_on(hass, entry, climate, mqtt_mock, published, freezer, caplog):
     await otgw_values(hass, TSet="40", Tboiler="40.5", Tret="35", flame="OFF", centralheating="OFF", domestichotwater="OFF")

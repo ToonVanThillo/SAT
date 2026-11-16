@@ -6,7 +6,7 @@ from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
 from custom_components.sat.channels import Quantity
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MANUFACTURER,
     CONF_MQTT_TOPIC,
 )
@@ -153,12 +153,12 @@ async def test_publish_failure_in_the_loop_is_swallowed(entry, climate, mqtt_moc
 
 
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*otgw_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_hot_water_keeps_modulation_at_maximum_with_pwm(hass, entry, climate, mqtt_mock, published):
     for key, payload in {"TSet": "40", "Tboiler": "40.5", "Tret": "35", "flame": "OFF", "centralheating": "OFF", "domestichotwater": "ON"}.items():
         await feed(hass, key, payload)
 
-    # Forced PWM without hot water would turn modulation down to 0
+    # MINIMUM mode without hot water would turn modulation down to 0
     commands = [c[1] for c in await run_loop(climate, mqtt_mock, published) if c[0] == COMMAND_TOPIC]
     assert "MM=100" in commands
     assert "MM=0" not in commands

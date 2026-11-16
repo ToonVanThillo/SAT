@@ -185,14 +185,14 @@ For more information about which other entities are available for OpenTherm plea
 > [!TIP]
 > Look at the Heating Mode setting in General Tab for further customization.
 
-5. Calibrate System: Optimize your heating system by automatically determining the optimal PID values for your setup. When selecting Automatic Gains, please note that the system will go through a calibration process that may take approximately 20 minutes to complete.
+5. Calibrate System: SAT needs your boiler's minimum setpoint, the overshoot protection value. Calibrate it automatically, which takes approximately 20 minutes, or enter it manually.
 
 > [!NOTE]
 > If system calibration fails or you prefer to manually find the Overshoot Protection Value, please look at this [discussion](https://github.com/Alexwijn/SAT/discussions/36).
 
-If you already know this value, then use the "Manually enter the overshoot protection value" option and fill the value.
+If you already know this value, then use the "Manually enter the overshoot protection value" option and fill the value. A minimum setpoint is required and must be above 28.2 °C; a failed calibration or a lower result shows the manual entry with an error.
 
-Automatic Gains are recommended for most users as it simplifies the setup process and ensures optimal performance. However, if you're familiar with PID control and prefer to manually set the values, you can choose to skip Automatic Gains.
+Automatic Gains are recommended for most users as it simplifies the setup process and ensures optimal performance. However, if you're familiar with PID control and prefer to manually set the values, you can switch Automatic Gains off in the step after the minimum setpoint.
 
 Please note that choosing to skip Automatic Gains requires a good understanding of PID control and may require additional manual adjustments to achieve optimal performance.
 
@@ -294,6 +294,8 @@ Predefined temperature settings for different scenarios or activities.
 
 *Maximum Relative Modulation*: The user is able to control the maximum relative modulation that the boiler will operate.
 
+*Allow Unrestricted Modulation*: On by default. When the calculated setpoint is above the minimum setpoint, the boiler burns continuously at the calculated setpoint with free modulation; when off, it always runs at the minimum setpoint and minimum modulation, pulsing when less heat is needed.
+
 ---
 
 # Terminology
@@ -302,12 +304,12 @@ Predefined temperature settings for different scenarios or activities.
 *Gains*: SAT offers two ways of tuning the PID gains - manual and automatic.
 
 - Manual tuning: You can fill the Proportional, Integral, and Derivative fields in the General tab with your values.
-- Automatic Gains ( Recommended ): This option is enabled by default when the Overshoot protection value is present (During initial configuration). Automatic gains dynamically change the kP, kI, and kD values based on the heating curve value. So, based on the outside temperature, the gains change from mild to aggressive without intervention.
+- Automatic Gains ( Recommended ): This option is enabled by default. Automatic gains dynamically change the kP, kI, and kD values based on the heating curve value. So, based on the outside temperature, the gains change from mild to aggressive without intervention.
 
-*Overshoot Protection*: This feature should be enabled when the minimum boiler capacity is greater than the control setpoint calculated by SAT. If the boiler overshoots the control setpoint, it may cycle, shortening the life of the burner. The solution is to adjust the boiler's on/off times to maintain the temperature at the setpoint while minimizing cycling.
+*Overshoot Protection*: When the minimum boiler capacity is greater than the heat SAT calculates, the boiler overshoots the control setpoint and may cycle, shortening the life of the burner. SAT prevents this by switching the boiler on and off at its minimum setpoint, the overshoot protection value, which the configuration requires.
 
 *Overshoot Protection Value (OPV) Calculation*:
-The OPV is a crucial value that determines the boiler's on/off times when the Overshoot Protection feature is present (During initial configuration).
+The OPV is a crucial value: SAT switches the boiler on and off at it. The configuration requires it for boilers with setpoint management.
 
 *Automatic Calculation*: To calculate the OPV automatically, choose the "Calibrate and determine your overshoot protection value (approx. 20 min)" option during the initial configuration. SAT will then send the MM=0 and CS=75 commands, attempting to find the highest flow water temperature the boiler can produce while running at 0% modulation. This process takes at least 20 minutes. Once the OPV calculation is complete, SAT will resume normal operation and send a completion notification. The calculated value is stored in the integration's configuration as its minimum setpoint (you can change it later with Reconfigure, under the manual overshoot protection value) and is used to determine the boiler's on/off times in the low-load control algorithm. It is also shown in the diagnostics download and, with the dynamic minimum setpoint off, by the Minimum Setpoint diagnostic sensor (disabled by default). If SAT detects that the boiler doesn't respect the 0% Max Modulation command, it will automatically change the calibration algorithm to a more sophisticated one to perform the calibration of the system.
 

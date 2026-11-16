@@ -20,7 +20,7 @@ from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 from custom_components.sat.channels import DesiredState, Quantity
 from custom_components.sat.const import (
     CLIMATE,
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HOT_WATER_BURNER_POWER,
     CONF_HOT_WATER_FLOW_TEMPERATURE,
     CONF_MAXIMUM_RELATIVE_MODULATION,
@@ -221,7 +221,7 @@ async def test_restored_values_are_not_signals(hass_storage, hw, boiler_data, fr
 
 
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_a_restored_hot_water_flag_is_not_hot_water_until_it_is_live(hass, entry, boiler_data, freezer, caplog):
     caplog.set_level(logging.INFO, logger=TIMELINE)
 

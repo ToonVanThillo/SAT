@@ -2,12 +2,14 @@
   "config": {
     "abort": {
       "already_configured": "Gateway is al geconfigureerd.",
-      "reconfigure_successful": "Gateway is opnieuw geconfigureerd.",
-      "unable_to_calibrate": "Het kalibratieproces is op een probleem gestuit en kon niet succesvol worden voltooid. Zorg ervoor dat uw verwarmingssysteem correct functioneert en dat alle vereiste sensoren zijn aangesloten en correct werken.\n\nAls u problemen blijft ondervinden met de kalibratie, overweeg dan om contact met ons op te nemen voor verdere hulp. Onze excuses voor het ongemak."
+      "reconfigure_successful": "Gateway is opnieuw geconfigureerd."
     },
     "error": {
       "connection": "Kan geen verbinding maken met de gateway.",
-      "mqtt_component": "Het MQTT-component is niet beschikbaar."
+      "mqtt_component": "Het MQTT-component is niet beschikbaar.",
+      "minimum_setpoint_too_low": "Het minimale setpoint moet boven 28,2 °C liggen.",
+      "calibration_failed": "Kalibratie mislukt; voer het minimale setpoint handmatig in.",
+      "calibration_too_low": "Het gekalibreerde minimale setpoint ligt op of onder 28,2 °C; voer het minimale setpoint handmatig in."
     },
     "progress": {
       "calibration": "Kalibreren en de waarde van de overshootbeveiliging vinden...\n\nEven geduld a.u.b. terwijl wij uw verwarmingssysteem optimaliseren. Dit proces kan ongeveer 20 minuten duren."
@@ -29,11 +31,10 @@
         "title": "Automatische Versterkingen"
       },
       "calibrate_system": {
-        "description": "Optimaliseer uw verwarmingssysteem door automatisch de optimale PID-waarden voor uw opstelling te bepalen. Let op dat het systeem bij het selecteren van Automatische Versterkingen een kalibratieproces zal ondergaan dat ongeveer 20 minuten kan duren.\n\nAutomatische Versterkingen worden aanbevolen voor de meeste gebruikers omdat het het instelproces vereenvoudigt en optimale prestaties verzekert. Echter, als u bekend bent met PID-regeling en de voorkeur geeft aan het handmatig instellen van de waarden, kunt u ervoor kiezen om Automatische Versterkingen over te slaan.\n\nLet op dat het kiezen om Automatische Versterkingen over te slaan een goede kennis van PID-regeling vereist en mogelijk extra handmatige aanpassingen nodig heeft om optimale prestaties te bereiken.",
+        "description": "SAT heeft het minimale setpoint van uw ketel nodig: de laagste aanvoertemperatuur die hij bij minimale modulatie kan vasthouden (de overshoot-beveiligingswaarde). Kalibreer het automatisch, wat ongeveer 20 minuten duurt, of voer het handmatig in. Het moet boven 28,2 °C liggen. Automatische versterkingen of handmatige PID-waarden kiest u in de volgende stap.",
         "menu_options": {
           "calibrate": "Kalibreer en bepaal uw overshoot-beveiligingswaarde (ong. 20 min).",
-          "overshoot_protection": "Voer handmatig de overshoot-beveiligingswaarde in.",
-          "pid_controller": "Voer handmatig PID-waarden in (niet aanbevolen)."
+          "overshoot_protection": "Voer handmatig de overshoot-beveiligingswaarde in."
         },
         "title": "Systeem Kalibreren"
       },
@@ -41,7 +42,7 @@
         "description": "Het kalibratieproces is succesvol voltooid.\n\nGefeliciteerd! Uw Slimme Autotune Thermostaat (SAT) is gekalibreerd om de verwarmingsprestaties van uw systeem te optimaliseren. Tijdens het kalibratieproces heeft SAT zorgvuldig de verwarmingskenmerken geanalyseerd en de geschikte overshoot-beveiligingswaarde bepaald om nauwkeurige temperatuurregeling te verzekeren.\n\nOvershoot-beveiligingswaarde: {minimum_setpoint} °C\n\nDeze waarde vertegenwoordigt de maximale hoeveelheid overshoot die is toegestaan tijdens het verwarmingsproces. SAT zal actief de verwarming monitoren en aanpassen om overmatig overshoot te voorkomen, en zo een comfortabele en efficiënte verwarmingservaring in uw huis te handhaven.\n\nLet op dat de overshoot-beveiligingswaarde kan variëren afhankelijk van de specifieke kenmerken van uw verwarmingssysteem en omgevingsfactoren. Het is fijn afgestemd om optimale prestaties te bieden op basis van de kalibratieresultaten.",
         "menu_options": {
           "calibrate": "Kalibratie opnieuw proberen",
-          "finish": "Doorgaan met huidige kalibratie"
+          "automatic_gains": "Doorgaan met huidige kalibratie"
         },
         "title": "Kalibratie Voltooid"
       },
@@ -80,7 +81,10 @@
         "data": {
           "minimum_setpoint": "Waarde"
         },
-        "description": "Door het verstrekken van de overshoot-beveiligingswaarde zal SAT de regelparameters dienovereenkomstig aanpassen om een stabiele en comfortabele verwarmingsomgeving te behouden. Deze handmatige configuratie stelt u in staat het systeem fijn af te stemmen op basis van uw specifieke opstelling.\n\nLet op: Als u niet zeker bent over de overshoot-beveiligingswaarde of het kalibratieproces niet heeft uitgevoerd, wordt aanbevolen de configuratie te annuleren en het kalibratieproces te doorlopen zodat SAT automatisch de waarde voor optimale prestaties kan bepalen.",
+        "data_description": {
+          "minimum_setpoint": "Het minimale setpoint in °C. Moet boven 28,2 °C liggen."
+        },
+        "description": "Voer het minimale setpoint van uw ketel in: de laagste aanvoertemperatuur die hij bij minimale modulatie kan vasthouden (de overshoot-beveiligingswaarde). Het moet boven 28,2 °C liggen. Als u het niet weet, ga dan terug en kalibreer, of lees in de README hoe u het kunt vinden.",
         "title": "Overshoot-beveiliging"
       },
       "pid_controller": {
@@ -150,7 +154,7 @@
           "error_monitoring": "Foutbewaking inschakelen",
           "climate_valve_offset": "Offset van Klimaatklep",
           "dynamic_minimum_setpoint": "Dynamisch Minimaal Setpoint (Experimenteel)",
-          "force_pulse_width_modulation": "Dwing Pulsbreedtemodulatie af",
+          "allow_unrestricted_modulation": "Onbeperkte modulatie toestaan",
           "maximum_consumption": "Maximaal Verbruik",
           "maximum_relative_modulation": "Maximale Relatieve Modulatie",
           "maximum_relative_modulation_floor": "Ondergrens maximale relatieve modulatie",
@@ -163,6 +167,7 @@
           "thermal_comfort": "Thermisch Comfort"
         },
         "data_description": {
+          "allow_unrestricted_modulation": "Als het berekende setpoint boven het minimale setpoint ligt, brandt de ketel continu op het berekende setpoint met vrije modulatie; indien uitgeschakeld, draait hij altijd op het minimale setpoint en met minimale modulatie, en pulseert hij wanneer er minder warmte nodig is.",
           "climate_valve_offset": "Offset om de openingsgraad van de klimaatklep aan te passen.",
           "dynamic_minimum_setpoint": "Activeert de dynamische aanpassing van de minimale instelwaarde op basis van de retourtemperatuur van de ketel, wat ook helpt te identificeren of er kleppen gesloten zijn.",
           "maximum_consumption": "Het maximale gasverbruik wanneer de ketel actief is.",

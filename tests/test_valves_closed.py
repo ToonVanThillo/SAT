@@ -10,7 +10,7 @@ from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 from custom_components.sat.channels import RELEASE, ChannelStatus, Quantity
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
     CONF_RADIATORS,
     CONF_ROOMS,
@@ -39,8 +39,8 @@ ROOM = "climate.room"
 HEATER_ON = message('{"cmd": "heatingoff", "value": "off"}')
 REQUESTED_AGAIN = "control setpoint requested again"
 WITH_RADIATOR = with_data({CONF_RADIATORS: [RADIATOR]})
-# A minimum setpoint of 30 (above COLD_SETPOINT, 28.2, so the PWM ON phase requests heater ON) with forced PWM: the first open-valve cycle starts a pulse at once
-FORCED_PWM = with_data({CONF_RADIATORS: [RADIATOR], CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True})
+# A minimum setpoint of 30 (above COLD_SETPOINT, 28.2, so the PWM ON phase requests heater ON) with unrestricted modulation disallowed: the first open-valve cycle starts a pulse at once
+UNRESTRICTED_DISALLOWED = with_data({CONF_RADIATORS: [RADIATOR], CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False})
 
 
 def radiator(hvac_action: str) -> dict:
@@ -96,7 +96,7 @@ async def test_without_radiators_the_valves_count_as_open(hass, entry, climate, 
     assert not timeline_info(caplog, "valves closed")
 
 
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_without_radiators_pwm_is_updated_normally(entry, climate, boiler_data, mqtt_mock, published, caplog):
     await boiler_data(**IDLE)
 
@@ -135,7 +135,7 @@ def entry_variants(extra_data: list[dict], options: list[dict]) -> tuple[str, li
 
 CLOSED_ENTRIES = entry_variants(
     [{CONF_RADIATORS: [RADIATOR]}, {CONF_RADIATORS: [RADIATOR], CONF_MINIMUM_SETPOINT: 30}],
-    [{}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}],
+    [{}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}],
 )
 
 
@@ -161,7 +161,7 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
 
 # PWM when the valves close
 
-@pytest.mark.parametrize(*FORCED_PWM)
+@pytest.mark.parametrize(*UNRESTRICTED_DISALLOWED)
 @pytest.mark.parametrize("phase", ["ON", "OFF"])
 async def test_closing_valves_ends_a_running_pulse_at_once(hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog, phase):
     await prepare(hass, climate, boiler_data, heatingoff="on")
@@ -296,7 +296,7 @@ async def test_reopening_valves_requests_the_setpoint_again(hass, entry, climate
     assert "valves=open" in cycle_lines(caplog)[-1]
 
 
-@pytest.mark.parametrize(*FORCED_PWM)
+@pytest.mark.parametrize(*UNRESTRICTED_DISALLOWED)
 async def test_reopening_valves_before_any_pulse_starts_a_pulse_at_once(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
     await boiler_data(**IDLE | {"heatingoff": "on"})
     close_valves(hass)
@@ -356,7 +356,7 @@ async def test_setpoint_and_heater_follow_the_captured_valves(hass, entry, clima
 
 
 @pytest.mark.usefixtures("no_publish_error")
-@pytest.mark.parametrize(*FORCED_PWM)
+@pytest.mark.parametrize(*UNRESTRICTED_DISALLOWED)
 @pytest.mark.parametrize(("before", "during", "status", "setpoint"), [
     ("heating", "idle", PWMStatus.ON, 30),
     ("idle", "heating", PWMStatus.OFF, 10),

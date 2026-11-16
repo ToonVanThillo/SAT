@@ -12,7 +12,7 @@ from homeassistant.helpers.event import async_call_later
 
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
     CONF_MINIMUM_SETPOINT,
 )
@@ -108,7 +108,7 @@ async def test_hvac_off_with_disabled_heater_publishes_nothing(entry, climate, b
 WARM_MINIMUM_SETPOINT = {CONF_MINIMUM_SETPOINT: 30}
 
 
-@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*ems_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_on_with_cold_minimum_setpoint_stops_heater(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
 
@@ -120,7 +120,7 @@ async def test_pwm_on_with_cold_minimum_setpoint_stops_heater(entry, climate, bo
     ]
 
 
-@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_hot_water_does_not_raise_pwm_modulation(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE | {"tapwateractive": "on"})
 
@@ -133,7 +133,7 @@ async def test_hot_water_does_not_raise_pwm_modulation(entry, climate, boiler_da
     ]
 
 
-@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_on_sends_minimum_setpoint_and_zero_modulation_once(entry, climate, boiler_data, mqtt_mock, published, freezer):
     await boiler_data(**IDLE)
 
@@ -150,7 +150,7 @@ async def test_pwm_on_sends_minimum_setpoint_and_zero_modulation_once(entry, cli
     assert published() == [message('{"cmd": "selflowtemp", "value": 30}')]
 
 
-@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 31}))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 31}))
 async def test_pwm_on_with_floor_option_sends_floor_modulation_once(entry, climate, boiler_data, mqtt_mock, published, freezer):
     await boiler_data(**IDLE | {"burnmaxpower": 100})
 
@@ -249,7 +249,7 @@ async def test_interval_schedules_the_run_on_the_event_loop(hass: HomeAssistant,
     assert threads == [hass.loop_thread_id]
 
 
-@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*ems_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_tap_draw_with_pwm_publishes_no_burnmaxpower(entry, climate, boiler_data, mqtt_mock, published, freezer):
     await boiler_data(**IDLE | {"burnmaxpower": 0, "heatingoff": "on"})
     await climate.async_set_target_temperature(21.0)

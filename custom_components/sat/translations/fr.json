@@ -2,12 +2,14 @@
   "config": {
     "abort": {
       "already_configured": "La passerelle est déjà configurée.",
-      "reconfigure_successful": "La passerelle a été reconfigurée.",
-      "unable_to_calibrate": "Le processus de calibration a rencontré un problème et n'a pas pu être complété avec succès. Veuillez vous assurer que votre système de chauffage fonctionne correctement et que tous les capteurs requis sont connectés et fonctionnent correctement.\n\nSi vous continuez à rencontrer des problèmes avec la calibration, envisagez de nous contacter pour obtenir de l'aide supplémentaire. Nous nous excusons pour tout désagrément causé."
+      "reconfigure_successful": "La passerelle a été reconfigurée."
     },
     "error": {
       "connection": "Impossible de se connecter à la passerelle.",
-      "mqtt_component": "Le composant MQTT n'est pas disponible."
+      "mqtt_component": "Le composant MQTT n'est pas disponible.",
+      "minimum_setpoint_too_low": "Le point de consigne minimum doit être supérieur à 28,2 °C.",
+      "calibration_failed": "La calibration a échoué ; saisissez le point de consigne minimum manuellement.",
+      "calibration_too_low": "Le point de consigne minimum calibré est inférieur ou égal à 28,2 °C ; saisissez le point de consigne minimum manuellement."
     },
     "progress": {
       "calibration": "Calibration et recherche de la valeur de protection contre les dépassements en cours...\n\nVeuillez patienter pendant que nous optimisons votre système de chauffage. Ce processus peut prendre environ 20 minutes."
@@ -29,11 +31,10 @@
         "title": "Gains automatiques"
       },
       "calibrate_system": {
-        "description": "Optimisez votre système de chauffage en déterminant automatiquement les valeurs PID optimales pour votre configuration. Lors de la sélection des Gains automatiques, veuillez noter que le système passera par un processus de calibration qui peut prendre environ 20 minutes à compléter.\n\nLes Gains automatiques sont recommandés pour la plupart des utilisateurs car ils simplifient le processus de configuration et garantissent des performances optimales. Cependant, si vous êtes familier avec le contrôle PID et que vous préférez définir manuellement les valeurs, vous pouvez choisir de ne pas activer les Gains automatiques.\n\nVeuillez noter que choisir de ne pas activer les Gains automatiques nécessite une bonne connaissance du contrôle PID et peut nécessiter des ajustements manuels supplémentaires pour obtenir des performances optimales.",
+        "description": "SAT a besoin du point de consigne minimum de votre chaudière : la température de départ la plus basse qu'elle peut maintenir à la modulation minimale (la valeur de protection contre les dépassements). Calibrez-le automatiquement, ce qui prend environ 20 minutes, ou saisissez-le manuellement. Il doit être supérieur à 28,2 °C. Les gains automatiques ou les valeurs PID manuelles se choisissent à l'étape suivante.",
         "menu_options": {
           "calibrate": "Calibrer et déterminer votre valeur de protection contre les dépassements (env. 20 min).",
-          "overshoot_protection": "Entrer manuellement la valeur de protection contre les dépassements.",
-          "pid_controller": "Entrer manuellement les valeurs PID (non recommandé)."
+          "overshoot_protection": "Entrer manuellement la valeur de protection contre les dépassements."
         },
         "title": "Calibrer le système"
       },
@@ -41,7 +42,7 @@
         "description": "Le processus de calibration a été complété avec succès.\n\nFélicitations ! Votre Smart Autotune Thermostat (SAT) a été calibré pour optimiser la performance de chauffage de votre système. Au cours du processus de calibration, le SAT a analysé soigneusement les caractéristiques de chauffage et déterminé la valeur de protection contre les dépassements appropriée pour garantir un contrôle précis de la température.\n\nValeur de protection contre les dépassements : {minimum_setpoint} °C\n\nCette valeur représente la quantité maximale de dépassement autorisée pendant le processus de chauffage. Le SAT surveillera activement et ajustera le chauffage pour éviter un dépassement excessif, maintenant ainsi une expérience de chauffage confortable et efficace dans votre maison.\n\nVeuillez noter que la valeur de protection contre les dépassements peut varier en fonction des caractéristiques spécifiques de votre système de chauffage et des facteurs environnementaux. Elle a été affinée pour fournir des performances optimales basées sur les résultats de la calibration.",
         "menu_options": {
           "calibrate": "Réessayer la calibration",
-          "finish": "Continuer avec la calibration actuelle"
+          "automatic_gains": "Continuer avec la calibration actuelle"
         },
         "title": "Calibration terminée"
       },
@@ -80,7 +81,10 @@
         "data": {
           "minimum_setpoint": "Valeur"
         },
-        "description": "En fournissant la valeur de protection contre les dépassements, le SAT ajustera les paramètres de contrôle en conséquence pour maintenir un environnement de chauffage stable et confortable. Cette configuration manuelle vous permet d'affiner le système en fonction de votre configuration spécifique.\n\nNote : Si vous n'êtes pas sûr de la valeur de protection contre les dépassements ou si vous n'avez pas effectué le processus de calibration, il est recommandé d'annuler la configuration et de passer par le processus de calibration pour permettre au SAT de déterminer automatiquement la valeur pour des performances optimales.",
+        "data_description": {
+          "minimum_setpoint": "Le point de consigne minimum en °C. Doit être supérieur à 28,2 °C."
+        },
+        "description": "Saisissez le point de consigne minimum de votre chaudière : la température de départ la plus basse qu'elle peut maintenir à la modulation minimale (la valeur de protection contre les dépassements). Il doit être supérieur à 28,2 °C. Si vous ne le connaissez pas, revenez en arrière et lancez la calibration, ou consultez le README pour savoir comment le trouver.",
         "title": "Protection contre les dépassements"
       },
       "pid_controller": {
@@ -150,7 +154,7 @@
           "error_monitoring": "Activer la surveillance des erreurs",
           "climate_valve_offset": "Décalage de la vanne climatique",
           "dynamic_minimum_setpoint": "Point de Consigne Minimum Dynamique (Expérimental)",
-          "force_pulse_width_modulation": "Forcer la Modulation de Largeur d'Impulsion",
+          "allow_unrestricted_modulation": "Autoriser la modulation sans restriction",
           "maximum_consumption": "Consommation Maximale",
           "maximum_relative_modulation": "Modulation Relative Maximale",
           "maximum_relative_modulation_floor": "Plancher de la modulation relative maximale",
@@ -163,6 +167,7 @@
           "thermal_comfort": "Confort Thermique"
         },
         "data_description": {
+          "allow_unrestricted_modulation": "Lorsque le point de consigne calculé est supérieur au point de consigne minimum, la chaudière brûle en continu au point de consigne calculé avec une modulation libre ; si désactivé, elle fonctionne toujours au point de consigne minimum et à la modulation minimale, par impulsions lorsque moins de chaleur est nécessaire.",
           "climate_valve_offset": "Décalage pour ajuster le degré d'ouverture de la vanne climatique.",
           "dynamic_minimum_setpoint": "Active l'ajustement dynamique du point de consigne minimal en fonction de la température de retour de la chaudière, ce qui aide également à identifier si des vannes sont fermées.",
           "maximum_consumption": "La consommation maximale de gaz lorsque la chaudière est active.",

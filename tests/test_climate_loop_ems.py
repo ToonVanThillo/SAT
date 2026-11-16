@@ -12,9 +12,9 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
 
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_DYNAMIC_MINIMUM_SETPOINT,
     CONF_DYNAMIC_MINIMUM_SETPOINT_VERSION,
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MAXIMUM_RELATIVE_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
@@ -59,7 +59,7 @@ async def test_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boile
 
 
 # The minimum setpoint is above COLD_SETPOINT (28.2), so the PWM ON phase requests heater ON and doesn't release the setpoint
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_SETPOINT: 29}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_MAXIMUM_SETPOINT: 29}))
 async def test_pwm_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
 
@@ -170,7 +170,7 @@ async def test_modulation_is_written_only_when_it_differs(entry, options, climat
     assert (await run_loop(climate, mqtt_mock, published))[1:] == expected
 
 
-@pytest.mark.parametrize(*ems_entry({CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_MAXIMUM_RELATIVE_MODULATION: 134, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 120}))
+@pytest.mark.parametrize(*ems_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_MAXIMUM_RELATIVE_MODULATION: 134, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 120}))
 async def test_modulation_floor_above_100_is_written_with_pwm(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE | {"burnmaxpower": 100})
 

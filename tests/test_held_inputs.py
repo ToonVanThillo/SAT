@@ -15,7 +15,7 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant, State
 
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MINIMUM_SETPOINT,
     CONF_SENSOR_MAX_VALUE_AGE,
@@ -686,7 +686,7 @@ async def test_hvac_off_reads_the_inputs_too(hass, start, run, climate, caplog):
 
 # PWM through a hold
 
-FORCED = with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True})
+UNRESTRICTED_DISALLOWED = with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False})
 
 
 def pwm_lines(caplog, prefix: str) -> list[str]:
@@ -694,7 +694,7 @@ def pwm_lines(caplog, prefix: str) -> list[str]:
 
 
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*FORCED)
+@pytest.mark.parametrize(*UNRESTRICTED_DISALLOWED)
 async def test_a_flapping_sensor_never_resets_pwm_or_cuts_a_pulse(hass, climate, start, run, caplog):
     await start(21.0)
     assert climate.pwm.status == PWMStatus.ON
@@ -718,7 +718,7 @@ async def test_a_flapping_sensor_never_resets_pwm_or_cuts_a_pulse(hass, climate,
 
 
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*FORCED)
+@pytest.mark.parametrize(*UNRESTRICTED_DISALLOWED)
 async def test_a_hold_that_runs_out_resets_pwm_and_turns_the_heater_off(hass, climate, start, run, caplog):
     await start(21.0)
     assert climate.pwm.status == PWMStatus.ON

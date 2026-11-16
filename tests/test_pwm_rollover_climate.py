@@ -5,7 +5,7 @@ import pytest
 from homeassistant.components.climate import HVACMode
 
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
     PWMStatus,
 )
@@ -22,7 +22,7 @@ def commands(published) -> list[dict]:
     return [json.loads(call[1]) for call in published()]
 
 
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_a_100_percent_burn_never_submits_heater_off_across_period_ends(entry, climate, boiler_data, mqtt_mock, published, freezer):
     await boiler_data(**COLD_BOILER)
     await climate.async_set_target_temperature(21.0)
@@ -43,7 +43,7 @@ async def test_a_100_percent_burn_never_submits_heater_off_across_period_ends(en
         assert not [c for c in sent if c["cmd"] == "selflowtemp" and c["value"] != 30], f"setpoint dropped at {elapsed} s"
 
 
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_a_pulse_end_followed_by_100_percent_keeps_the_heater_off_for_180_s(hass, entry, climate, boiler_data, mqtt_mock, published, freezer):
     boiler = IDLE | {"selflowtemp": 34, "curflowtemp": 34, "rettemp": 30, "burnmaxpower": 0}
 

@@ -10,7 +10,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MINIMUM_SETPOINT,
     CONF_MODE,
@@ -61,7 +61,7 @@ def value(hass, entity_id):
 
 # Registry, fresh setup
 
-@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_diagnostic_entities_are_disabled_by_default(hass, entry):
     registry = er.async_get(hass)
 
@@ -262,7 +262,7 @@ async def test_pwm_duty_cycle_not_created_without_setpoint_management(hass, entr
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
-@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_duty_cycle_unknown_then_known(hass, entry, climate, boiler_data):
     state = hass.states.get(DUTY[0])
     assert state.state == STATE_UNKNOWN
@@ -280,7 +280,7 @@ async def test_pwm_duty_cycle_unknown_then_known(hass, entry, climate, boiler_da
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
-@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_duty_cycle_updates_with_hvac_off(hass, entry, climate, boiler_data):
     await heat(climate, boiler_data)
     await climate.async_control_heating_loop()
@@ -297,7 +297,7 @@ async def test_pwm_duty_cycle_updates_with_hvac_off(hass, entry, climate, boiler
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
-@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_duty_cycle_follows_changed_target(hass, entry, climate, boiler_data):
     await heat(climate, boiler_data, target=21.0)
     await climate.async_control_heating_loop()
@@ -316,7 +316,7 @@ async def test_pwm_duty_cycle_follows_changed_target(hass, entry, climate, boile
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
-@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_duty_cycle_unknown_after_reset(hass, entry, climate, boiler_data):
     await heat(climate, boiler_data)
     await climate.async_control_heating_loop()
@@ -332,7 +332,7 @@ async def test_pwm_duty_cycle_unknown_after_reset(hass, entry, climate, boiler_d
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
-@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 @pytest.mark.parametrize("fraction, branch, expected", [(0.0, "low-duty", "0.0"), (1.0, "max", "100.0")])
 async def test_pwm_duty_cycle_at_the_low_duty_and_max_branches(hass, entry, climate, fraction, branch, expected):
     pwm = climate.pwm

@@ -2,13 +2,15 @@
   "config": {
     "abort": {
       "already_configured": "Gateway is already configured.",
-      "reconfigure_successful": "Gateway has been re-configured.",
-      "unable_to_calibrate": "The calibration process has encountered an issue and could not be completed successfully. Please ensure that your heating system is functioning properly and that all required sensors are connected and working correctly.\n\nIf you continue to experience issues with calibration, consider contacting us for further assistance. We apologize for any inconvenience caused."
+      "reconfigure_successful": "Gateway has been re-configured."
     },
     "error": {
       "invalid_device": "This is an invalid device.",
       "connection": "Unable to connect to the gateway.",
-      "mqtt_component": "The MQTT component is unavailable."
+      "mqtt_component": "The MQTT component is unavailable.",
+      "minimum_setpoint_too_low": "The minimum setpoint must be above 28.2 °C.",
+      "calibration_failed": "Calibration failed; enter the minimum setpoint manually.",
+      "calibration_too_low": "The calibrated minimum setpoint is at or below 28.2 °C; enter the minimum setpoint manually."
     },
     "progress": {
       "calibration": "Calibrating and finding the overshoot protection value...\n\nPlease wait while we optimize your heating system. This process may take approximately 20 minutes."
@@ -31,11 +33,10 @@
         "title": "Automatic Gains"
       },
       "calibrate_system": {
-        "description": "Optimize your heating system by automatically determining the optimal PID values for your setup. When selecting Automatic Gains, please note that the system will go through a calibration process that may take approximately 20 minutes to complete.\n\nAutomatic Gains is recommended for most users as it simplifies the setup process and ensures optimal performance. However, if you're familiar with PID control and prefer to manually set the values, you can choose to skip Automatic Gains.\n\nPlease note that choosing to skip Automatic Gains requires a good understanding of PID control and may require additional manual adjustments to achieve optimal performance.",
+        "description": "SAT needs your boiler's minimum setpoint: the lowest flow temperature it can hold at minimum modulation (the overshoot protection value). Calibrate it automatically, which takes approximately 20 minutes, or enter it manually. It must be above 28.2 °C. Automatic gains or manual PID values are chosen in the next step.",
         "menu_options": {
           "calibrate": "Calibrate and determine your overshoot protection value (approx. 20 min).",
-          "overshoot_protection": "Manually enter the overshoot protection value.",
-          "pid_controller": "Manually enter PID values (not recommended)."
+          "overshoot_protection": "Manually enter the overshoot protection value."
         },
         "title": "Calibrate System"
       },
@@ -43,7 +44,7 @@
         "description": "The calibration process has completed successfully.\n\nCongratulations! Your Smart Autotune Thermostat (SAT) has been calibrated to optimize the heating performance of your system. During the calibration process, SAT carefully analyzed the heating characteristics and determined the appropriate overshoot protection value to ensure precise temperature control.\n\nOvershoot Protection Value: {minimum_setpoint} °C\n\nThis value represents the maximum amount of overshoot allowed during the heating process. SAT will actively monitor and adjust the heating to prevent excessive overshooting, maintaining a comfortable and efficient heating experience in your home.\n\nPlease note that the overshoot protection value may vary depending on the specific characteristics of your heating system and environmental factors. It has been fine-tuned to provide optimal performance based on the calibration results.",
         "menu_options": {
           "calibrate": "Retry calibration",
-          "finish": "Continue with current calibration"
+          "automatic_gains": "Continue with current calibration"
         },
         "title": "Calibration Completed"
       },
@@ -82,7 +83,10 @@
         "data": {
           "minimum_setpoint": "Value"
         },
-        "description": "By providing the overshoot protection value, SAT will adjust the control parameters accordingly to maintain a stable and comfortable heating environment. This manual configuration allows you to fine-tune the system based on your specific setup.\n\nNote: If you are unsure about the overshoot protection value or have not performed the calibration process, it is recommended to cancel the configuration and go through the calibration process to let SAT automatically determine the value for optimal performance.",
+        "data_description": {
+          "minimum_setpoint": "The minimum setpoint in °C. Must be above 28.2 °C."
+        },
+        "description": "Enter your boiler's minimum setpoint: the lowest flow temperature it can hold at minimum modulation (the overshoot protection value). It must be above 28.2 °C. If you don't know it, go back and calibrate, or see the README for how to find it.",
         "title": "Overshoot Protection"
       },
       "pid_controller": {
@@ -161,7 +165,7 @@
           "error_monitoring": "Enable error monitoring",
           "climate_valve_offset": "Climate valve offset",
           "dynamic_minimum_setpoint": "Dynamic Minimum Setpoint (Experimental)",
-          "force_pulse_width_modulation": "Force Pulse Width Modulation",
+          "allow_unrestricted_modulation": "Allow unrestricted modulation",
           "maximum_consumption": "Maximum Consumption",
           "maximum_relative_modulation": "Maximum Relative Modulation",
           "maximum_relative_modulation_floor": "Maximum Relative Modulation Floor",
@@ -174,6 +178,7 @@
           "thermal_comfort": "Thermal Comfort"
         },
         "data_description": {
+          "allow_unrestricted_modulation": "When the calculated setpoint is above the minimum setpoint, the boiler burns continuously at the calculated setpoint with free modulation; when off, it always runs at the minimum setpoint and minimum modulation, pulsing when less heat is needed.",
           "climate_valve_offset": "Offset to adjust the opening degree of the climate valve.",
           "dynamic_minimum_setpoint": "Activates the dynamic setpoint adjustment based on the boiler's return temperature, which also helps identify if any valves are closed.",
           "maximum_consumption": "The maximum gas consumption when the boiler is active.",

@@ -6,7 +6,7 @@ import pytest
 from homeassistant.components.climate import HVACMode
 
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HOT_WATER_DELAY,
     CONF_MINIMUM_SETPOINT,
     DOMAIN,
@@ -23,7 +23,7 @@ TAIL = DRAW | {"tapwateractive": "off"}
 
 
 def entry_with(delay: float | None):
-    options: dict = {CONF_FORCE_PULSE_WIDTH_MODULATION: True}
+    options: dict = {CONF_ALLOW_UNRESTRICTED_MODULATION: False}
     if delay is not None:
         options[CONF_HOT_WATER_DELAY] = delay
 

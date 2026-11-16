@@ -18,6 +18,9 @@ from .const import (
     CONF_MODE,
     CONF_DEVICE,
     CONF_ERROR_MONITORING,
+    CONF_MINIMUM_SETPOINT,
+    COLD_SETPOINT,
+    MINIMUM_SETPOINT,
 )
 from .coordinator import SatDataUpdateCoordinatorFactory
 from .services import async_register_services
@@ -47,6 +50,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     coordinator = SatDataUpdateCoordinatorFactory().resolve(
         hass=hass, data=entry.data, options=entry.options, mode=entry.data.get(CONF_MODE), device=entry.data.get(CONF_DEVICE), config_entry=entry
     )
+
+    # PWM pulses at the minimum setpoint, so with setpoint management a pulse only heats above the cold threshold
+    if coordinator.supports_setpoint_management:
+        if (minimum_setpoint := entry.data.get(CONF_MINIMUM_SETPOINT)) is None:
+            _LOGGER.error("Minimum setpoint is missing; using %s °C. Reconfigure SAT to set a minimum setpoint.", MINIMUM_SETPOINT)
+        elif float(minimum_setpoint) <= COLD_SETPOINT:
+            _LOGGER.error("Minimum setpoint %s °C is at or below %s °C; reconfigure SAT to set a minimum setpoint.", minimum_setpoint, COLD_SETPOINT)
 
     # Store the coordinator with the data and options this setup starts with
     hass.data[DOMAIN][entry.entry_id] = {

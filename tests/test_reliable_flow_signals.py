@@ -16,7 +16,7 @@ from homeassistant.components.climate import HVACMode
 
 from custom_components.sat.channels import DesiredState, Quantity
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HOT_WATER_BURNER_POWER,
     CONF_HOT_WATER_FLOW_TEMPERATURE,
     CONF_MAXIMUM_RELATIVE_MODULATION,
@@ -308,7 +308,7 @@ async def test_a_flame_off_signal_does_not_make_the_boiler_produce_hot_water(hw,
 
 # At climate level
 
-HW_ENTRY = with_data({CONF_MINIMUM_SETPOINT: 30}, OPTIONS | {CONF_FORCE_PULSE_WIDTH_MODULATION: True})
+HW_ENTRY = with_data({CONF_MINIMUM_SETPOINT: 30}, OPTIONS | {CONF_ALLOW_UNRESTRICTED_MODULATION: False})
 
 
 def cycle_line(new: list[str]) -> str:

@@ -21,14 +21,14 @@ known-issues entry; they are fixed later.
 - The effective minimum setpoint is the configured one, raised by the dynamic
   minimum setpoint (v1 or v2) when that is enabled, as today.
 - The `overshoot_protection` flag is no longer read. Entries are not migrated;
-  an entry whose minimum is at or below the cold threshold logs an error at
-  setup.
+  an entry whose minimum is missing or at or below the cold threshold logs an
+  error at setup, and a missing minimum counts as 10 °C.
 - The calibrate menu's PID-controller entry, which skips the minimum, is
   removed; after the minimum the flow continues to the automatic gains step.
-  A calibration result at or below the cold threshold shows the manual step
-  with an error.
-- "Allow unrestricted modulation" is offered for every backend with setpoint
-  management.
+  A failed calibration, or a result at or below the cold threshold, shows the
+  manual step with an error.
+- "Allow unrestricted modulation" is offered in the advanced options for every
+  backend with setpoint management.
 
 ## Modulation mode
 PWM outputs, every HEAT cycle, a status (ON or OFF), a duty (0–100%) and a
@@ -165,9 +165,8 @@ maximum; this includes every OFF cycle.
 6. The climate always runs PWM and decides from the table above; max
    relative modulation follows the mode, except for hot water and heater-OFF
    cycles on backends where it limits hot water; dynamic minimum v1 requires
-   UNRESTRICTED. Until step 9, unrestricted modulation is allowed unless
-   "Force pulse width modulation" is on. The PWM gate, the overshoot enable
-   and the stabilisation disable are removed.
+   UNRESTRICTED. The PWM gate, the overshoot enable and the stabilisation
+   disable are removed.
 7. The `pulse_width_modulation` service and PWM enable/disable are removed; a
    target change, also of an area, no longer resets PWM; an HVAC mode change
    still does; a control state reset resets the setpoint adjuster.

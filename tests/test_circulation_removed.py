@@ -11,7 +11,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.sat.config_flow import SatOptionsFlowHandler
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HOT_WATER_DELAY,
     CONF_MINIMUM_SETPOINT,
     DOMAIN,
@@ -20,7 +20,7 @@ from tests.conftest import TIMELINE, run_one_loop, timeline_since
 from tests.const import IDLE, with_data
 
 STALE = {"circulate_after_hot_water": True, "circulation_setpoint": 20, "circulation_duration": 60}
-PWM_HELD = {CONF_FORCE_PULSE_WIDTH_MODULATION: True, CONF_HOT_WATER_DELAY: 300}
+PWM_HELD = {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_HOT_WATER_DELAY: 300}
 
 PUMP = IDLE | {"heatingpump": "on", "burngas": "off", "tapwateractive": "off", "heatingactive": "off", "selburnpow": 0, "heatingoff": "on"}
 DRAW = PUMP | {"burngas": "on", "tapwateractive": "on"}

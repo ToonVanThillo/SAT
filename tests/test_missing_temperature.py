@@ -9,7 +9,7 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MINIMUM_SETPOINT,
     CONF_SENSOR_MAX_VALUE_AGE,
@@ -218,10 +218,10 @@ async def test_a_missing_flow_temperature_is_no_trigger(hass, entry, climate, co
 
 # PWM
 
-FORCED = with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True})
+UNRESTRICTED_DISALLOWED = with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False})
 
 
-@pytest.mark.parametrize(*FORCED)
+@pytest.mark.parametrize(*UNRESTRICTED_DISALLOWED)
 @pytest.mark.parametrize("sensor", [INSIDE, OUTSIDE])
 async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_off(hass, entry, climate, boiler_data, freezer, mqtt_mock, published, caplog, sensor):
     signals: list[PWMStatus] = []

@@ -30,9 +30,10 @@ known bug".
 - A minimum setpoint ≤ `COLD_SETPOINT` (28.2 °C) makes a MINIMUM pulse request
   heater OFF. An UNRESTRICTED pulse whose calculated setpoint is ≤ 28.2 does
   the same, and on backends without a release it then requests that calculated
-  setpoint, not 10 °C. On EMS-ESP the control setpoint is released. Entries
-  that skipped the calibration have the default minimum of 10 °C, so this
-  applies to all of them.
+  setpoint, not 10 °C. On EMS-ESP the control setpoint is released. The config
+  flow no longer accepts such a minimum; older entries can still have one (a
+  manual value, or 10 °C from an old migration or a missing minimum) and log an
+  error at setup. Reconfigure them to set a minimum.
 - Flame health stores no average on-time when a cycle completes: the ON→OFF
   transition doesn't record the duration, and the next ON phase seeds the
   average from its first seconds. PWM treats a missing or short (< 60 s)
@@ -277,6 +278,10 @@ known bug".
   `friendly_name`, but the selector options use the `MANUFACTURERS` key. Where
   they differ (ATAG, BRÖTGE, De Dietrich, Worcester Bosch) the detected
   manufacturer is not preselected.
+- The config flow's automatic-gains and PID-controller steps write to the
+  entry's data, but the PID reads the automatic-gains setting and its gains
+  from the options, so values entered there are ignored; set them in the
+  options instead.
 - Calibration (overshoot protection) in the config flow never subscribes to
   MQTT: on OpenTherm over MQTT it sends heating commands and waits for flame
   and boiler temperature that never update, so it times out. Calibration is

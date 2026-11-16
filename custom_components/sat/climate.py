@@ -200,7 +200,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self._sync_climates_with_preset = bool(config_options.get(CONF_SYNC_CLIMATES_WITH_PRESET))
         self._maximum_relative_modulation = int(config_options.get(CONF_MAXIMUM_RELATIVE_MODULATION))
         self._minimum_setpoint_version = int(config_options.get(CONF_DYNAMIC_MINIMUM_SETPOINT_VERSION))
-        self._force_pulse_width_modulation = bool(config_options.get(CONF_FORCE_PULSE_WIDTH_MODULATION))
+        self._allow_unrestricted_modulation = bool(config_options.get(CONF_ALLOW_UNRESTRICTED_MODULATION))
         self._sensor_max_value_age = convert_time_str_to_seconds(config_options.get(CONF_SENSOR_MAX_VALUE_AGE))
         self._window_minimum_open_time = convert_time_str_to_seconds(config_options.get(CONF_WINDOW_MINIMUM_OPEN_TIME))
 
@@ -217,7 +217,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.heating_curve = create_heating_curve_controller(config_entry.data, config_options)
 
         # Create the Minimum Setpoint controller
-        self.minimum_setpoint = create_minimum_setpoint_controller(config_entry.data, config_options)
+        self.minimum_setpoint = create_minimum_setpoint_controller(coordinator.minimum_setpoint, config_options)
 
         # Create a PWM controller with given configuration options
         self.pwm = create_pwm_controller(self.heating_curve, config_options)
@@ -1027,14 +1027,14 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             self._overshoot_handling = overshoot_handling
             timeline.LOGGER.info("overshoot handling started" if overshoot_handling else "overshoot handling ended")
 
-        # Pulse Width Modulation runs whenever a valve is open; unrestricted modulation needs setpoint management and no forced PWM
+        # Pulse Width Modulation runs whenever a valve is open; unrestricted modulation needs setpoint management and the option allowing it
         if not inputs.valves_open:
             self.pwm.reset("valves closed")
         else:
             await self.pwm.update(
                 flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint,
                 minimum_setpoint=self.minimum_setpoint_value,
-                allow_unrestricted=self._coordinator.supports_setpoint_management and not self._force_pulse_width_modulation,
+                allow_unrestricted=self._coordinator.supports_setpoint_management and self._allow_unrestricted_modulation,
             )
 
         self.async_send_pwm_updated()

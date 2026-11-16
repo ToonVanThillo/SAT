@@ -159,7 +159,7 @@ async def test_the_force_branch_runs_before_the_first_pulse_in_minimum_mode(cloc
     assert pwm.setpoint == 70.0
 
 
-# The production path on EMS-ESP: unrestricted modulation is allowed (PWM not forced), MINIMUM because the requested 35 is at or below the
+# The production path on EMS-ESP: unrestricted modulation is allowed (the default), MINIMUM because the requested 35 is at or below the
 # minimum setpoint
 
 @pytest.mark.parametrize(("flame_state", "adjusted"), [(burning(), 57.0), (cold(30), 70.0)], ids=["adjust", "force"])

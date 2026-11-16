@@ -12,7 +12,7 @@ from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 from custom_components.sat import timeline as timeline_module
 from custom_components.sat.channels import DesiredState, Quantity, WriteKind
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
     BoilerStatus,
 )
@@ -454,7 +454,7 @@ async def test_missing_temperature_short_form(hass, loop_entry, climate, boiler_
 
 # PWM and flame edges, branches and noise
 
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_cycle_line_has_state_duty_and_branch_and_edges_log_once(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**IDLE | {"heatingoff": "on"})
@@ -473,7 +473,7 @@ async def test_pwm_cycle_line_has_state_duty_and_branch_and_edges_log_once(hass,
     assert timeline(caplog).count("pwm OFF") == 1
 
 
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_steady_pwm_off_phase_emits_no_per_cycle_info_lines(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     await boiler_data(**IDLE | {"heatingoff": "on"})
     await run_loop(climate, mqtt_mock, published)
@@ -769,7 +769,7 @@ async def test_steady_heater_on_repeats_nothing_every_cycle(loop_entry, climate,
     assert per_cycle_messages(caplog, records) == []
 
 
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_steady_pwm_off_phase_repeats_nothing_every_cycle(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     await boiler_data(**IDLE | {"heatingoff": "on"})
     await run_loop(climate, mqtt_mock, published)
@@ -787,7 +787,7 @@ async def test_steady_pwm_off_phase_repeats_nothing_every_cycle(hass, loop_entry
     assert per_cycle_messages(caplog, records) == []
 
 
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_steady_pwm_on_phase_with_flame_repeats_nothing_every_cycle(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     on = {"heatingoff": "off", "heatingactive": "on", "burngas": "on", "curflowtemp": 45.5, "selflowtemp": 30}
     await boiler_data(**IDLE | on)
@@ -800,7 +800,7 @@ async def test_steady_pwm_on_phase_with_flame_repeats_nothing_every_cycle(hass, 
     assert per_cycle_messages(caplog, records) == []
 
 
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_minimum_setpoint_is_logged_only_when_it_changes(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     on = {"heatingoff": "off", "heatingactive": "on", "burngas": "on", "curflowtemp": 45.5, "selflowtemp": 30}
     await boiler_data(**IDLE | on)

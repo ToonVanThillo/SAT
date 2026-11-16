@@ -24,7 +24,7 @@ from custom_components.sat.fake import SatFakeCoordinator
             },
             {
                 CONF_HEATING_CURVE_COEFFICIENT: 1.8,
-                CONF_FORCE_PULSE_WIDTH_MODULATION: True,
+                CONF_ALLOW_UNRESTRICTED_MODULATION: False,
             },
             {
                 TEMPLATE_DOMAIN: [
@@ -71,7 +71,7 @@ async def test_scenario_1(hass: HomeAssistant, entry: MockConfigEntry, climate: 
             },
             {
                 CONF_HEATING_CURVE_COEFFICIENT: 1.3,
-                CONF_FORCE_PULSE_WIDTH_MODULATION: True,
+                CONF_ALLOW_UNRESTRICTED_MODULATION: False,
             },
             {
                 TEMPLATE_DOMAIN: [
@@ -119,7 +119,7 @@ async def test_scenario_2(hass: HomeAssistant, entry: MockConfigEntry, climate: 
             },
             {
                 CONF_HEATING_CURVE_COEFFICIENT: 0.9,
-                CONF_FORCE_PULSE_WIDTH_MODULATION: True,
+                CONF_ALLOW_UNRESTRICTED_MODULATION: False,
             },
             {
                 TEMPLATE_DOMAIN: [

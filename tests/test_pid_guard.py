@@ -8,7 +8,7 @@ import pytest
 from homeassistant.components.climate import HVACMode
 
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MINIMUM_SETPOINT,
     CONF_ROOMS,
@@ -28,8 +28,8 @@ HUMIDITY = "sensor.test_humidity"
 SKIP = "Skipping the PID update: the inside or target temperature is missing."
 CLIMATE_LOGGER = "custom_components.sat.climate"
 
-FORCED = {CONF_MINIMUM_SETPOINT: 30}
-FORCE_PWM = {CONF_FORCE_PULSE_WIDTH_MODULATION: True}
+WARM_MINIMUM = {CONF_MINIMUM_SETPOINT: 30}
+UNRESTRICTED_DISALLOWED = {CONF_ALLOW_UNRESTRICTED_MODULATION: False}
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +105,7 @@ async def gap(hass) -> None:
 
 # The reviewer's scenario: an outside change during an inside gap
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_an_outside_change_during_an_inside_gap_leaves_the_pid_and_pwm_alone(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -119,7 +119,7 @@ async def test_an_outside_change_during_an_inside_gap_leaves_the_pid_and_pwm_alo
     assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_the_pid_continues_from_the_kept_state_when_the_sensor_returns(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -139,7 +139,7 @@ async def test_the_pid_continues_from_the_kept_state_when_the_sensor_returns(has
     assert pid.derivative <= 0
 
 
-@pytest.mark.parametrize(*with_data(FORCED | {CONF_HUMIDITY_SENSOR_ENTITY_ID: HUMIDITY}, FORCE_PWM | {CONF_THERMAL_COMFORT: True}))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM | {CONF_HUMIDITY_SENSOR_ENTITY_ID: HUMIDITY}, UNRESTRICTED_DISALLOWED | {CONF_THERMAL_COMFORT: True}))
 async def test_a_humidity_change_during_an_inside_gap_leaves_the_pid_and_pwm_alone(hass, entry, climate, boiler_data, freezer, caplog):
     hass.states.async_set(HUMIDITY, "50")
     await hass.async_block_till_done()
@@ -155,7 +155,7 @@ async def test_a_humidity_change_during_an_inside_gap_leaves_the_pid_and_pwm_alo
     assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
-@pytest.mark.parametrize(*with_data(FORCED | {CONF_ROOMS: [ROOM]}, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM | {CONF_ROOMS: [ROOM]}, UNRESTRICTED_DISALLOWED))
 async def test_an_area_climate_change_during_an_inside_gap_leaves_the_pid_and_pwm_alone(hass, entry, climate, boiler_data, freezer, caplog):
     hass.states.async_set(ROOM, "heat", {"temperature": 22, "current_temperature": 21.9, "hvac_modes": ["heat", "off"]})
     await hass.async_block_till_done()
@@ -174,7 +174,7 @@ async def test_an_area_climate_change_during_an_inside_gap_leaves_the_pid_and_pw
 
 # The entry points that still reset the control state afterwards
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_target_change_during_an_inside_gap_skips_the_pid_reset_but_not_the_control_state_reset(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -193,7 +193,7 @@ async def test_a_target_change_during_an_inside_gap_skips_the_pid_reset_but_not_
     assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not_the_control_state_reset(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -213,7 +213,7 @@ async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not
 
 # The target guard
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_missing_target_with_a_live_inside_sensor_skips_the_pid_update(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     skipped = skips(caplog)
@@ -230,7 +230,7 @@ async def test_a_missing_target_with_a_live_inside_sensor_skips_the_pid_update(h
 
 # No gap: the guard is out of the way
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_without_a_gap_an_inside_change_updates_the_pid_as_before(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     skipped = skips(caplog)
@@ -249,7 +249,7 @@ ROOM_ATTRS = {"hvac_modes": ["heat", "off"], "current_temperature": 21.9}
 
 
 @pytest.mark.parametrize("with_gap", [True, False], ids=["gap", "no gap"])
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_target_change_resets_the_pid_without_a_derivative_kick_with_or_without_a_gap(hass, entry, climate, boiler_data, freezer, caplog, with_gap):
     await steady(hass, climate, boiler_data, freezer, caplog)
     if with_gap:
@@ -280,7 +280,7 @@ async def test_a_target_change_resets_the_pid_without_a_derivative_kick_with_or_
     assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
-@pytest.mark.parametrize(*with_data(FORCED | {CONF_ROOMS: [ROOM]}, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM | {CONF_ROOMS: [ROOM]}, UNRESTRICTED_DISALLOWED))
 async def test_an_area_change_in_a_gap_defers_the_reset_and_leaves_a_running_pulse_alone(hass, entry, climate, boiler_data, freezer, caplog):
     hass.states.async_set(ROOM, "heat", ROOM_ATTRS | {"temperature": 22})
     await hass.async_block_till_done()
@@ -302,7 +302,7 @@ async def test_an_area_change_in_a_gap_defers_the_reset_and_leaves_a_running_pul
     assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_an_hvac_mode_set_in_a_gap_defers_the_reset(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -322,7 +322,7 @@ async def test_an_hvac_mode_set_in_a_gap_defers_the_reset(hass, entry, climate, 
     assert timeline(caplog, "pwm OFF (") == HEAT_SWITCH_RESET + ["pwm OFF (hvac mode change)"]
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_the_deferred_reset_runs_once(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -345,7 +345,7 @@ async def test_the_deferred_reset_runs_once(hass, entry, climate, boiler_data, f
     assert climate.pid.last_error == pytest.approx(0.6)
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM | {CONF_SENSOR_MAX_VALUE_AGE: "00:15:00"}))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED | {CONF_SENSOR_MAX_VALUE_AGE: "00:15:00"}))
 async def test_the_age_based_reset_wins_over_the_deferred_one(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -367,7 +367,7 @@ async def test_the_age_based_reset_wins_over_the_deferred_one(hass, entry, clima
     assert deferred(caplog) == []
 
 
-@pytest.mark.parametrize(*with_data(FORCED | {CONF_ROOMS: [ROOM]}, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM | {CONF_ROOMS: [ROOM]}, UNRESTRICTED_DISALLOWED))
 async def test_when_the_first_call_after_the_gap_is_a_reset_the_reset_branch_runs_once(hass, entry, climate, boiler_data, freezer, caplog):
     hass.states.async_set(ROOM, "heat", ROOM_ATTRS | {"temperature": 22})
     await hass.async_block_till_done()
@@ -395,7 +395,7 @@ async def test_when_the_first_call_after_the_gap_is_a_reset_the_reset_branch_run
     assert deferred(caplog) == []
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_plain_gap_leaves_nothing_to_defer(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -409,7 +409,7 @@ async def test_a_plain_gap_leaves_nothing_to_defer(hass, entry, climate, boiler_
     assert deferred(caplog) == []
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_an_equal_error_defers_nothing_and_clears_the_flag(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
@@ -434,7 +434,7 @@ async def test_an_equal_error_defers_nothing_and_clears_the_flag(hass, entry, cl
     assert climate.pid.previous_error == pytest.approx(0.6)
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_missing_outside_temperature_does_not_set_the_flag(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     hass.states.async_set(OUTSIDE, "unavailable")
@@ -455,7 +455,7 @@ async def test_a_missing_outside_temperature_does_not_set_the_flag(hass, entry, 
     assert deferred(caplog) == []
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_missing_outside_temperature_does_not_clear_the_flag(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)

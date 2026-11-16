@@ -14,7 +14,7 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.sat.channels import DesiredState
 from custom_components.sat.config_flow import SatOptionsFlowHandler
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HOT_WATER_BURNER_POWER,
     CONF_HOT_WATER_FLOW_TEMPERATURE,
     CONF_MAXIMUM_RELATIVE_MODULATION,
@@ -49,7 +49,7 @@ async def hw(hass, mqtt_mock, no_publish_delay, caplog) -> SatEmsMqttCoordinator
 # Field case: the tap closes before the flame goes out, a control cycle runs in between
 
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_field_case_a_control_cycle_in_the_tail_sees_hot_water(hass, entry, climate, boiler_data, mqtt_mock, freezer):
     await boiler_data(**OFF)
     await advance(hass, freezer, 10)

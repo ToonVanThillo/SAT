@@ -27,10 +27,10 @@ from tests.conftest import TIMELINE, advance, run_one_loop
 from tests.const import IDLE, with_data
 from tests.test_climate_inputs import ROOM
 from tests.test_pid_guard import (
-    FORCE_PWM,
-    FORCED,
     INSIDE,
     ROOM_ATTRS,
+    UNRESTRICTED_DISALLOWED,
+    WARM_MINIMUM,
     resets,
     steady,
     timeline,
@@ -47,7 +47,7 @@ def debug_logs(caplog):
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_the_pwm_service_is_not_registered_but_reset_integral_is(hass, entry, climate):
     assert not hass.services.has_service(DOMAIN, "pulse_width_modulation")
     assert hass.services.has_service(DOMAIN, "reset_integral")
@@ -55,7 +55,7 @@ async def test_the_pwm_service_is_not_registered_but_reset_integral_is(hass, ent
 
 # Target changes never reset PWM
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_target_changes_keep_a_running_pulse_and_reset_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     assert before["pwm"].status == PWMStatus.ON
@@ -79,7 +79,7 @@ async def test_target_changes_keep_a_running_pulse_and_reset_the_setpoint_adjust
     assert timeline(caplog, "pwm ")[lines:] == []
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_preset_change_keeps_the_pulse(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     lines = len(timeline(caplog, "pwm "))
@@ -93,7 +93,7 @@ async def test_a_preset_change_keeps_the_pulse(hass, entry, climate, boiler_data
     assert timeline(caplog, "pwm ")[lines:] == []
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_target_change_in_the_off_phase_keeps_the_off_phase(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     # End the pulse: a request at the bottom of the range, fed to PWM the way the control loop does
@@ -119,7 +119,7 @@ async def test_a_target_change_in_the_off_phase_keeps_the_off_phase(hass, entry,
     assert timeline(caplog, "pwm ")[lines:] == []
 
 
-@pytest.mark.parametrize(*with_data(FORCED | {CONF_ROOMS: [ROOM]}, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM | {CONF_ROOMS: [ROOM]}, UNRESTRICTED_DISALLOWED))
 async def test_an_area_target_change_resets_neither_pwm_nor_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog):
     hass.states.async_set(ROOM, "heat", ROOM_ATTRS | {"temperature": 22})
     await hass.async_block_till_done()
@@ -141,7 +141,7 @@ async def test_an_area_target_change_resets_neither_pwm_nor_the_setpoint_adjuste
 
 # The dynamic minimum v2
 
-@pytest.mark.parametrize(*with_data(FORCED, V2))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, V2))
 async def test_with_dynamic_minimum_v2_a_target_change_drops_the_learned_minimum_and_the_pulse_turns_unrestricted(hass, entry, climate, boiler_data, freezer, caplog):
     # A cold boiler (flow 35, flame off, no average on time) forces the adjuster to flow + 10 while in MINIMUM mode
     await boiler_data(**IDLE | {"heatingoff": "on", "curflowtemp": 35})
@@ -185,7 +185,7 @@ async def test_with_dynamic_minimum_v2_a_target_change_drops_the_learned_minimum
         assert climate.minimum_setpoint_value == 30.0
 
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_pwm_reset_by_the_control_loop_keeps_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     adjusted = climate.pwm.setpoint
@@ -205,7 +205,7 @@ async def test_a_pwm_reset_by_the_control_loop_keeps_the_setpoint_adjuster(hass,
 
 # An HVAC mode change
 
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_an_hvac_mode_change_before_any_pulse_logs_its_reset(hass, entry, climate, boiler_data, caplog):
     assert climate.hvac_mode == HVACMode.OFF
     assert climate.pwm.status == PWMStatus.OFF
@@ -217,7 +217,7 @@ async def test_an_hvac_mode_change_before_any_pulse_logs_its_reset(hass, entry, 
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_an_hvac_mode_change_resets_pwm_and_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     assert climate.pwm.status == PWMStatus.ON
@@ -258,7 +258,7 @@ async def heating_with_a_pulse(hass, climate, boiler_data, freezer, caplog) -> d
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_setting_the_active_hvac_mode_again_changes_nothing(hass, entry, climate, boiler_data, freezer, caplog):
     before = await heating_with_a_pulse(hass, climate, boiler_data, freezer, caplog)
     received: list[PWMStatus] = []
@@ -279,7 +279,7 @@ async def test_setting_the_active_hvac_mode_again_changes_nothing(hass, entry, c
 
 
 @pytest.mark.parametrize("service", ["set_hvac_mode", "turn_on"])
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_the_climate_services_selecting_the_active_hvac_mode_change_nothing(hass, entry, climate, boiler_data, freezer, caplog, service):
     before = await heating_with_a_pulse(hass, climate, boiler_data, freezer, caplog)
 
@@ -300,7 +300,7 @@ async def test_the_climate_services_selecting_the_active_hvac_mode_change_nothin
 
 
 @pytest.mark.parametrize("service", ["turn_off", "set_hvac_mode"])
-@pytest.mark.parametrize(*with_data(FORCED, FORCE_PWM))
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_turning_off_while_already_off_changes_nothing(hass, entry, climate, boiler_data, caplog, service):
     await boiler_data(**IDLE | {"heatingoff": "on"})
     await climate.async_set_target_temperature(21.0)

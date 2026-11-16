@@ -15,7 +15,6 @@ from custom_components.sat.const import (
     CONF_MQTT_TOPIC,
     CONF_NAME,
     CONF_OUTSIDE_SENSOR_ENTITY_ID,
-    CONF_OVERSHOOT_PROTECTION,
     HEATING_SYSTEM_RADIATORS,
     MODE_FAKE,
     MODE_MQTT_EMS,
@@ -30,7 +29,6 @@ DEFAULT_USER_DATA = {
     CONF_NAME: "Test",
     CONF_DEVICE: None,
     CONF_AUTOMATIC_GAINS: True,
-    CONF_OVERSHOOT_PROTECTION: True,
     CONF_INSIDE_SENSOR_ENTITY_ID: "sensor.test_inside_sensor",
     CONF_OUTSIDE_SENSOR_ENTITY_ID: "sensor.test_outside_sensor",
 }
@@ -45,7 +43,8 @@ IDLE: dict[str, Any] = EMS_BOILER_DATA | {"selflowtemp": 40, "curflowtemp": 40.5
 def ems_entry(options: dict | None = None) -> tuple[str, list[tuple]]:
     """Return the parametrization of an entry using the EMS MQTT coordinator, with the given entry options.
 
-    The minimum setpoint is low so that PWM stays disabled unless the options force it.
+    The minimum setpoint of 20 °C is at or below the cold threshold, so the setup logs an error for it, and with the default inputs the
+    calculated setpoint is above it, so PWM runs UNRESTRICTED unless the options disallow unrestricted modulation.
     """
     return (
         "domains, data, options, config",

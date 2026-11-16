@@ -25,6 +25,8 @@ from .overshoot_protection import OvershootProtection
 from .validators import valid_serial_device
 
 DEFAULT_NAME = "Living Room"
+# Pre-fill of the manual minimum setpoint without a calibration result or stored minimum; above COLD_SETPOINT
+DEFAULT_MINIMUM_SETPOINT = 40
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,9 +36,9 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 10
     MINOR_VERSION = 0
 
-    calibration = None
-    previous_hvac_mode = None
-    overshoot_protection_value = None
+    calibration: asyncio.Task[None] | None = None
+    previous_hvac_mode: str | None = None
+    overshoot_protection_value: float | None = None
 
     def __init__(self):
         """Initialize."""
@@ -369,7 +371,7 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_calibrate_system(self, _user_input: dict[str, Any] | None = None):
         return self.async_show_menu(
             step_id="calibrate_system",
-            menu_options=["calibrate", "overshoot_protection", "pid_controller"]
+            menu_options=["calibrate", "overshoot_protection"]
         )
 
     async def async_step_calibrate(self, _user_input: dict[str, Any] | None = None):
@@ -404,6 +406,9 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         if not self.calibration or not self.calibration.done():
             if not self.calibration:
+                # A new run: its own result only, not a previous run's
+                self.overshoot_protection_value = None
+
                 # Turn off the existing climate before starting, since the task starts eagerly and restores the mode when it ends
                 if climate_id is not None:
                     self.previous_hvac_mode = self.hass.states.get(climate_id).state
@@ -425,44 +430,54 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 progress_action="calibration",
             )
 
-        if self.overshoot_protection_value is None:
-            return self.async_show_progress_done(next_step_id="calibration_failed")
-
-        self._enable_overshoot_protection(
-            self.overshoot_protection_value
-        )
-
+        # A progress step can only end in a next step; a failed or too low calibration continues to the manual step with an error
         self.calibration = None
-        self.overshoot_protection_value = None
+
+        if self.overshoot_protection_value is None:
+            self.errors = {"base": "calibration_failed"}
+            return self.async_show_progress_done(next_step_id="overshoot_protection")
+
+        if self.overshoot_protection_value <= COLD_SETPOINT:
+            self.errors = {"base": "calibration_too_low"}
+            return self.async_show_progress_done(next_step_id="overshoot_protection")
+
+        self.data[CONF_MINIMUM_SETPOINT] = self.overshoot_protection_value
 
         return self.async_show_progress_done(next_step_id="calibrated")
-
-    async def async_step_calibration_failed(self, _user_input: dict[str, Any] | None = None):
-        return self.async_abort(reason="unable_to_calibrate")
 
     async def async_step_calibrated(self, _user_input: dict[str, Any] | None = None):
         return self.async_show_menu(
             step_id="calibrated",
             description_placeholders=self.data,
-            menu_options=["calibrate", "finish"],
+            menu_options=["calibrate", "automatic_gains"],
         )
 
     async def async_step_overshoot_protection(self, _user_input: dict[str, Any] | None = None):
+        """Enter the minimum setpoint manually; it must be above the cold threshold.
+
+        Shows the errors a failed or too low calibration left, pre-filled with that calibration's result if there is one.
+        """
         if _user_input is not None:
-            self._enable_overshoot_protection(
-                _user_input[CONF_MINIMUM_SETPOINT]
-            )
+            self.errors = {}
 
-            if self.data[CONF_MODE] == MODE_SIMULATOR:
-                return await self.async_step_finish()
+            if _user_input[CONF_MINIMUM_SETPOINT] <= COLD_SETPOINT:
+                self.errors[CONF_MINIMUM_SETPOINT] = "minimum_setpoint_too_low"
+                return await self.async_step_overshoot_protection()
 
-            return await self.async_step_manufacturer()
+            self.data[CONF_MINIMUM_SETPOINT] = _user_input[CONF_MINIMUM_SETPOINT]
+
+            return await self.async_step_automatic_gains()
+
+        default_minimum_setpoint = self.overshoot_protection_value
+        if default_minimum_setpoint is None:
+            default_minimum_setpoint = self.data.get(CONF_MINIMUM_SETPOINT, DEFAULT_MINIMUM_SETPOINT)
 
         return self.async_show_form(
             last_step=False,
+            errors=self.errors,
             step_id="overshoot_protection",
             data_schema=vol.Schema({
-                vol.Required(CONF_MINIMUM_SETPOINT, default=self.data.get(CONF_MINIMUM_SETPOINT, OPTIONS_DEFAULTS[CONF_MINIMUM_SETPOINT])): selector.NumberSelector(
+                vol.Required(CONF_MINIMUM_SETPOINT, default=default_minimum_setpoint): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=MINIMUM_SETPOINT, max=MAXIMUM_SETPOINT, step=1, unit_of_measurement="°C")
                 ),
             })
@@ -554,11 +569,6 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=False,
             data_schema=vol.Schema(schema),
         )
-
-    def _enable_overshoot_protection(self, overshoot_protection_value: float):
-        """Store the value and enable overshoot protection."""
-        self.data[CONF_OVERSHOOT_PROTECTION] = True
-        self.data[CONF_MINIMUM_SETPOINT] = overshoot_protection_value
 
 
 class SatOptionsFlowHandler(config_entries.OptionsFlow):
@@ -737,9 +747,10 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required(CONF_DYNAMIC_MINIMUM_SETPOINT, default=options[CONF_DYNAMIC_MINIMUM_SETPOINT]): bool,
         }
 
-        if self._config_entry.data.get(CONF_MODE) in [MODE_MQTT_OPENTHERM, MODE_SERIAL, MODE_SIMULATOR]:
-            schema[vol.Required(CONF_FORCE_PULSE_WIDTH_MODULATION, default=options[CONF_FORCE_PULSE_WIDTH_MODULATION])] = bool
+        if self._config_entry.data.get(CONF_MODE) in [MODE_MQTT_EMS, MODE_MQTT_OPENTHERM, MODE_SERIAL, MODE_ESPHOME, MODE_SIMULATOR]:
+            schema[vol.Required(CONF_ALLOW_UNRESTRICTED_MODULATION, default=options[CONF_ALLOW_UNRESTRICTED_MODULATION])] = bool
 
+        if self._config_entry.data.get(CONF_MODE) in [MODE_MQTT_OPENTHERM, MODE_SERIAL, MODE_SIMULATOR]:
             schema[vol.Required(CONF_MINIMUM_CONSUMPTION, default=options[CONF_MINIMUM_CONSUMPTION])] = selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0, max=8, step=0.1)
             )

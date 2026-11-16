@@ -9,7 +9,7 @@ import pytest
 from homeassistant.components.climate import HVACMode
 
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
     MINIMUM_SETPOINT,
     ModulationMode,
@@ -373,26 +373,10 @@ async def test_the_duty_rising_to_100_percent_in_an_off_phase_from_a_reset_keeps
     assert pwm.status == PWMStatus.ON
 
 
-# (j) Through the climate: forced PWM does not allow unrestricted modulation
+# (j) Through the climate: with "Allow unrestricted modulation" off, the mode stays MINIMUM
 
 @pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
-async def test_forced_pwm_does_not_allow_unrestricted_modulation(climate, boiler_data, freezer):
-    cold_boiler = IDLE | {"selflowtemp": 25, "curflowtemp": 25, "rettemp": 25, "burnmaxpower": 0}
-    await boiler_data(**cold_boiler)
-    await climate.async_set_target_temperature(21.0)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
-    freezer.tick(60)
-    await boiler_data(**cold_boiler)
-    await climate.async_control_heating_loop()
-
-    assert climate.pwm.status == PWMStatus.ON
-    assert climate.calculated_setpoint > climate.minimum_setpoint_value
-    assert climate.pwm.mode == ModulationMode.MINIMUM
-
-
-@pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True}))
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across_period_ends(climate, boiler_data, published, freezer, caplog):
     cold_boiler = IDLE | {"selflowtemp": 25, "curflowtemp": 25, "rettemp": 25, "burnmaxpower": 0}
     await boiler_data(**cold_boiler)

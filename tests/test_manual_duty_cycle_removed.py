@@ -12,7 +12,7 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
 
 from custom_components.sat.config_flow import SatOptionsFlowHandler
 from custom_components.sat.const import (
-    CONF_FORCE_PULSE_WIDTH_MODULATION,
+    CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MODE,
     CONF_NAME,
     DOMAIN,
@@ -65,7 +65,7 @@ def test_translations_are_valid_json_without_the_removed_options(path):
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
-@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True} | STORED))
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False} | STORED))
 async def test_stored_manual_duty_cycle_options_are_ignored(hass, entry, climate):
     # The cold point's N=4 gives a normal period of 900 s at a mid duty (the stored 00:10:00 would have given 600 s)
     pwm = climate.pwm
@@ -84,7 +84,7 @@ async def test_stored_manual_duty_cycle_options_are_ignored(hass, entry, climate
     assert float(hass.states.get(DUTY).state) == round(on / (on + off) * 100, 1)
 
 
-@pytest.mark.parametrize(*with_data({}, {CONF_FORCE_PULSE_WIDTH_MODULATION: True} | STORED))
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False} | STORED))
 async def test_stored_manual_duty_cycle_options_stay_in_the_diagnostics(hass, hass_client, entry, loop_entry):
     diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
 

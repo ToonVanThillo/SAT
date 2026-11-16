@@ -2,12 +2,14 @@
   "config": {
     "abort": {
       "already_configured": "Gateway ist bereits konfiguriert.",
-      "reconfigure_successful": "Gateway wurde neu konfiguriert.",
-      "unable_to_calibrate": "Der Kalibrierungsprozess ist auf ein Problem gestoßen und konnte nicht erfolgreich abgeschlossen werden. Bitte stellen Sie sicher, dass Ihr Heizsystem ordnungsgemäß funktioniert und dass alle erforderlichen Sensoren angeschlossen und funktionsfähig sind.\n\nWenn Sie weiterhin Probleme mit der Kalibrierung haben, ziehen Sie in Erwägung, uns für weitere Unterstützung zu kontaktieren. Wir entschuldigen uns für etwaige Unannehmlichkeiten."
+      "reconfigure_successful": "Gateway wurde neu konfiguriert."
     },
     "error": {
       "connection": "Verbindung zum Gateway konnte nicht hergestellt werden.",
-      "mqtt_component": "Die MQTT-Komponente ist nicht verfügbar."
+      "mqtt_component": "Die MQTT-Komponente ist nicht verfügbar.",
+      "minimum_setpoint_too_low": "Der minimale Sollwert muss über 28,2 °C liegen.",
+      "calibration_failed": "Kalibrierung fehlgeschlagen; geben Sie den minimalen Sollwert manuell ein.",
+      "calibration_too_low": "Der kalibrierte minimale Sollwert liegt bei oder unter 28,2 °C; geben Sie den minimalen Sollwert manuell ein."
     },
     "progress": {
       "calibration": "Kalibrierung und Ermittlung des Überschwingungsschutzwertes...\n\nBitte warten Sie, während wir Ihr Heizsystem optimieren. Dieser Prozess kann etwa 20 Minuten dauern."
@@ -29,11 +31,10 @@
         "title": "Automatische Verstärkungen"
       },
       "calibrate_system": {
-        "description": "Optimieren Sie Ihr Heizsystem, indem Sie die optimalen PID-Werte für Ihre Einrichtung automatisch bestimmen. Bitte beachten Sie, dass das System bei Auswahl von Automatischen Verstärkungen einen Kalibrierungsprozess durchläuft, der etwa 20 Minuten dauern kann.\n\nAutomatische Verstärkungen werden für die meisten Benutzer empfohlen, da sie den Einrichtungsprozess vereinfachen und eine optimale Leistung gewährleisten. Wenn Sie jedoch mit der PID-Steuerung vertraut sind und die Werte lieber manuell eingeben möchten, können Sie sich entscheiden, Automatische Verstärkungen zu überspringen.\n\nBitte beachten Sie, dass die Entscheidung gegen Automatische Verstärkungen ein gutes Verständnis der PID-Steuerung erfordert und möglicherweise zusätzliche manuelle Anpassungen für eine optimale Leistung notwendig sind.",
+        "description": "SAT benötigt den minimalen Sollwert Ihres Kessels: die niedrigste Vorlauftemperatur, die er bei minimaler Modulation halten kann (der Überschwingungsschutzwert). Kalibrieren Sie ihn automatisch, was etwa 20 Minuten dauert, oder geben Sie ihn manuell ein. Er muss über 28,2 °C liegen. Automatische Verstärkungen oder manuelle PID-Werte wählen Sie im nächsten Schritt.",
         "menu_options": {
           "calibrate": "Kalibrieren und Ihren Überschwingungsschutzwert bestimmen (ca. 20 Min.).",
-          "overshoot_protection": "Den Überschwingungsschutzwert manuell eingeben.",
-          "pid_controller": "PID-Werte manuell eingeben (nicht empfohlen)."
+          "overshoot_protection": "Den Überschwingungsschutzwert manuell eingeben."
         },
         "title": "System kalibrieren"
       },
@@ -41,7 +42,7 @@
         "description": "Der Kalibrierungsprozess wurde erfolgreich abgeschlossen.\n\nHerzlichen Glückwunsch! Ihr Smart Autotune Thermostat (SAT) wurde kalibriert, um die Heizleistung Ihres Systems zu optimieren. Während des Kalibrierungsprozesses hat SAT die Heizeigenschaften sorgfältig analysiert und den angemessenen Überschwingungsschutzwert bestimmt, um eine präzise Temperaturregelung zu gewährleisten.\n\nÜberschwingungsschutzwert: {minimum_setpoint} °C\n\nDieser Wert stellt die maximale Menge an Überschwingen dar, die während des Heizprozesses erlaubt ist. SAT wird aktiv die Heizung überwachen und anpassen, um übermäßiges Überschwingen zu verhindern und eine komfortable und effiziente Heizerfahrung in Ihrem Zuhause zu gewährleisten.\n\nBitte beachten Sie, dass der Überschwingungsschutzwert je nach den spezifischen Eigenschaften Ihres Heizsystems und Umweltfaktoren variieren kann. Er wurde fein abgestimmt, um basierend auf den Kalibrierungsergebnissen eine optimale Leistung zu bieten.",
         "menu_options": {
           "calibrate": "Kalibrierung erneut versuchen",
-          "finish": "Mit der aktuellen Kalibrierung fortfahren"
+          "automatic_gains": "Mit der aktuellen Kalibrierung fortfahren"
         },
         "title": "Kalibrierung abgeschlossen"
       },
@@ -80,7 +81,10 @@
         "data": {
           "minimum_setpoint": "Wert"
         },
-        "description": "Durch Angabe des Überschwingungsschutzwertes wird SAT die Steuerungsparameter entsprechend anpassen, um eine stabile und komfortable Heizumgebung zu erhalten. Diese manuelle Konfiguration ermöglicht es Ihnen, das System basierend auf Ihrer spezifischen Einrichtung fein abzustimmen.\n\nHinweis: Wenn Sie sich nicht sicher über den Überschwingungsschutzwert sind oder den Kalibrierungsprozess nicht durchgeführt haben, wird empfohlen, die Konfiguration abzubrechen und den Kalibrierungsprozess durchzuführen, damit SAT den Wert automatisch für eine optimale Leistung bestimmt.",
+        "data_description": {
+          "minimum_setpoint": "Der minimale Sollwert in °C. Muss über 28,2 °C liegen."
+        },
+        "description": "Geben Sie den minimalen Sollwert Ihres Kessels ein: die niedrigste Vorlauftemperatur, die er bei minimaler Modulation halten kann (der Überschwingungsschutzwert). Er muss über 28,2 °C liegen. Wenn Sie ihn nicht kennen, gehen Sie zurück und kalibrieren Sie, oder lesen Sie in der README nach, wie Sie ihn ermitteln.",
         "title": "Überschwingungsschutz"
       },
       "pid_controller": {
@@ -150,7 +154,7 @@
           "error_monitoring": "Fehlerüberwachung aktivieren",
           "climate_valve_offset": "Klimaventil-Offset",
           "dynamic_minimum_setpoint": "Dynamischer Minimaler Sollwert (Experimentell)",
-          "force_pulse_width_modulation": "Pulsweitenmodulation erzwingen",
+          "allow_unrestricted_modulation": "Uneingeschränkte Modulation erlauben",
           "maximum_consumption": "Maximalverbrauch",
           "maximum_relative_modulation": "Maximale relative Modulation",
           "maximum_relative_modulation_floor": "Untergrenze maximale relative Modulation",
@@ -163,6 +167,7 @@
           "thermal_comfort": "Thermischer Komfort"
         },
         "data_description": {
+          "allow_unrestricted_modulation": "Liegt der berechnete Sollwert über dem minimalen Sollwert, brennt der Kessel durchgehend beim berechneten Sollwert mit freier Modulation; wenn deaktiviert, läuft er immer beim minimalen Sollwert und mit minimaler Modulation und taktet, wenn weniger Wärme benötigt wird.",
           "climate_valve_offset": "Offset zur Anpassung des Öffnungsgrads des Klimaventils.",
           "dynamic_minimum_setpoint": "Aktiviert die dynamische Sollwertanpassung basierend auf der Rücklauftemperatur des Kessels, was auch hilft zu identifizieren, ob Ventile geschlossen sind.",
           "maximum_consumption": "Der maximale Gasverbrauch, wenn der Kessel aktiv ist.",
