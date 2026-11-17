@@ -7,15 +7,14 @@ known bug".
 ## Control logic
 - `schedule_control_heating_loop(force=True)` only runs the loop immediately if
   a run is already pending; otherwise it waits the normal 10 s.
-- Closing all valves doesn't stop an active boiler; valves only gate turning
-  the heater on.
 - For OpenTherm over MQTT, the heater check compares with whether the boiler
   is heating (`device_active`), not with its heating-enabled setting. ON is
   resent every cycle while the boiler is enabled but idle and a valve is open.
-  Whenever heater OFF is requested (HVAC OFF, no valve open, the PWM off
-  phase), OFF is resent every cycle while the boiler is heating, but never sent
-  while it is enabled but idle. EMS-ESP compares with the `heatingoff` setting.
-  Plan step 8 addresses this.
+  Whenever heater OFF is requested (HVAC OFF, no valve open, a missing
+  temperature, the PWM off phase, or a requested setpoint at or below the cold
+  threshold), OFF is resent every cycle while the boiler is heating, but never
+  sent while it is enabled but idle. EMS-ESP compares with the `heatingoff`
+  setting. Plan step 7 addresses this.
 - The heating loop doesn't re-check the HVAC mode after its awaits, so a cycle
   that is running when the HVAC mode changes can still submit the previous
   mode's desired state afterwards; the next cycle corrects it.
@@ -36,9 +35,10 @@ known bug".
   error at setup. Reconfigure them to set a minimum.
 - Flame health stores no average on-time when a cycle completes: the ON→OFF
   transition doesn't record the duration, and the next ON phase seeds the
-  average from its first seconds. PWM treats a missing or short (< 60 s)
-  average as short cycling and, while the flame is off and SAT is not producing
-  hot water, forces its setpoint to the reliable flow temperature + 10 °C.
+  average from its first seconds. In MINIMUM mode, while the flame is off and
+  SAT is not producing hot water, PWM's setpoint adjuster forces its setpoint
+  to the reliable flow temperature + 10 °C when that average is missing or
+  short (< 60 s).
 - The boiler's anti-cycle period (burner min period, minimum 3 min) appears to
   start when heating is re-enabled, not when the flame goes out. In a field
   test the flame relit 3:13 after `heatingoff` was switched off, 6:20 after it
@@ -56,9 +56,9 @@ known bug".
   off before a heat demand and the cold temperature only takes reliable
   readings, so it is not above the flow temperature when the pump starts. This has no
   control effect: the boiler status shows HEATING_UP, WAITING_FOR_FLAME or
-  AT_SETPOINT instead. Flame health no longer treats that phase as transient,
-  so it can report STUCK_OFF after `STUCK_OFF_SECONDS` (300 s) of heat demand
-  without a flame. Accepted.
+  AT_SETPOINT instead. Flame health treats only PREHEATING and PUMP_STARTING
+  as transient, so it can report STUCK_OFF after `STUCK_OFF_SECONDS` (300 s)
+  of heat demand without a flame. Accepted.
 - On EMS-ESP without a configured hot water burner power or flow temperature,
   which is every EMS-ESP user with the default options, the pump overrun after
   a draw counts as reliable at once: only the hot water active flag is a
@@ -201,12 +201,11 @@ known bug".
   sooner.
 
 ## Device communication
-- Only EMS-ESP is reviewed for always-on PWM (docs/pwm-overhaul.md, Scope). On
-  the other backends (OpenTherm over MQTT, serial, ESPHome, simulator, switch,
-  fake), PWM now runs every HEAT cycle and they get the same setpoint and max
+- Only EMS-ESP is reviewed for always-on PWM (see PWM in `design.md`). On the
+  other backends (OpenTherm over MQTT, serial, ESPHome, simulator, switch,
+  fake), PWM runs every HEAT cycle and they get the same setpoint and max
   relative modulation decisions, but their behaviour (heater switching,
-  read-backs, modulation encoding) has not been checked. Tests that fail for
-  this reason are strict xfail with this reason.
+  read-backs, modulation encoding) has not been checked.
 - EMS-ESP on/off values are only recognised as "on"/"off"; with EMS-ESP's
   boolean format set to true/false or 1/0, `hot_water_active`, `device_active`
   and `flame_active` are always False, and the heater channel never gets a
@@ -214,7 +213,7 @@ known bug".
 - OpenTherm over MQTT uses bare `float()`, so a non-numeric payload such as
   "unavailable" raises on access instead of giving None.
 - For OpenTherm over MQTT, a failed publish is logged and swallowed, so the
-  setter completes as if it succeeded. Plan step 8 addresses this.
+  setter completes as if it succeeded. Plan step 7 addresses this.
 - The simulator overrides the coordinator update step without calling the
   base, so `_device_on_since` is never set and its target stays at the minimum
   (10 °C, or the minimum setpoint); the simulator never heats towards the

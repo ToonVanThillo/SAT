@@ -1,8 +1,5 @@
 # SAT design: device communication layer
 
-The PWM overhaul in `docs/pwm-overhaul.md` is in progress; where it differs
-from this document, that document applies.
-
 ## Purpose
 Make communication with the boiler explicit and verifiable: every control cycle
 decides from one consistent view of the boiler, and every command we send is
@@ -29,15 +26,14 @@ minimum setpoint (10 °C), whatever the calculated setpoint; without radiators
 configured, the valves count as open. When the target, inside or outside
 temperature is missing (see the climate inputs under Snapshot), it resets PWM
 and requests heater OFF with the minimum setpoint, without a max relative
-modulation or max setpoint; the climate's setpoint is not updated. When it
-requests heater OFF in HEAT (a missing temperature, no valve open, the PWM off
-phase, a calculated setpoint that is too cold, or a PWM minimum setpoint at or
+modulation or max setpoint; the climate's setpoint is not updated. Otherwise
+it decides from PWM (see PWM). When it requests heater OFF in HEAT (a missing
+temperature, no valve open, the PWM off phase, or a requested setpoint at or
 below the cold threshold), it releases the control setpoint only on backends
 that switch heating off with a separate command, and only once the heater
-channel has
-confirmed heating off; until then, and on a backend whose boiler is kept off by
-a low setpoint, it requests the computed setpoint (10 °C, or the PWM minimum
-setpoint). On EMS-ESP that command is `heatingoff`, under which EMS-ESP itself
+channel has confirmed heating off; until then, and on a backend whose boiler
+is kept off by a low setpoint, it requests the computed setpoint (10 °C, or
+the requested setpoint). On EMS-ESP that command is `heatingoff`, under which EMS-ESP itself
 keeps sending the boiler a flow temperature of 0, so writing it as well is
 redundant. For now only EMS-ESP releases: on backends without channels a
 release leaves the last setpoint on the device, so they keep requesting the
@@ -77,13 +73,13 @@ supports the hot water setpoint, it keeps its direct write path.
   cycle that read it as valid; with thermal comfort the inside temperature is
   computed from the held values. After that, or without a valid value since
   start, it is missing for the decide phase. Held values are kept in memory
-  only. A missing flow temperature is not a missing input; it only sends PWM
-  to idle.
+  only. A missing flow temperature is not a missing input; PWM keeps its duty
+  (see PWM).
 - Until the PID moves into the cycle (plan item 5), the PID, heating curve and
   autotune are updated on sensor events from live values. While the live
   inside or target temperature is missing, these updates are skipped and the
   PID keeps its state; a PID reset requested meanwhile (target, HVAC mode or
-  area change) is done once both are back, without resetting PWM again.
+  area change) is done once both are back.
 
 ## Desired state
 - A `DesiredState` holds one optional value per controllable quantity: control
@@ -213,8 +209,8 @@ did, in order, so a run can be reconstructed from the log alone.
   channel writes, logged before the backend sends: a new value (`send`, with
   the requested value when encoding changed it), a rewrite after a mismatch
   (`resend`, with the read-back) and a release; channel transitions into or
-  out of `DRIFTED` and `OUT_OF_SYNC`; PWM switching on, off or to idle (idle
-  with the reason); a pulse start held for hot water or the hot water delay,
+  out of `DRIFTED` and `OUT_OF_SYNC`; PWM switching on and off (a reset with
+  its reason, at every reset) and its modulation mode changing; a pulse start held for hot water or the hot water delay,
   and the hold ending; a pulse held on for the minimum pulse length beyond its
   duty cycle; overshoot handling starting and ending (evaluated in HEAT cycles
   with all temperatures); inputs going missing, being held, no longer held,
@@ -227,7 +223,8 @@ did, in order, so a run can be reconstructed from the log alone.
   channel, are not logged at info.
 - At debug, one line per cycle after reconciliation, numbered with the
   snapshot's cycle number: the inputs (and which are held), boiler values, PWM
-  state, duty and duty rule, the setpoint rule, the requested setpoint the
+  status, modulation mode, duty and duty rule, a marker on a 100% period's
+  rollover, the setpoint rule, the requested setpoint the
   low-pass filter received this cycle, the heating curve value and the PID
   terms as held when the line is built (these need not add up to the
   requested setpoint: the integral can update and sensor events can arrive in
@@ -264,9 +261,11 @@ every cycle would record a new climate state each time. Control-loop values are
 separate entities or in the diagnostics download.
 - Regular sensors: Error Value, Heating Curve and Calculated Setpoint, for
   comparing on graphs.
-- Diagnostic sensors, without attributes: Proportional, Integral, Derivative,
-  Kp, Ki, Kd, Minimum Setpoint, PWM Duty Cycle (%), Autotune Coefficient,
-  Flame Average On-Time. All diagnostic entities are disabled by default.
+- Diagnostic sensors, without attributes (an enum lists only its options):
+  Proportional, Integral, Derivative, Kp, Ki, Kd, Minimum Setpoint, PWM
+  Status, PWM Mode, PWM Cycles Per Hour, PWM Duty Cycle (%), Autotune
+  Coefficient, Flame Average On-Time. All diagnostic entities are disabled by
+  default.
 - The diagnostics download has the other control values: the PID's error and
   the error source, the control setpoint, relative modulation state and value,
   whether a valve is open, the boiler's cold temperature, tracking and
@@ -279,7 +278,115 @@ separate entities or in the diagnostics download.
   restored preset has no target to return to, leaving it keeps the current
   target and logs a warning.
 
-## PWM cycle frequency
+## PWM
+In HEAT, every control cycle runs PWM; continuous heating is a PWM period at
+100% duty. PWM gives a status (ON or OFF), a duty and a modulation mode.
+
+**Minimum setpoint**
+- Backends with setpoint management require a minimum setpoint above the cold
+  threshold (28.2 °C), so a pulse at the minimum heats. It is calibrated with
+  the overshoot protection calibration or entered manually; a failed
+  calibration, or a result at or below the threshold, shows the manual entry
+  with an error. After the minimum the config flow continues to the automatic
+  gains step.
+- An entry whose minimum is missing or at or below the threshold logs an error
+  at setup; a missing minimum counts as 10 °C.
+- The effective minimum setpoint is the configured one, raised by the dynamic
+  minimum setpoint (v1 or v2) when that is enabled.
+
+**Modulation mode**
+- UNRESTRICTED when the option "Allow unrestricted modulation" (advanced
+  options, on by default, for every backend with setpoint management) is on
+  and the calculated setpoint is above the effective minimum setpoint;
+  otherwise MINIMUM. Backends without setpoint management are always MINIMUM.
+  With the option off, the boiler burns at the minimum setpoint and minimum
+  modulation even at 100% duty.
+- The mode compares the calculated setpoint with the effective minimum as of
+  the start of the cycle; with dynamic minimum v2 that is the setpoint
+  adjuster's value from the previous cycle. The mode has no hysteresis: the
+  calculated setpoint is already low-pass filtered.
+- A reset sets the mode to MINIMUM.
+
+**Duty**
+- UNRESTRICTED: 100%. MINIMUM: the duty formula.
+- In the mid branch the off-time is the period minus the on-time, so a
+  mid-duty cycle lasts exactly 3600/N.
+- A period whose off-time is 0 is a 100% period; it lasts 2·3600/N.
+- The boiler temperature the duty formula uses is smoothed over the first
+  180 s of each period, also after a rollover, and follows the flow
+  temperature for the rest of the pulse.
+- Without a flow temperature, UNRESTRICTED still gives 100%; MINIMUM keeps the
+  last duty, and before the first duty since start or a reset, no pulse
+  starts.
+
+**Pulses and off phases**
+- A started pulse lasts at least 180 s; only a reset ends it earlier.
+- An off phase follows only a pulse end, also one caused by a reset, and lasts
+  at least 180 s, also when the duty has risen to 100% meanwhile. A start
+  waits for the off-time of the current duty, so a change to UNRESTRICTED
+  shortens a running off phase to its 180 s minimum. Before the first pulse
+  since start, a start is due at once.
+- There is no limit on the number of pulses per hour: the minimum pulse and
+  the minimum off phase bound short cycling.
+- Below the minimum duty no pulse starts, also when the flame is on: PWM does
+  not take over burns it did not start.
+- No pulse starts while the boiler is producing hot water, nor within the
+  configured hot water delay after a hot water burn ends (default 0 s). A
+  pulse that is already on is not affected.
+- When a 100% period ends, the next period starts in the same update (a
+  rollover): the status stays ON and no heater OFF is requested in between. A
+  rollover is not a pulse start: it is not held for hot water and does not
+  restart the minimum pulse; N is latched again.
+- When the duty drops below 100% during a period, the pulse ends once the new
+  on-time has passed since the period started, but not before 180 s since the
+  pulse started.
+- A mode change during a pulse starts a new period, as a rollover does; the
+  requested setpoint and max relative modulation change in place. A start
+  from OFF is a pulse start in either mode.
+
+**Decide**
+In HEAT, with all temperatures present and a valve open:
+
+| PWM              | Control setpoint           | Max relative modulation | Heater |
+|------------------|----------------------------|-------------------------|--------|
+| OFF              | minimum (10 °C) or release | by mode¹                | OFF    |
+| ON, MINIMUM      | effective minimum setpoint | minimum¹                | ON     |
+| ON, UNRESTRICTED | calculated setpoint        | configured maximum      | ON     |
+
+¹ On backends whose max relative modulation limits hot water (not EMS-ESP),
+hot water and a cycle that requests the heater OFF give the configured
+maximum; this includes every OFF cycle.
+
+- Max relative modulation is decided from the cycle's own request, not the
+  boiler's read-back. The relative modulation states are
+  HEATER_OFF_REQUESTED, HOT_WATER, MINIMUM and UNRESTRICTED.
+- The heater is OFF whenever the requested setpoint is at or below the cold
+  threshold, which only a minimum from before it was required can cause.
+- Overshoot handling is a boiler status; it does not change PWM.
+
+**Resets**
+- No open valve, a missing temperature and an HVAC mode change reset PWM. A
+  reset ends a running pulse like a normal pulse end; a reset while OFF leaves
+  a running off phase as it is. Every reset logs "pwm OFF (reason)", so once
+  per control cycle while it lasts.
+- A target change, also of an area, does not reset PWM: it only changes the
+  calculated setpoint. Selecting the HVAC mode that is already active changes
+  nothing.
+
+**Consumers**
+- Flame health: the PWM rules (more than 8 cycles/h, or `PWM_SHORT`) apply to
+  pulses below 100% duty; the continuous rules (more than 3 cycles/h with
+  short burns) apply to 100% periods and off phases.
+- Dynamic minimum setpoint v1: its normal mode requires UNRESTRICTED.
+- Dynamic minimum setpoint v2: a control state reset (a thermostat target
+  change or an HVAC mode change, not an area target change) resets the
+  setpoint adjuster and the setpoint it gave. It adjusts only in MINIMUM mode:
+  during an UNRESTRICTED burn the flow follows the calculated setpoint, and
+  the adjuster would raise the minimum towards it.
+- Sensors: PWM Status shows ON or OFF; PWM Mode (an enum of minimum and
+  unrestricted) shows the mode; PWM Duty Cycle shows 100% for 100% periods.
+
+**Cycle frequency**
 The number of PWM cycles per hour, N, follows the outside temperature captured
 at the start of each cycle.
 - N is linear between two configured points (default 4 at 0 °C, 2 at 12 °C),
@@ -293,15 +400,6 @@ at the start of each cycle.
 - N is latched when a pulse starts and holds for that pulse and the off phase
   after it, until the next pulse starts or the off phase exceeds twice the
   latched normal period.
-- A started pulse lasts at least 180 s; only a reset (also when no valve is
-  open or a temperature is missing), a disable, missing values or an HVAC mode other than HEAT end it
-  earlier.
-- Below the minimum duty no pulse starts, also when the flame is on: PWM does
-  not take over burns it did not start.
-- No pulse starts while the boiler is producing hot water, nor within the
-  configured hot water delay after a hot water burn ends (default 0 s). A
-  pulse that is already on is not affected. A held start moves PWM from idle
-  to off, so the climate does not heat continuously meanwhile.
 - N is updated every cycle, also in HVAC mode OFF and when a temperature is
   missing. A diagnostic "PWM Cycles Per Hour" sensor (measurement, unit
   cycles/h, no attributes) shows the N in effect.
@@ -417,40 +515,40 @@ too high until the pump runs again.
 4. Remove the synchro binary sensors.
 5. Update the PID and heating curve inside the control cycle from the captured
    inputs, instead of on sensor events.
-6. Relative modulation keeps the current max relative modulation while the
-   boiler setpoint is at the minimum (COLD), instead of requesting the maximum.
-7. A Calculated Setpoint sensor.
-8. Migrate the other backends to channels; those that switch heating off with a
+6. A Calculated Setpoint sensor.
+7. Migrate the other backends to channels; those that switch heating off with a
    separate command then also release the control setpoint on heater OFF in
    HEAT.
-9. EMS-ESP: in HEAT, heater OFF releases the control setpoint instead of
+8. EMS-ESP: in HEAT, heater OFF releases the control setpoint instead of
    requesting the minimum.
-10. PWM cycles per hour from the outside temperature, and a minimum pulse of
-    180 s.
-11. Timeline logging: traced boiler values on arrival, channel writes and edges
+9. PWM cycles per hour from the outside temperature, and a minimum pulse of
+   180 s.
+10. Timeline logging: traced boiler values on arrival, channel writes and edges
     at info, one cycle line per cycle at debug.
-12. PWM starts no pulse below the minimum duty, also with the flame on.
-13. Burns classified as hot water or heating; flame statistics count heating
+11. PWM starts no pulse below the minimum duty, also with the flame on.
+12. Burns classified as hot water or heating; flame statistics count heating
     burns only.
-14. Follow-ups to burns: last burn duration counts heating burns only, the
+13. Follow-ups to burns: last burn duration counts heating burns only, the
     setpoint adjuster pauses during hot water, PWM waits for hot water and the
     hot water delay.
-15. In HEAT, no open valve resets PWM and requests the minimum setpoint, so the
+14. In HEAT, no open valve resets PWM and requests the minimum setpoint, so the
     heater is OFF.
-16. Pump state and a reliable flow temperature for control; pump starting from
+15. Pump state and a reliable flow temperature for control; pump starting from
     the pump signal.
-17. Missing inputs are held for 5 minutes, then the heater is OFF; staleness
+16. Missing inputs are held for 5 minutes, then the heater is OFF; staleness
     from `last_reported`; the event-driven PID keeps its state while the
     inside or target temperature is missing.
-18. Flow reliability from the hot water signals, also with the flame off,
+17. Flow reliability from the hot water signals, also with the flame off,
     instead of waiting for the pump after hot water.
-19. Restart restores only user settings, from restore data; the PID, PWM,
+18. Restart restores only user settings, from restore data; the PID, PWM,
     control setpoint and autotune start fresh.
-20. The climate keeps only standard attributes; control-loop values become
+19. The climate keeps only standard attributes; control-loop values become
     diagnostic sensors or go to the diagnostics download; all diagnostic
     entities are disabled by default.
-21. Timeline: the cycle line shows the requested setpoint the low-pass filter
+20. Timeline: the cycle line shows the requested setpoint the low-pass filter
     received, the heating curve value and the PID terms.
+21. Always-on PWM: PWM runs every HEAT cycle with a modulation mode;
+    continuous heating is a 100% period (see PWM).
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
@@ -486,3 +584,9 @@ too high until the pump runs again.
   hot water.
 - Which integrations don't update `last_reported` on a report of the same
   value.
+- Whether the PWM mode needs hysteresis. Mode flips more often than the
+  MINIMUM on-time keep a MINIMUM pulse burning without an off phase, since
+  each flip during a pulse starts a new period. A candidate: UNRESTRICTED only
+  when the calculated setpoint exceeds the effective minimum by more than
+  2 °C, back to MINIMUM only at or below it.
+- Whether an HVAC mode change should reset PWM.

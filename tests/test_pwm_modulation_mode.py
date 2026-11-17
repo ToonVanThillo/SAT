@@ -1,4 +1,4 @@
-"""PWM modulation mode (overhaul plan step 5): UNRESTRICTED when unrestricted modulation is allowed and the requested setpoint is above
+"""PWM modulation mode: UNRESTRICTED when unrestricted modulation is allowed and the requested setpoint is above
 the minimum setpoint, otherwise MINIMUM; UNRESTRICTED gives a 100% period, and a mode change while ON starts a new period."""
 import json
 import logging

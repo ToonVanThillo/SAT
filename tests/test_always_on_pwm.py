@@ -1,4 +1,4 @@
-"""Always-on PWM (overhaul plan step 6): in HEAT with a valve open the climate always runs PWM and decides from its status and mode.
+"""Always-on PWM: in HEAT with a valve open the climate always runs PWM and decides from its status and mode.
 
 PWM OFF requests heater OFF at the minimum setpoint of 10 °C, released once heater OFF is confirmed; ON
 with MINIMUM requests the effective minimum setpoint and the minimum max relative modulation; ON with UNRESTRICTED requests the calculated
