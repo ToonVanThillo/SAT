@@ -103,11 +103,6 @@ known bug".
   while the status is ON (the low-duty case), and flame health's PWM_SHORT
   check cannot fire then. Follows from the
   minimum-pulse rule.
-- Flame health applies its PWM rules whenever PWM is ON, including
-  unrestricted 100% periods. It compares the median burn with the on-time of
-  2·3600/N, so a boiler that cycles on its own during what used to be
-  continuous heating shows PWM_SHORT instead of being judged by the continuous
-  rules.
 - A PWM reset (valves closed, a missing temperature after its 5-minute hold,
   an HVAC mode change) ends a running pulse at once, also before its 180 s
   minimum pulse; the off phase that follows still lasts at least 180 s. A held

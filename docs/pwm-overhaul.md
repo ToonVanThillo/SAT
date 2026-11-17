@@ -121,8 +121,9 @@ maximum; this includes every OFF cycle.
   Selecting the HVAC mode that is already active changes nothing.
 
 ## Consumers
-- Flame health: the PWM rules (`PWM_SHORT`, 8 cycles/h) apply to pulses
-  below 100% duty; the continuous rules (3 cycles/h) to 100% periods.
+- Flame health: the PWM rules (more than 8 cycles/h, or `PWM_SHORT`) apply to
+  pulses below 100% duty; the continuous rules (more than 3 cycles/h with
+  short burns) apply to 100% periods and off phases.
 - Dynamic minimum setpoint v1: its normal mode requires UNRESTRICTED.
 - Dynamic minimum setpoint v2: a control state reset (a thermostat target
   change or an HVAC mode change, not an area target change) resets the
@@ -176,7 +177,7 @@ maximum; this includes every OFF cycle.
 9. Minimum setpoint required in the config flow; "Allow unrestricted
    modulation" replaces "Force pulse width modulation"; the
    `overshoot_protection` flag is removed. No config entry migration.
-10. Flame health follows the mode.
+10. Flame health judges 100% periods by the continuous rules.
 11. A "PWM Mode" sensor; timeline mode lines and the cycle line's mode and
     rollover marker.
 12. `design.md` and `known-issues.md` updated; this document is folded in.

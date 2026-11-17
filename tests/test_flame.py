@@ -3,17 +3,27 @@
 The first observation only seeds the flame state, and a burn already on at that moment is not counted as a cycle.
 """
 import logging
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import callback
 
-from custom_components.sat.const import CONF_MQTT_TOPIC
+from custom_components.sat.const import (
+    CONF_MQTT_TOPIC,
+    FlameStatus,
+    ModulationMode,
+    PWMStatus,
+)
 from custom_components.sat.flame import Flame, HotWaterSignal
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
+from custom_components.sat.pwm import PWMState
 from tests.conftest import TIMELINE, advance, boiler, current, flame_transitions
 from tests.const import IDLE, ems_entry
+
+PULSE = PWMState(status=PWMStatus.ON, duty_cycle=(450, 450), mode=ModulationMode.MINIMUM)
+FULL = PWMState(status=PWMStatus.ON, duty_cycle=(1800, 0), mode=ModulationMode.MINIMUM)
 
 
 def observe(flame: Flame, freezer: FrozenDateTimeFactory, seconds: float, flame_active: bool) -> None:
@@ -132,6 +142,89 @@ def test_a_partial_burn_logs_its_kind(flame, freezer, caplog):
     observe(flame, freezer, 60, False)
 
     assert flame_transitions(caplog) == ["flame off, hot water (burner_power) (burn started before the first observation, not counted)"]
+
+
+# Health under PWM: the PWM rules judge pulses below 100% duty, the continuous rules judge 100% periods
+
+def burn_history(flame: Flame, freezer: FrozenDateTimeFactory, pwm_state: PWMState | None, burns: int, off_seconds: float, on_seconds: float) -> None:
+    """Run `burns` heating burns of `on_seconds`, each after `off_seconds` of flame off, reporting `pwm_state` throughout."""
+    flame.update(boiler_state=boiler(False), pwm_state=pwm_state)
+    for _ in range(burns):
+        freezer.tick(timedelta(seconds=off_seconds))
+        flame.update(boiler_state=boiler(True), pwm_state=pwm_state)
+        freezer.tick(timedelta(seconds=on_seconds))
+        flame.update(boiler_state=boiler(False), pwm_state=pwm_state)
+
+
+# (burns, off seconds before each 20 s burn, status under the continuous rules): 8 in the last hour, or 3
+SHORT_BURNS = [
+    pytest.param(8, 400, FlameStatus.SHORT_CYCLING, id="more_than_3_per_hour"),
+    pytest.param(3, 1500, FlameStatus.HEALTHY, id="3_per_hour"),
+]
+
+# (burns, off seconds, on seconds): short and long burns, few and many per hour
+HISTORIES = [
+    pytest.param(3, 1500, 20, id="few_short"),
+    pytest.param(8, 400, 20, id="many_short"),
+    pytest.param(3, 600, 450, id="few_long"),
+    pytest.param(10, 250, 100, id="many_medium"),
+    pytest.param(3, 100, 1000, id="few_very_long"),
+]
+
+
+@pytest.mark.parametrize("mode", list(ModulationMode))
+@pytest.mark.parametrize(("burns", "off_seconds", "expected"), SHORT_BURNS)
+def test_a_100_percent_period_is_judged_by_the_continuous_rules(flame, freezer, mode, burns, off_seconds, expected):
+    burn_history(flame, freezer, replace(FULL, mode=mode), burns, off_seconds, 20)
+
+    assert flame.health_status == expected
+
+
+@pytest.mark.parametrize(("burns", "off_seconds"), [pytest.param(8, 400, id="more_than_3_per_hour"), pytest.param(3, 1500, id="3_per_hour")])
+def test_a_pulse_below_100_percent_is_judged_by_the_pwm_rules(flame, freezer, burns, off_seconds):
+    burn_history(flame, freezer, PULSE, burns, off_seconds, 20)
+
+    assert flame.health_status == FlameStatus.PWM_SHORT
+
+
+@pytest.mark.parametrize("mode", list(ModulationMode))
+@pytest.mark.parametrize(("burns", "off_seconds", "on_seconds"), HISTORIES)
+def test_a_100_percent_period_is_judged_like_no_pwm_state(flame, freezer, mode, burns, off_seconds, on_seconds):
+    burn_history(flame, freezer, replace(FULL, mode=mode), burns, off_seconds, on_seconds)
+    other = Flame()
+    burn_history(other, freezer, None, burns, off_seconds, on_seconds)
+
+    assert flame.health_status == other.health_status
+
+
+@pytest.mark.parametrize(("burns", "off_seconds", "on_seconds"), HISTORIES)
+def test_status_off_after_pulses_is_judged_by_the_continuous_rules(flame, freezer, burns, off_seconds, on_seconds):
+    burn_history(flame, freezer, replace(PULSE, status=PWMStatus.OFF), burns, off_seconds, on_seconds)
+    other = Flame()
+    burn_history(other, freezer, None, burns, off_seconds, on_seconds)
+
+    assert flame.health_status != FlameStatus.PWM_SHORT
+    assert flame.health_status == other.health_status
+
+
+def test_switching_between_a_pulse_and_a_100_percent_period_changes_the_rule_set(flame, freezer):
+    burn_history(flame, freezer, PULSE, 3, 1500, 20)
+    assert flame.health_status == FlameStatus.PWM_SHORT
+
+    flame.update(boiler_state=boiler(False), pwm_state=FULL)
+    assert flame.health_status == FlameStatus.HEALTHY
+
+    flame.update(boiler_state=boiler(False), pwm_state=PULSE)
+    assert flame.health_status == FlameStatus.PWM_SHORT
+
+
+def test_no_pwm_state_keeps_the_previous_100_percent_judgement(flame, freezer):
+    burn_history(flame, freezer, FULL, 3, 1500, 20)
+    assert flame.health_status == FlameStatus.HEALTHY
+
+    flame.update(boiler_state=boiler(False))
+
+    assert flame.health_status == FlameStatus.HEALTHY
 
 
 # Through the coordinator

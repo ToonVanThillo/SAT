@@ -371,13 +371,14 @@ class Flame:
             self._health_status = FlameStatus.STUCK_OFF
             return
 
-        # PWM-driven demand
-        if self._last_pulse_width_modulation_state is not None and self._last_pulse_width_modulation_state.status == PWMStatus.ON:
+        # PWM-driven demand: pulses below 100% duty; 100% periods fall to the continuous rules
+        pwm_state = self._last_pulse_width_modulation_state
+        if pwm_state is not None and pwm_state.status == PWMStatus.ON and pwm_state.duty_cycle is not None and pwm_state.duty_cycle[1] > 0:
             if cycles_per_hour > self.MAX_CYCLES_PER_HOUR_PWM:
                 self._health_status = FlameStatus.SHORT_CYCLING
                 return
 
-            if median_on_seconds is not None and median_on_seconds < self.MEDIAN_TOLERANCE * self._last_pulse_width_modulation_state.duty_cycle[0]:
+            if median_on_seconds is not None and median_on_seconds < self.MEDIAN_TOLERANCE * pwm_state.duty_cycle[0]:
                 self._health_status = FlameStatus.PWM_SHORT
                 return
 
