@@ -122,6 +122,7 @@ class PWM:
 
         self._status: PWMStatus = PWMStatus.OFF
         self._mode: ModulationMode = ModulationMode.MINIMUM
+        self._rolled_over: bool = False
         # Whether a pulse has ended since start, also one ended by a reset. Until then a start is due at once; after it, the off phase lasts
         # at least the minimum off time. It stays set through later ON phases, which is harmless as a start needs the status OFF
         self._pulse_ended: bool = False
@@ -146,14 +147,16 @@ class PWM:
         """Reset the PWM control, logging "pwm OFF (`reason`)" on the timeline at every call.
 
         A running pulse ends at once, like a normal pulse end, also before the minimum pulse; a running off phase is left as it is. The duty
-        is cleared, so no pulse starts until an update computes one; a hot water hold ends and the mode is MINIMUM.
+        is cleared, so no pulse starts until an update computes one; a hot water hold ends and the mode is MINIMUM, logged after the
+        "pwm OFF" line if it changes.
         """
         timeline.LOGGER.info("pwm OFF (%s)", reason)
         if self._status == PWMStatus.ON:
             self._end_pulse()
 
         self._set_held(None)
-        self._mode = ModulationMode.MINIMUM
+        self._set_mode(ModulationMode.MINIMUM)
+        self._rolled_over = False
         # A missing-flow episode ends with the reset, so the next one is warned about again
         self._flow_missing = False
 
@@ -190,13 +193,12 @@ class PWM:
         start or a reset, no pulse starts.
         """
         flow_temperature = boiler.reliable_flow_temperature
+        self._rolled_over = False
 
         # The mode is decided before the duty, which follows it; a mode change while ON starts a new period, so the new duty runs from now
         mode = ModulationMode.UNRESTRICTED if allow_unrestricted and requested_setpoint > minimum_setpoint else ModulationMode.MINIMUM
-        if mode != self._mode:
-            self._mode = mode
-            if self._status == PWMStatus.ON:
-                self._start_period(monotonic(), flow_temperature)
+        if self._set_mode(mode) and self._status == PWMStatus.ON:
+            self._start_period(monotonic(), flow_temperature)
 
         elapsed = monotonic() - self._last_update
         period_elapsed = monotonic() - self._period_start
@@ -269,6 +271,7 @@ class PWM:
         # A 100% period that ends rolls over into the next: the pulse goes on, unaffected by a hold
         if self._status == PWMStatus.ON and self._duty_cycle[1] == 0 and period_elapsed >= self._duty_cycle[0]:
             self._start_period(monotonic(), flow_temperature)
+            self._rolled_over = True
             return
 
         # A started pulse runs at least the minimum on time
@@ -299,6 +302,15 @@ class PWM:
         self._period_start = now
         self._latched_cycles_per_hour = self._cycles_per_hour
         self._last_boiler_temperature = flow_temperature
+
+    def _set_mode(self, mode: ModulationMode) -> bool:
+        """Set the modulation mode; a change is logged on the timeline. Returns whether the mode changed."""
+        if mode == self._mode:
+            return False
+
+        self._mode = mode
+        timeline.LOGGER.info("pwm mode %s", mode.name)
+        return True
 
     def _hot_water_hold(self, boiler: "BoilerState", flame: "FlameState") -> str | None:
         """Why no pulse may start: the boiler produces hot water, or the hot water delay after a hot water burn runs; None if none applies."""
@@ -371,6 +383,11 @@ class PWM:
     def mode(self) -> ModulationMode:
         """The modulation mode as of the last update; MINIMUM initially and after a reset."""
         return self._mode
+
+    @property
+    def rolled_over(self) -> bool:
+        """True when the last update rolled a 100% period over into the next; False after a reset."""
+        return self._rolled_over
 
     @property
     def cycles_per_hour(self) -> int:

@@ -16,7 +16,7 @@ from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
 from .channels import ChannelStatus, Quantity, diagnostic_status, held_problem_expiry
-from .const import CONF_MODE, MODE_SERIAL, CONF_NAME, DOMAIN, COORDINATOR, CLIMATE, MODE_SIMULATOR, CONF_MINIMUM_CONSUMPTION, CONF_MAXIMUM_CONSUMPTION, SIGNAL_CHANNELS_UPDATED, SIGNAL_CLIMATE_UPDATED, SIGNAL_PWM_UPDATED, PWMStatus
+from .const import CONF_MODE, MODE_SERIAL, CONF_NAME, DOMAIN, COORDINATOR, CLIMATE, MODE_SIMULATOR, CONF_MINIMUM_CONSUMPTION, CONF_MAXIMUM_CONSUMPTION, SIGNAL_CHANNELS_UPDATED, SIGNAL_CLIMATE_UPDATED, SIGNAL_PWM_UPDATED, ModulationMode, PWMStatus
 from .coordinator import SatDataUpdateCoordinator
 from .entity import SatEntity, SatClimateEntity
 from .serial import sensor as serial_sensor
@@ -70,6 +70,7 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
     if coordinator.supports_setpoint_management:
         _async_add_entities([
             SatPWMStatusSensor(coordinator, _config_entry),
+            SatPWMModeSensor(coordinator, _config_entry, climate),
             SatPWMCyclesPerHourSensor(coordinator, _config_entry, climate),
             SatPWMDutyCycleSensor(coordinator, _config_entry, climate),
         ])
@@ -404,6 +405,35 @@ class SatPWMStatusSensor(SatEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         return self._status.value
+
+
+class SatPWMModeSensor(SatClimateEntity, SensorEntity):
+    """Diagnostic modulation mode of the PWM controller: minimum or unrestricted."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: SatDataUpdateCoordinator, config_entry: ConfigEntry, climate: SatClimate) -> None:
+        super().__init__(coordinator, config_entry, climate)
+
+        self._attr_options = [m.value for m in ModulationMode]
+        self._attr_name = "PWM Mode"
+        self._attr_unique_id = f"{config_entry.data[CONF_NAME].lower()}-pwm-mode"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        signal = SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id)
+        self.async_on_remove(async_dispatcher_connect(self.hass, signal, self._on_pwm_updated))
+
+    @callback
+    def _on_pwm_updated(self, _status: PWMStatus) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> str:
+        return self._climate.pwm.mode.value
 
 
 class SatPWMCyclesPerHourSensor(SatClimateEntity, SensorEntity):

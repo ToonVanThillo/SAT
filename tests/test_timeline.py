@@ -19,12 +19,14 @@ from custom_components.sat.const import (
 from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.fake import SatFakeCoordinator
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
-from tests.conftest import TIMELINE, advance
+from tests.conftest import TIMELINE, advance, run_one_loop
 from tests.const import IDLE, ems_entry, otgw_entry, with_data
 from tests.test_climate_loop import run_loop
 from tests.test_mqtt_ems import start
 
-BRANCHES = {"low-duty", "low", "mid", "high", "max"}
+BRANCHES = {"low-duty", "low", "mid", "high", "max", "unrestricted"}
+# The pwm segment of a cycle line with a duty: status, mode, duty, on/off times and branch, then an optional hold and rollover marker
+PWM_SEGMENT = re.compile(r"pwm (ON|OFF) (MINIMUM|UNRESTRICTED) duty=[\d.]+% \d+/\d+s \(([^)]+)\)(?: hold=[a-z ]+)?( rollover)?")
 
 
 def timeline(caplog, level=logging.INFO, phase="call") -> list[str]:
@@ -461,9 +463,8 @@ async def test_pwm_cycle_line_has_state_duty_and_branch_and_edges_log_once(hass,
     await run_loop(climate, mqtt_mock, published)
 
     pwm_part = next(p for line in cycle_lines(caplog) for p in segments(line) if p.startswith("pwm "))
-    assert "%" in pwm_part
-    branch = re.search(r"\(([^)]+)\)$", pwm_part)
-    assert branch is not None and branch.group(1) in BRANCHES, pwm_part
+    match = PWM_SEGMENT.fullmatch(pwm_part)
+    assert match is not None and match.group(2) == "MINIMUM" and match.group(3) in BRANCHES, pwm_part
     assert len([m for m in timeline(caplog) if m.startswith("pwm ON (")]) == 1
     assert "pwm OFF" not in timeline(caplog)
 
@@ -522,6 +523,59 @@ async def test_control_setpoint_release_edge_logged_once(loop_entry, climate, bo
 
     assert timeline(caplog).count("control setpoint requested again") == 1
     assert timeline(caplog).count("control setpoint released (heater off)") == 1
+
+
+# The modulation mode: mode lines and the cycle line's mode and rollover marker
+
+def pwm_segment(line: str) -> str:
+    """The pwm segment of a cycle line."""
+    return next(p for p in segments(line) if p.startswith("pwm "))
+
+
+def mode_lines(caplog) -> list[str]:
+    return [m for m in timeline(caplog) if m.startswith("pwm mode ")]
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_cycle_line_shows_the_unrestricted_mode(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
+    await start_heating(climate, boiler_data, caplog)
+    await climate.async_control_heating_loop()
+
+    [line] = cycle_lines(caplog)
+    tokens = pwm_segment(line).split()
+    assert tokens[:3] == ["pwm", "ON", "UNRESTRICTED"]
+    assert "(unrestricted)" in tokens
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_a_mode_change_logs_one_mode_line_and_a_steady_mode_none(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
+    await start_heating(climate, boiler_data, caplog)
+    await climate.async_control_heating_loop()
+    assert mode_lines(caplog) == ["pwm mode UNRESTRICTED"]
+
+    for _ in range(4):
+        freezer.tick(60)
+        await boiler_data(heatingoff="on")
+        await climate.async_control_heating_loop()
+
+    assert climate.pwm.mode.name == "UNRESTRICTED"
+    assert mode_lines(caplog) == ["pwm mode UNRESTRICTED"]
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_rollover_marker_shows_only_in_the_cycle_where_a_100_percent_period_rolls_over(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
+    # N=2 at the default outside temperature: a 100% period lasts 3600 s, so with a cycle every 600 s it rolls over in the cycle at 3600 s
+    await start_heating(climate, boiler_data, caplog)
+    found = []
+    for _ in range(9):
+        new = await run_one_loop(hass, climate, caplog, len(caplog.records))
+        [line] = [m for m in new if m.startswith("cycle ")]
+        found.append(pwm_segment(line))
+        freezer.tick(600)
+
+    assert [part.split()[:3] for part in found] == [["pwm", "ON", "UNRESTRICTED"]] * 9
+    assert [part.endswith(" rollover") for part in found] == [False] * 6 + [True] + [False] * 2
+    assert not any("rollover" in m for m in timeline(caplog))
 
 
 # PWM.duty_cycle_branch, with the names the spec lists

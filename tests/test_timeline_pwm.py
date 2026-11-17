@@ -1,11 +1,12 @@
-"""Timeline lines of the PWM controller: the reset line with its reason, the missing values warning and the minimum pulse."""
+"""Timeline lines of the PWM controller: the reset line with its reason, the mode lines, the missing values warning and the minimum pulse."""
 import logging
+from itertools import pairwise
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from custom_components.sat.const import BoilerStatus, PWMStatus
+from custom_components.sat.const import BoilerStatus, ModulationMode, PWMStatus
 from tests.conftest import TIMELINE
 from tests.test_pwm_cycles import (
     Clock,
@@ -182,3 +183,82 @@ async def test_no_minimum_pulse_line_when_the_duty_cycle_keeps_the_pulse_on(cloc
 
     assert pwm.status == PWMStatus.ON
     assert lines(caplog, "pwm ON held") == []
+
+
+# Mode lines
+
+@pytest.mark.parametrize("allow", [True, False])
+async def test_the_number_of_mode_lines_equals_the_number_of_mode_transitions(clock, caplog, allow):
+    pwm = make_pwm()
+    shown = [pwm.mode]
+    # A scripted run: (duty, seconds, minimum setpoint) mixing both sides of the minimum, with resets in between
+    script = [(0.5, 0, 10.0), (0.5, 5, 10.0), (0.5, 5, 40.0), (0.5, 5, 10.0), (0.5, 5, 40.0), (0.2, 300, 10.0), (0.9, 700, 10.0), (0.5, 5, 10.0)]
+    resets = {3, 6}
+    for index, (duty, seconds, minimum) in enumerate(script):
+        if index in resets:
+            pwm.reset("script")
+            shown.append(pwm.mode)
+        await step(pwm, clock, duty, seconds, minimum_setpoint=minimum, allow_unrestricted=allow)
+        shown.append(pwm.mode)
+
+    transitions = [mode for previous, mode in pairwise(shown) if mode != previous]
+    assert [line.removeprefix("pwm mode ") for line in lines(caplog, "pwm mode ")] == [mode.name for mode in transitions]
+    if allow:
+        assert transitions
+    else:
+        assert transitions == []
+
+
+async def test_mode_flips_during_a_pulse_log_one_line_each_keep_the_pulse_on_and_never_roll_over(clock, caplog):
+    pwm = make_pwm()
+    await step(pwm, clock, 0.5, allow_unrestricted=True)
+    assert pwm.status == PWMStatus.ON
+    caplog.clear()
+
+    for index in range(6):
+        unrestricted = index % 2 == 1  # MINIMUM, UNRESTRICTED, ...
+        await step(pwm, clock, 0.5, 10, allow_unrestricted=unrestricted)
+        assert pwm.status == PWMStatus.ON
+        assert pwm.rolled_over is False
+        assert pwm.mode == (ModulationMode.UNRESTRICTED if unrestricted else ModulationMode.MINIMUM)
+
+    assert lines(caplog, "pwm ") == ["pwm mode MINIMUM", "pwm mode UNRESTRICTED"] * 3
+
+
+async def test_a_reset_from_unrestricted_logs_the_minimum_mode_after_the_off_line(clock, caplog):
+    pwm = make_pwm()
+    await step(pwm, clock, 0.5, allow_unrestricted=True)
+    caplog.clear()
+
+    pwm.reset("because")
+    pwm.reset("because")
+
+    assert lines(caplog, "pwm") == ["pwm OFF (because)", "pwm mode MINIMUM", "pwm OFF (because)"]
+    assert pwm.mode == ModulationMode.MINIMUM
+
+
+# The rollover flag
+
+@pytest.mark.parametrize("duty, allow_unrestricted", [(1.0, False), (0.5, True)], ids=["max", "unrestricted"])
+async def test_rolled_over_is_set_only_by_the_update_that_rolls_a_100_percent_period_over(clock, caplog, duty, allow_unrestricted):
+    pwm = make_pwm()  # N=4: a 100% period lasts 1800 s
+    assert pwm.rolled_over is False
+
+    await step(pwm, clock, duty, allow_unrestricted=allow_unrestricted)
+    assert pwm.duty_cycle == (1800, 0)
+    assert pwm.rolled_over is False
+    await step(pwm, clock, duty, 1799, allow_unrestricted=allow_unrestricted)
+    assert pwm.rolled_over is False
+    await step(pwm, clock, duty, 1, allow_unrestricted=allow_unrestricted)
+    assert pwm.rolled_over is True
+    await step(pwm, clock, duty, 1, allow_unrestricted=allow_unrestricted)
+    assert pwm.rolled_over is False
+
+    # Rolled over again at 3600 s, then cleared by a reset
+    await step(pwm, clock, duty, 1799, allow_unrestricted=allow_unrestricted)
+    assert pwm.rolled_over is True
+    pwm.reset()
+    assert pwm.rolled_over is False
+
+    assert pwm.status == PWMStatus.OFF
+    assert not [line for line in lines(caplog) if "roll" in line]

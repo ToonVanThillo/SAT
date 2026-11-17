@@ -11,7 +11,7 @@ from tests.test_pwm_cycles import Clock, make_pwm, start_pulse, step
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
 from tests.test_pwm_hot_water import update as hot_water_update
 
-PWM_LINES = ("pwm ON", "pwm OFF", "pwm hold")
+PWM_LINES = ("pwm ON", "pwm OFF", "pwm hold", "pwm mode")
 
 
 @pytest.fixture
@@ -78,10 +78,13 @@ async def test_a_hot_water_hold_does_not_stop_a_rollover(clock, caplog, hot_wate
 
     # Hot water (or its delay) from just before the period end, at 3600 s, until after it
     await hot_water_update(pwm, clock, 3590, duty=1.0, hot_water=hot_water, since=since)
-    for _ in range(3):
+    assert pwm.rolled_over is False
+    for index in range(3):
         await hot_water_update(pwm, clock, 10, duty=1.0, hot_water=hot_water, since=since)
         assert pwm.status == PWMStatus.ON
         assert pwm.hold is None
+        # Rolled over at 3600 s, the first of these updates
+        assert pwm.rolled_over is (index == 0)
 
     assert pwm_lines(caplog) == ["pwm ON (2 cycles/h)"]
 

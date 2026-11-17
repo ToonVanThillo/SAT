@@ -130,10 +130,12 @@ maximum; this includes every OFF cycle.
   setpoint adjuster and the setpoint it gave. It adjusts only in MINIMUM
   mode: during an UNRESTRICTED burn the flow follows the calculated setpoint,
   and the adjuster would raise the minimum towards it.
-- Sensors: PWM Status shows ON or OFF; a diagnostic "PWM Mode" sensor
-  (minimum, unrestricted, disabled by default, no attributes) shows the mode.
+- Sensors: PWM Status shows ON or OFF; a diagnostic "PWM Mode" sensor (an
+  enum of minimum and unrestricted, disabled by default, no attributes besides
+  its options) shows the mode.
   PWM Duty Cycle shows 100% for 100% periods.
-- Timeline: mode changes are logged at info; "pwm IDLE (reason)" becomes
+- Timeline: mode changes are logged at info ("pwm mode MINIMUM" or "pwm mode
+  UNRESTRICTED"), also when a reset sets MINIMUM; "pwm IDLE (reason)" becomes
   "pwm OFF (reason)" on a reset; rollovers are not logged at info; the cycle
   line shows the mode and marks a rollover.
 

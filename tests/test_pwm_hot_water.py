@@ -21,7 +21,7 @@ from tests.conftest import TIMELINE
 from tests.const import IDLE, with_data
 from tests.test_pwm_cycles import CURVE, FLOW, Clock, boiler, config, setpoint_for
 
-PWM_LINES = ("pwm ON", "pwm OFF", "pwm hold")
+PWM_LINES = ("pwm ON", "pwm OFF", "pwm hold", "pwm mode")
 
 
 @pytest.fixture
@@ -317,7 +317,9 @@ async def test_a_held_start_survives_a_mode_change_while_the_new_duty_allows_a_p
 
     await update(pwm, clock, 10)
     assert pwm.status == PWMStatus.ON
-    assert pwm_lines(caplog) == ["pwm ON (2 cycles/h)", "pwm OFF", "pwm hold (hot water)", "pwm hold ended", "pwm ON (2 cycles/h)"]
+    assert pwm_lines(caplog) == [
+        "pwm ON (2 cycles/h)", "pwm OFF", "pwm mode UNRESTRICTED", "pwm hold (hot water)", "pwm mode MINIMUM", "pwm hold ended", "pwm ON (2 cycles/h)",
+    ]
 
 
 async def test_a_held_start_is_dropped_when_the_new_duty_is_below_the_minimum_pulse(clock, caplog):

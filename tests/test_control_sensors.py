@@ -1,4 +1,5 @@
 """Heating Curve, Error Value and the control-loop diagnostic sensors, and the climate's attribute set."""
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -14,13 +15,15 @@ from custom_components.sat.const import (
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
     CONF_MINIMUM_SETPOINT,
     CONF_MODE,
+    CONF_RADIATORS,
     MODE_FAKE,
     SIGNAL_PWM_UPDATED,
     BoilerStatus,
 )
 from custom_components.sat.fake import SatFakeCoordinator
-from tests.conftest import advance
+from tests.conftest import TIMELINE, advance, run_one_loop
 from tests.const import IDLE, ems_entry, with_data
+from tests.test_climate_loop_ems import RADIATOR
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
 
@@ -40,7 +43,7 @@ DUTY = ("sensor.pwm_duty_cycle_test", "test-pwm-duty-cycle")
 HEATING_CURVE = "sensor.heating_curve_test"
 ERROR_VALUE = "sensor.error_value_test"
 DISABLED_BY_DEFAULT = [
-    "sensor.pwm_status", "sensor.pwm_cycles_per_hour", "sensor.reliable_flow_temperature", DUTY[0],
+    "sensor.pwm_status", "sensor.pwm_mode", "sensor.pwm_cycles_per_hour", "sensor.reliable_flow_temperature", DUTY[0],
 ] + [row[1] for row in CONTROL]
 
 STANDARD_ATTRIBUTES = {
@@ -80,6 +83,65 @@ async def test_the_pwm_status_sensor_shows_off_at_startup_and_offers_only_on_and
 
     assert state.state == "off"
     assert state.attributes["options"] == ["on", "off"]
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_pwm_mode_sensor_follows_the_mode_and_offers_only_minimum_and_unrestricted(hass, entry, climate, boiler_data):
+    state = hass.states.get("sensor.pwm_mode")
+    assert state.state == "minimum"
+    assert state.attributes["options"] == ["minimum", "unrestricted"]
+    assert state.attributes["device_class"] == SensorDeviceClass.ENUM
+    assert set(state.attributes) - {"friendly_name", "device_class"} == {"options"}
+    assert er.async_get(hass).async_get_entity_id("sensor", "sat", "test-pwm-mode") == "sensor.pwm_mode"
+
+    await heat(climate, boiler_data)
+    await climate.async_control_heating_loop()
+    await hass.async_block_till_done()
+    assert value(hass, "sensor.pwm_mode") == "unrestricted"
+
+    # An HVAC mode change resets PWM to MINIMUM
+    await climate.async_set_hvac_mode(HVACMode.OFF)
+    await hass.async_block_till_done()
+    assert value(hass, "sensor.pwm_mode") == "minimum"
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+@pytest.mark.parametrize(*with_data({}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
+async def test_the_pwm_mode_sensor_stays_minimum_when_unrestricted_modulation_is_not_allowed(hass, entry, climate, boiler_data):
+    await heat(climate, boiler_data)
+    await climate.async_control_heating_loop()
+    await hass.async_block_till_done()
+
+    # Allowed, the calculated setpoint above the minimum would give UNRESTRICTED
+    assert climate.calculated_setpoint > climate.minimum_setpoint_value
+    assert value(hass, "sensor.pwm_mode") == "minimum"
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+@pytest.mark.parametrize(*with_data({CONF_RADIATORS: [RADIATOR]}))
+async def test_the_pwm_mode_sensor_returns_to_minimum_when_the_valves_close_and_follows_again_when_they_reopen(hass, entry, climate, boiler_data, caplog):
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
+    hass.states.async_set(RADIATOR, "heat", {"hvac_action": "heating", "hvac_modes": ["heat", "off"]})
+    await boiler_data(**IDLE | {"heatingoff": "on"})
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    caplog.clear()
+    await run_one_loop(hass, climate, caplog, 0)
+    assert value(hass, "sensor.pwm_mode") == "unrestricted"
+
+    hass.states.async_set(RADIATOR, "heat", {"hvac_action": "idle", "hvac_modes": ["heat", "off"]})
+    await hass.async_block_till_done()
+    new = await run_one_loop(hass, climate, caplog, len(caplog.records))
+    assert climate.valves_open is False
+    assert value(hass, "sensor.pwm_mode") == "minimum"
+    assert [m for m in new if m.startswith("pwm ")] == ["pwm OFF (valves closed)", "pwm mode MINIMUM"]
+
+    hass.states.async_set(RADIATOR, "heat", {"hvac_action": "heating", "hvac_modes": ["heat", "off"]})
+    await hass.async_block_till_done()
+    new = await run_one_loop(hass, climate, caplog, len(caplog.records))
+    assert value(hass, "sensor.pwm_mode") == "unrestricted"
+    assert [m for m in new if m.startswith("pwm mode ")] == ["pwm mode UNRESTRICTED"]
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -258,7 +320,9 @@ async def test_pwm_duty_cycle_not_created_without_setpoint_management(hass, entr
     assert not coordinator.supports_setpoint_management
     assert hass.states.get(DUTY[0]) is None
     assert hass.states.get("sensor.pwm_status") is None
+    assert hass.states.get("sensor.pwm_mode") is None
     assert er.async_get(hass).async_get_entity_id("sensor", "sat", DUTY[1]) is None
+    assert er.async_get(hass).async_get_entity_id("sensor", "sat", "test-pwm-mode") is None
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")

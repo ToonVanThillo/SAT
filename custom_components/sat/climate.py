@@ -1139,11 +1139,13 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         reliable = "" if boiler.reliable_flow_temperature == boiler.flow_temperature else f" reliable={fmt(boiler.reliable_flow_temperature)}"
         pwm = "pwm ?"
         if (controller := self.pwm) is not None:
-            pwm = f"pwm {fmt(controller.status)}"
+            pwm = f"pwm {fmt(controller.status)} {fmt(controller.mode)}"
             if (duty := controller.last_duty_cycle_percentage) is not None and (times := controller.duty_cycle) is not None:
                 pwm += f" duty={duty}% {times[0]}/{times[1]}s ({controller.duty_cycle_branch})"
             if controller.hold is not None:
                 pwm += f" hold={controller.hold}"
+            if controller.rolled_over:
+                pwm += " rollover"
 
         held = f" held={','.join(inputs.held)}" if inputs.held else ""
         fmt_number = timeline.fmt_number
