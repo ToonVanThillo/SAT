@@ -5,7 +5,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import timedelta, datetime
-from time import monotonic, time
+from time import monotonic
 from typing import Any, Callable, Optional, Self
 
 from homeassistant.components import notify, sensor, weather
@@ -63,17 +63,6 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, _a
 
     _async_add_devices([climate])
     _hass.data[DOMAIN][_config_entry.entry_id][CLIMATE] = climate
-
-
-class SatWarmingUp:
-    def __init__(self, error: float, boiler_temperature: Optional[float] = None, started: Optional[int] = None):
-        self.error = error
-        self.boiler_temperature = boiler_temperature
-        self.started = started if started is not None else int(time())
-
-    @property
-    def elapsed(self):
-        return int(time()) - self.started
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
