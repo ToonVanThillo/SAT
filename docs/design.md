@@ -202,45 +202,47 @@ Backends without channels have no synchro diagnostics until they migrate.
 ## Timeline
 The logger `custom_components.sat.timeline` records what the boiler and SAT
 did, in order, so a run can be reconstructed from the log alone.
-- At info, as they happen: changes of the device values each backend declares
-  as traced (EMS-ESP: `heatingpump`, `heatingactive`, `tapwateractive`,
-  `burngas`, `selflowtemp`, `selburnpow`, `servicecode`, `heatingoff`), logged
-  on arrival and only on change, never for values restored from storage;
-  channel writes, logged before the backend sends: a new value (`send`, with
-  the requested value when encoding changed it), a rewrite after a mismatch
-  (`resend`, with the read-back) and a release; channel transitions into or
-  out of `DRIFTED` and `OUT_OF_SYNC`; PWM switching on and off (a reset with
-  its reason, at every reset) and its modulation mode changing; a pulse start held for hot water or the hot water delay,
-  and the hold ending; a pulse held on for the minimum pulse length beyond its
-  duty cycle; overshoot handling starting and ending (evaluated in HEAT cycles
-  with all temperatures); inputs going missing, being held, no longer held,
-  and back (an input never valid since start logs nothing); flame on and off, the flame-off line with the burn's kind and the
-  hot-water signals seen; the control setpoint released or requested again,
-  with the reason, on backends that release it (those with a control-setpoint
-  channel), also across HVAC mode changes; coordinator setup and removal.
-  Neither a release before the first request nor the first request itself is
-  logged. Rewrites of a channel that rewrites every cycle, or of a write-only
-  channel, are not logged at info.
-- At debug, one line per cycle after reconciliation, numbered with the
-  snapshot's cycle number: the inputs (and which are held), boiler values, PWM
-  status, modulation mode, duty and duty rule, a marker on a 100% period's
-  rollover, the setpoint rule, the requested setpoint the
-  low-pass filter received this cycle, the heating curve value and the PID
-  terms as held when the line is built (these need not add up to the
-  requested setpoint: the integral can update and sensor events can arrive in
-  between), the desired state as
-  requested, the writes as encoded, and the verify transitions; in HEAT with a
-  missing temperature, the missing inputs instead of the inputs and setpoint
-  rule.
+- At info, as single lines when they happen: changes of the device values each
+  backend declares as traced (EMS-ESP: `heatingpump`, `heatingactive`,
+  `tapwateractive`, `burngas`, `selflowtemp`, `selburnpow`, `servicecode`,
+  `heatingoff`), logged on arrival and only on change, never for values
+  restored from storage; flame on and off, the flame-off line with the burn's
+  kind and the hot-water signals seen; coordinator setup and removal.
+- At debug, one cycle record per control cycle.
 - Flame lines are logged as device data arrives, right after the matching
   `burngas` line. Backends without a per-arrival update (ESPHome, switch) log
   them from the coordinator's flame listener or its update step, whichever
   runs first.
-- Backends without channels log every write of the control setpoint, heater
-  state, max relative modulation and max setpoint as `send`, since they keep
-  no sent value until they migrate; the thermostat setpoint is not logged.
-- A failure to build a log line is caught and logged; it never stops the
-  control loop.
+- Logging never stops the control loop: a cycle record whose message fails
+  to build is reported by the logging system, not raised.
+
+**Cycle record**
+Each run of the control loop logs one record, `cycle`, when the run ends,
+also when it fails or is cancelled. Its fields are attached to the log record
+(`fields`) and rendered in the message as `key="value"` in the order they
+were added, every value in double quotes (a double quote inside a value
+escaped as `\"`): None as `?`, booleans as true/false, enums by name, floats
+rounded to one decimal, dataclasses and dicts as `{key:value, ...}`, lists and
+tuples as `[item, ...]`; the fields keep the objects and unrounded values. The
+message is built only when debug is enabled. Changes (PWM switching on or
+off, mode changes, inputs going missing, held or back, overshoot handling, a
+released control setpoint) are not logged separately; they show as
+differences between consecutive records. Resets, writes and channel
+transitions outside a control cycle (an HVAC mode change, coordinator setup,
+calibration) are not logged.
+- Every cycle: `cycle` (the snapshot's cycle number), `hvac`, `inputs` (the
+  captured climate inputs, with the names of the held ones), `boiler` (the
+  snapshot's boiler state), `verify` (the verify changes, each with the
+  channel's sent value and read-back), `pwm` (the PWM state: status, mode,
+  cycles per hour, duty, duty cycle and its rule, hold, held start, minimum
+  pulse hold, rollover), `want` (the desired state as requested) and `sent`
+  (the writes as encoded, each with its kind and the channel's read-back).
+- HEAT with all temperatures: `setpoint` (the calculated setpoint, after the
+  low-pass filter), `setpoint_rule`, `requested` (the setpoint the filter
+  received this cycle), `curve`, `p`, `i`, `d`. The curve and PID terms are
+  as held when the record is built; they need not add up to `requested`.
+- A run that fails or is cancelled adds `error` (the exception's type and
+  message); without `error` the run completed.
 
 ## Calculated setpoint sensor
 A "Calculated Setpoint" sensor shows the flow temperature the control loop
@@ -367,8 +369,10 @@ maximum; this includes every OFF cycle.
 **Resets**
 - No open valve, a missing temperature and an HVAC mode change reset PWM. A
   reset ends a running pulse like a normal pulse end; a reset while OFF leaves
-  a running off phase as it is. Every reset logs "pwm OFF (reason)", so once
-  per control cycle while it lasts.
+  a running off phase as it is. The cycle record shows the cause of a reset in
+  a control cycle: `valves_open` false, or a missing temperature as `?` in
+  `inputs`; with thermal comfort, a missing humidity shows as a missing inside
+  temperature.
 - A target change, also of an area, does not reset PWM: it only changes the
   calculated setpoint. Selecting the HVAC mode that is already active changes
   nothing.
@@ -438,7 +442,7 @@ including burns SAT did not request.
 ## Flow temperature
 Control logic, and the values derived for it (boiler status, cold
 temperature, derivative, tracking), read the reliable flow temperature; the
-boiler temperature display and the timeline's `flow=` read the raw one. Some combi boilers stop the pump right after hot
+boiler temperature display reads the raw one. Some combi boilers stop the pump right after hot
 water, and the trapped water keeps heating up, so the raw reading is stale and
 too high until the pump runs again.
 - Backends report the pump as on, off or unknown (the default). EMS-ESP:
@@ -463,8 +467,7 @@ too high until the pump runs again.
   dynamic minimum setpoint (v1), and the temperature history, cold
   temperature, derivative and boiler temperature tracker; these take reliable
   readings only and skip the others. The PID's missing-value check and the
-  overshoot protection calibration read the raw one. The debug cycle line adds
-  the reliable value when it differs from the raw one.
+  overshoot protection calibration read the raw one. The cycle record shows both.
 - With a known pump state, the boiler status is pump starting from the pump
   going from off to on, unless that update shows a hot water signal or SAT is
   producing hot water, until an update step sees a reliable reading with the
@@ -549,6 +552,9 @@ too high until the pump runs again.
     received, the heating curve value and the PID terms.
 21. Always-on PWM: PWM runs every HEAT cycle with a modulation mode;
     continuous heating is a 100% period (see PWM).
+22. Timeline: one structured cycle record per control cycle, at debug,
+    replaces the cycle line and the control loop's info lines; the remaining
+    info lines are plain log calls and `timeline.py` is removed.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
@@ -571,9 +577,9 @@ too high until the pump runs again.
 - Whether measurements (e.g. `curflowtemp`) need a freshness check or
   diagnostic based on their receive time.
 - MQTT backends record the send time after the 1 s wait that follows a
-  publish, so a read-back within that second is ignored. The timeline logs
-  the send before that wait, so a read-back echo can follow a `send` line and
-  still be ignored.
+  publish, so a read-back within that second is ignored. The echo of a write
+  is logged as a boiler change before the cycle record that holds the write,
+  and is still ignored.
 - What flame health's `PWM_SHORT` should detect; a candidate is the boiler
   ending a heating burn while a PWM pulse is still on.
 - EMS-ESP: for about a minute after a hot water burn the tested boiler keeps
@@ -590,3 +596,6 @@ too high until the pump runs again.
   when the calculated setpoint exceeds the effective minimum by more than
   2 °C, back to MINIMUM only at or below it.
 - Whether an HVAC mode change should reset PWM.
+- Device updates as structured events: one event per incoming device message
+  with the changed traced values and the flame change, replacing the single
+  info lines.

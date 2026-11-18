@@ -1,7 +1,6 @@
 """PWM modulation mode: UNRESTRICTED when unrestricted modulation is allowed and the requested setpoint is above
 the minimum setpoint, otherwise MINIMUM; UNRESTRICTED gives a 100% period, and a mode change while ON starts a new period."""
 import json
-import logging
 from collections.abc import Iterator
 from unittest.mock import patch
 
@@ -15,13 +14,10 @@ from custom_components.sat.const import (
     ModulationMode,
     PWMStatus,
 )
-from tests.conftest import TIMELINE
 from tests.const import IDLE, with_data
 from tests.test_pwm_cycles import Clock, make_pwm, setpoint_for, start_pulse, step
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
 from tests.test_pwm_hot_water import update as hot_water_update
-
-PWM_LINES = ("pwm ON", "pwm OFF", "pwm hold", "pwm mode")
 
 
 @pytest.fixture
@@ -29,15 +25,6 @@ def clock() -> Iterator[Clock]:
     clock = Clock()
     with patch("custom_components.sat.pwm.monotonic", clock):
         yield clock
-
-
-@pytest.fixture(autouse=True)
-def timeline_info(caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-
-
-def pwm_lines(caplog) -> list[str]:
-    return [message for record in caplog.records if record.name == TIMELINE and (message := record.getMessage()).startswith(PWM_LINES)]
 
 
 # (a) The mode rule; setpoint_for(0.5) is 35
@@ -84,7 +71,7 @@ async def test_unrestricted_gives_a_100_percent_period(clock, outside_temperatur
 
 # (c) UNRESTRICTED rolls over
 
-async def test_unrestricted_rolls_over_without_an_off_phase(clock, caplog):
+async def test_unrestricted_rolls_over_without_an_off_phase(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)  # N=4: 1800 s on, 0 s off
     await step(pwm, clock, 0.5, allow_unrestricted=True)
@@ -95,12 +82,11 @@ async def test_unrestricted_rolls_over_without_an_off_phase(clock, caplog):
         assert pwm.status == PWMStatus.ON
         assert pwm.duty_cycle == (1800, 0)
 
-    assert pwm_lines(caplog) == ["pwm mode UNRESTRICTED", "pwm ON (4 cycles/h)"]
 
 
 # (d) A start in UNRESTRICTED is a pulse start
 
-async def test_an_unrestricted_start_after_a_pulse_end_waits_for_the_minimum_off_phase(clock, caplog):
+async def test_an_unrestricted_start_after_a_pulse_end_waits_for_the_minimum_off_phase(clock):
     pwm = make_pwm()  # N=4: a duty of 0.5 gives 450 s on, 450 s off
     await start_pulse(pwm, clock, 0.5)
     await step(pwm, clock, 0.5, 450)
@@ -112,7 +98,6 @@ async def test_an_unrestricted_start_after_a_pulse_end_waits_for_the_minimum_off
     await step(pwm, clock, 0.5, 1, allow_unrestricted=True)  # 180 s after the pulse end
     assert pwm.status == PWMStatus.ON
 
-    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm OFF", "pwm mode UNRESTRICTED", "pwm ON (4 cycles/h)"]
 
 
 async def test_an_unrestricted_start_after_a_reset_waits_for_the_minimum_off_phase(clock):
@@ -128,7 +113,7 @@ async def test_an_unrestricted_start_after_a_reset_waits_for_the_minimum_off_pha
     assert pwm.mode == ModulationMode.UNRESTRICTED
 
 
-async def test_a_hot_water_hold_holds_an_unrestricted_start(clock, caplog):
+async def test_a_hot_water_hold_holds_an_unrestricted_start(clock):
     pwm = make_hot_water_pwm()  # N=2: a duty of 0.5 gives 900 s on
     await hot_water_update(pwm, clock)
     await hot_water_update(pwm, clock, 900)
@@ -140,7 +125,6 @@ async def test_a_hot_water_hold_holds_an_unrestricted_start(clock, caplog):
     await hot_water_update(pwm, clock, 10, allow_unrestricted=True)
     assert pwm.status == PWMStatus.ON
 
-    assert pwm_lines(caplog) == ["pwm ON (2 cycles/h)", "pwm OFF", "pwm mode UNRESTRICTED", "pwm hold (hot water)", "pwm hold ended", "pwm ON (2 cycles/h)"]
 
 
 async def test_a_hot_water_hold_holds_an_unrestricted_start_before_the_first_pulse(clock):
@@ -152,7 +136,7 @@ async def test_a_hot_water_hold_holds_an_unrestricted_start_before_the_first_pul
 
 # (e) MINIMUM ON -> UNRESTRICTED starts a new period
 
-async def test_a_change_to_unrestricted_while_on_starts_a_new_period(clock, caplog):
+async def test_a_change_to_unrestricted_while_on_starts_a_new_period(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)  # N=4: a duty of 0.5 gives 450 s on; unrestricted gives 1800 s on
     await start_pulse(pwm, clock, 0.5)
@@ -172,12 +156,11 @@ async def test_a_change_to_unrestricted_while_on_starts_a_new_period(clock, capl
     assert pwm.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 2
 
-    assert pwm_lines(caplog) == ["pwm ON (4 cycles/h)", "pwm mode UNRESTRICTED"]
 
 
 # (f) UNRESTRICTED ON -> MINIMUM starts a new period: the new on-time runs from the mode change
 
-async def test_a_change_to_minimum_late_in_an_unrestricted_period_runs_the_new_on_time_from_the_change(clock, caplog):
+async def test_a_change_to_minimum_late_in_an_unrestricted_period_runs_the_new_on_time_from_the_change(clock):
     pwm = make_pwm()
     pwm.update_cycles_per_hour(-5)  # N=4: unrestricted gives 1800 s on; a duty of 0.5 gives 450 s on
     await step(pwm, clock, 0.5, allow_unrestricted=True)
@@ -193,7 +176,6 @@ async def test_a_change_to_minimum_late_in_an_unrestricted_period_runs_the_new_o
     await step(pwm, clock, 0.5, 1)  # 450 s after the mode change
     assert pwm.status == PWMStatus.OFF
 
-    assert pwm_lines(caplog) == ["pwm mode UNRESTRICTED", "pwm ON (4 cycles/h)", "pwm mode MINIMUM", "pwm OFF"]
 
 
 async def test_after_a_mode_change_the_minimum_pulse_still_runs_from_the_pulse_start(clock):
@@ -290,7 +272,7 @@ async def test_the_mode_is_computed_without_a_flow_temperature(clock):
     assert pwm.mode == ModulationMode.UNRESTRICTED
 
 
-async def test_without_a_flow_temperature_unrestricted_gives_a_100_percent_pulse(clock, caplog):
+async def test_without_a_flow_temperature_unrestricted_gives_a_100_percent_pulse(clock):
     pwm = make_pwm()  # N=4: a 100% period is 1800 s on, 0 s off
 
     await step(pwm, clock, 0.5, allow_unrestricted=True, flow=None)
@@ -301,7 +283,6 @@ async def test_without_a_flow_temperature_unrestricted_gives_a_100_percent_pulse
     await step(pwm, clock, 0.5, 1800, allow_unrestricted=True, flow=None)
     await step(pwm, clock, 0.5, 10, allow_unrestricted=True, flow=None)
     assert pwm.status == PWMStatus.ON
-    assert pwm_lines(caplog) == ["pwm mode UNRESTRICTED", "pwm ON (4 cycles/h)"]
 
 
 async def test_without_a_flow_temperature_minimum_starts_no_pulse_before_the_first_duty(clock):
@@ -359,7 +340,7 @@ async def test_the_duty_rising_to_100_percent_in_an_off_phase_from_a_reset_keeps
     pwm = make_pwm()  # N=4
     await start_pulse(pwm, clock, 0.5)
     clock.tick(10)
-    pwm.reset("test")
+    pwm.reset()
 
     await step(pwm, clock, 0.5, 30)  # an off time of 450 s
     assert pwm.status == PWMStatus.OFF
@@ -377,7 +358,7 @@ async def test_the_duty_rising_to_100_percent_in_an_off_phase_from_a_reset_keeps
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
-async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across_period_ends(climate, boiler_data, published, freezer, caplog):
+async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across_period_ends(climate, boiler_data, published, freezer):
     cold_boiler = IDLE | {"selflowtemp": 25, "curflowtemp": 25, "rettemp": 25, "burnmaxpower": 0}
     await boiler_data(**cold_boiler)
     await climate.async_set_target_temperature(21.0)
@@ -404,7 +385,6 @@ async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across
     # The run lasts beyond the end of the first 100% period (2 * 3600 / N after the start)
     assert started_at is not None
     assert (80 - 1 - started_at) * 60 > 2 * 3600 / cycles_per_hour
-    assert len([line for line in pwm_lines(caplog) if line.startswith("pwm ON (")]) == 1
 
     commands = [json.loads(args[1]) for args in published() if args[0] == "ems-esp/boiler"]
     values = {command["value"] for command in commands if command["cmd"] == "selflowtemp"}

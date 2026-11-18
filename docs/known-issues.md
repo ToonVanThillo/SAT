@@ -168,8 +168,6 @@ known bug".
   Value sensor read the live sensors: unknown, and an error of 0. Once the hold
   has run out, the control setpoint (diagnostics download) and the Calculated
   Setpoint sensor keep their last values while the boiler is off.
-  Hold lines are also logged in HVAC OFF, where nothing reads the inputs;
-  harmless.
 - Outside the control cycle, room target temperatures are still converted with
   a bare `float()` (the `_async_climate_changed` state listener and
   `_async_update_rooms_from_climates` at startup), so a room with a non-numeric

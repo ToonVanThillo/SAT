@@ -132,16 +132,15 @@ async def test_the_pwm_mode_sensor_returns_to_minimum_when_the_valves_close_and_
 
     hass.states.async_set(RADIATOR, "heat", {"hvac_action": "idle", "hvac_modes": ["heat", "off"]})
     await hass.async_block_till_done()
-    new = await run_one_loop(hass, climate, caplog, len(caplog.records))
+    fields = await run_one_loop(hass, climate, caplog, len(caplog.records))
     assert climate.valves_open is False
     assert value(hass, "sensor.pwm_mode") == "minimum"
-    assert [m for m in new if m.startswith("pwm ")] == ["pwm OFF (valves closed)", "pwm mode MINIMUM"]
+    assert fields["inputs"].valves_open is False
 
     hass.states.async_set(RADIATOR, "heat", {"hvac_action": "heating", "hvac_modes": ["heat", "off"]})
     await hass.async_block_till_done()
-    new = await run_one_loop(hass, climate, caplog, len(caplog.records))
+    fields = await run_one_loop(hass, climate, caplog, len(caplog.records))
     assert value(hass, "sensor.pwm_mode") == "unrestricted"
-    assert [m for m in new if m.startswith("pwm mode ")] == ["pwm mode UNRESTRICTED"]
 
 
 @pytest.mark.parametrize(*ems_entry())

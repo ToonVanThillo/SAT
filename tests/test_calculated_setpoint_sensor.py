@@ -7,7 +7,6 @@ from homeassistant.const import STATE_UNKNOWN, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 
 from custom_components.sat.climate import SatClimate
-from custom_components.sat.const import DOMAIN
 from tests.const import IDLE, ems_entry
 
 pytestmark = pytest.mark.usefixtures("loop_entry")

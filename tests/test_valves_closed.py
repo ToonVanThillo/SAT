@@ -19,14 +19,13 @@ from custom_components.sat.const import (
     PWMStatus,
 )
 from custom_components.sat.coordinator import DeviceState
-from tests.conftest import TIMELINE, advance
+from tests.conftest import TIMELINE, advance, cycle_records, last_cycle
 from tests.const import IDLE, otgw_entry, with_data
 from tests.test_climate_loop import message, run_loop
 from tests.test_climate_loop_ems import INSIDE, RADIATOR
 from tests.test_heater_off_release import (
     HEATER_OFF,
-    RELEASED,
-    logged,
+    released,
     requested_setpoints,
     selflowtemp,
     setpoint_status,
@@ -37,7 +36,6 @@ pytestmark = pytest.mark.usefixtures("loop_entry")
 
 ROOM = "climate.room"
 HEATER_ON = message('{"cmd": "heatingoff", "value": "off"}')
-REQUESTED_AGAIN = "control setpoint requested again"
 WITH_RADIATOR = with_data({CONF_RADIATORS: [RADIATOR]})
 # A minimum setpoint of 30 (above COLD_SETPOINT, 28.2, so the PWM ON phase requests heater ON) with unrestricted modulation disallowed: the first open-valve cycle starts a pulse at once
 UNRESTRICTED_DISALLOWED = with_data({CONF_RADIATORS: [RADIATOR], CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False})
@@ -61,17 +59,8 @@ async def prepare(hass: HomeAssistant, climate: SatClimate, boiler_data, **data)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
 
-def cycle_lines(caplog) -> list[str]:
-    return [r.getMessage() for r in caplog.get_records("call") if r.name == TIMELINE and r.levelno == logging.DEBUG]
-
-
-def timeline_info(caplog, text: str) -> list[str]:
-    return [r.getMessage() for r in caplog.get_records("call") if r.name == TIMELINE and r.levelno == logging.INFO and text in r.getMessage()]
-
-
 @pytest.fixture(autouse=True)
 def timeline_levels(caplog):
-    caplog.set_level(logging.INFO)
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
 
 
@@ -92,8 +81,7 @@ async def test_without_radiators_the_valves_count_as_open(hass, entry, climate, 
     ]
     assert climate.setpoint == 35.0
     assert climate.valves_open is True
-    assert "valves=open" in cycle_lines(caplog)[-1]
-    assert not timeline_info(caplog, "valves closed")
+    assert last_cycle(caplog)["inputs"].valves_open is True
 
 
 @pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
@@ -103,8 +91,6 @@ async def test_without_radiators_pwm_is_updated_normally(entry, climate, boiler_
     await run_loop(climate, mqtt_mock, published)
 
     assert climate.pwm.status == PWMStatus.ON
-    assert timeline_info(caplog, "pwm ON")
-    assert not timeline_info(caplog, "valves closed")
     assert climate.setpoint == 30
 
 
@@ -156,7 +142,8 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
     assert climate.pwm.status == PWMStatus.OFF
     assert climate.calculated_setpoint == calculated
     assert hass.states.get("sensor.calculated_setpoint_test").state == str(calculated)
-    assert f"setpoint calc={calculated} (valves closed)" in cycle_lines(caplog)[-1]
+    assert last_cycle(caplog)["setpoint"] == calculated
+    assert last_cycle(caplog)["setpoint_rule"] == "valves closed"
 
 
 # PWM when the valves close
@@ -180,51 +167,50 @@ async def test_closing_valves_ends_a_running_pulse_at_once(hass, entry, climate,
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
 
-    # Every cycle with closed valves resets PWM and logs it
+    # Every cycle with closed valves resets PWM
     assert climate.pwm.status == PWMStatus.OFF
-    assert timeline_info(caplog, "pwm OFF (") == ["pwm OFF (valves closed)"] * 2
+    assert [r.fields["inputs"].valves_open for r in cycle_records(caplog)] == [False] * 2  # type: ignore[attr-defined]
 
     # The reopened valves wait for the off phase after the pulse that ended, by the reset (ON) or before it (OFF)
     caplog.clear()
     open_valves(hass)
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
     assert climate.pwm.status == PWMStatus.OFF
-    assert not timeline_info(caplog, "pwm ON")
+    assert last_cycle(caplog)["inputs"].valves_open is True
 
     assert climate.pwm.duty_cycle is not None
     freezer.tick(max(climate.pwm.duty_cycle[1], MINIMUM_OFF_TIME))
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
     assert climate.pwm.status == PWMStatus.ON
-    assert timeline_info(caplog, "pwm ON") == [f"pwm ON ({climate.pwm.cycles_per_hour} cycles/h)"]
 
 
 @pytest.mark.parametrize(*WITH_RADIATOR)
-async def test_closed_valves_log_a_pwm_reset_every_cycle_also_without_a_pulse(hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
+async def test_closed_valves_reset_pwm_every_cycle_also_without_a_pulse(hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
     await prepare(hass, climate, boiler_data, heatingoff="on")
     close_valves(hass)
 
     await run_loop(climate, mqtt_mock, published)
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
 
-    # No pulse ran, and each cycle still logs its reset
-    assert not timeline_info(caplog, "pwm ON")
-    assert timeline_info(caplog, "pwm OFF (valves closed)") == ["pwm OFF (valves closed)"] * 2
+    # No pulse ran, and each cycle still reports its reset
+    assert climate.pwm.status == PWMStatus.OFF
+    assert [r.fields["inputs"].valves_open for r in cycle_records(caplog)] == [False] * 2  # type: ignore[attr-defined]
 
 
-# The debug cycle line
+# The cycle record
 
 @pytest.mark.parametrize(*WITH_RADIATOR)
-async def test_cycle_line_shows_closed_valves(hass, entry, climate, boiler_data, mqtt_mock, published, caplog):
+async def test_cycle_record_shows_closed_valves(hass, entry, climate, boiler_data, mqtt_mock, published, caplog):
     await prepare(hass, climate, boiler_data, heatingoff="off")
     close_valves(hass)
 
     with patch.object(climate, "_calculate_control_setpoint", return_value=50.0):
         await run_loop(climate, mqtt_mock, published)
 
-    line = cycle_lines(caplog)[-1]
-    assert "valves=closed" in line
-    assert "setpoint calc=50.0 (valves closed)" in line
-    assert "want setpoint=10 heater=OFF" in line
+    fields = last_cycle(caplog)
+    assert fields["inputs"].valves_open is False
+    assert (fields["setpoint"], fields["setpoint_rule"]) == (50.0, "valves closed")
+    assert (fields["want"].control_setpoint, fields["want"].heater_state) == (10, DeviceState.OFF)
 
 
 # EMS-ESP release timing
@@ -239,8 +225,8 @@ async def test_closed_valves_release_the_setpoint_once_heater_off_is_confirmed(h
     assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
     assert HEATER_OFF in calls
     assert setpoint_status(coordinator) == ChannelStatus.PENDING
-    assert requested_setpoints(caplog) == ["10"]
-    assert not logged(caplog, RELEASED)
+    assert requested_setpoints(caplog) == [10]
+    assert not released(caplog)
 
     # Cycle 2: verify has confirmed heatingoff on
     caplog.clear()
@@ -248,10 +234,9 @@ async def test_closed_valves_release_the_setpoint_once_heater_off_is_confirmed(h
     assert coordinator.channel_states[Quantity.HEATER_STATE].status == ChannelStatus.IN_SYNC
     assert selflowtemp(calls) == []
     assert setpoint_status(coordinator) == ChannelStatus.IDLE
-    assert timeline_info(caplog, RELEASED) == [RELEASED]
-    assert requested_setpoints(caplog) == ["RELEASE"]
-    assert "want setpoint=RELEASE heater=OFF" in cycle_lines(caplog)[-1]
-    assert "valves=closed" in cycle_lines(caplog)[-1]
+    assert requested_setpoints(caplog) == [RELEASE]
+    assert last_cycle(caplog)["want"].heater_state == DeviceState.OFF
+    assert last_cycle(caplog)["inputs"].valves_open is False
 
 
 # A backend that does not release
@@ -269,10 +254,8 @@ async def test_opentherm_keeps_requesting_the_minimum_setpoint_with_closed_valve
         calls = await run_loop(climate, mqtt_mock, published)
         assert "CS=10" in [c[1] for c in calls]
 
-    assert requested_setpoints(caplog) == ["10"] * 4
-    assert all("heater=OFF" in line for line in cycle_lines(caplog) if "want " in line)
-    assert not timeline_info(caplog, "released")
-    assert not timeline_info(caplog, REQUESTED_AGAIN)
+    assert requested_setpoints(caplog) == [10] * 4
+    assert all(r.fields["want"].heater_state == DeviceState.OFF for r in cycle_records(caplog))  # type: ignore[attr-defined]
 
 
 # Valves reopen
@@ -284,7 +267,7 @@ async def test_reopening_valves_requests_the_setpoint_again(hass, entry, climate
     await run_loop(climate, mqtt_mock, published)
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on", selflowtemp=0)
     assert setpoint_status(coordinator) == ChannelStatus.IDLE
-    assert logged(caplog, RELEASED)
+    assert released(caplog)
 
     caplog.clear()
     open_valves(hass)
@@ -292,8 +275,8 @@ async def test_reopening_valves_requests_the_setpoint_again(hass, entry, climate
 
     assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 35}')]
     assert HEATER_ON in calls
-    assert timeline_info(caplog, REQUESTED_AGAIN) == [REQUESTED_AGAIN]
-    assert "valves=open" in cycle_lines(caplog)[-1]
+    assert requested_setpoints(caplog) == [35.0]
+    assert last_cycle(caplog)["inputs"].valves_open is True
 
 
 @pytest.mark.parametrize(*UNRESTRICTED_DISALLOWED)
@@ -311,11 +294,10 @@ async def test_reopening_valves_before_any_pulse_starts_a_pulse_at_once(hass, en
         await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
 
     assert climate.pwm.status == PWMStatus.ON
-    assert timeline_info(caplog, "pwm ON (")
     desired = submit.await_args_list[-1].args[0]
     assert desired.control_setpoint == 30
     assert desired.heater_state == DeviceState.ON
-    assert timeline_info(caplog, REQUESTED_AGAIN) == [REQUESTED_AGAIN]
+    assert requested_setpoints(caplog) == [30]
 
 
 # Valves change mid-cycle

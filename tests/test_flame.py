@@ -22,8 +22,17 @@ from custom_components.sat.pwm import PWMState
 from tests.conftest import TIMELINE, advance, boiler, current, flame_transitions
 from tests.const import IDLE, ems_entry
 
-PULSE = PWMState(status=PWMStatus.ON, duty_cycle=(450, 450), mode=ModulationMode.MINIMUM)
-FULL = PWMState(status=PWMStatus.ON, duty_cycle=(1800, 0), mode=ModulationMode.MINIMUM)
+
+def pwm_state(duty_cycle: tuple[int, int]) -> PWMState:
+    """A running MINIMUM pulse with the given duty cycle; the other fields don't matter to the flame."""
+    return PWMState(
+        status=PWMStatus.ON, duty_cycle=duty_cycle, mode=ModulationMode.MINIMUM, cycles_per_hour=4, last_duty_cycle_percentage=None,
+        duty_cycle_branch=None, hold=None, start_held=None, minimum_pulse_held=False, rolled_over=False,
+    )
+
+
+PULSE = pwm_state((450, 450))
+FULL = pwm_state((1800, 0))
 
 
 def observe(flame: Flame, freezer: FrozenDateTimeFactory, seconds: float, flame_active: bool) -> None:

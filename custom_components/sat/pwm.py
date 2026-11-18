@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Optional, Tuple, TYPE_CHECKING
 
-from . import timeline
 from .const import (
     BOILER_TEMPERATURE_SMOOTHING_TIME,
     MAXIMUM_CYCLES_PER_HOUR,
@@ -89,11 +88,18 @@ class CycleThresholds:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PWMState:
     """
-    Encapsulates the state of the PWM control.
+    Encapsulates the state of the PWM control; each field is the `PWM` property of the same name.
     """
     status: PWMStatus
     duty_cycle: Optional[Tuple[int, int]]
     mode: ModulationMode
+    cycles_per_hour: int
+    last_duty_cycle_percentage: float | None
+    duty_cycle_branch: str | None
+    hold: str | None
+    start_held: str | None
+    minimum_pulse_held: bool
+    rolled_over: bool
 
 
 class PWM:
@@ -126,10 +132,11 @@ class PWM:
         # Whether a pulse has ended since start, also one ended by a reset. Until then a start is due at once; after it, the off phase lasts
         # at least the minimum off time. It stays set through later ON phases, which is harmless as a start needs the status OFF
         self._pulse_ended: bool = False
-        # Edge flags, to log only changes: the flow temperature is missing, the minimum pulse held this pulse
+        # Whether the flow temperature is missing, to warn once per episode
         self._flow_missing: bool = False
+        # Whether the last update held a pulse on for the minimum pulse beyond its duty cycle
         self._minimum_pulse_held: bool = False
-        # Why a due pulse start is held (logged on change); it is due again as soon as the hold ends
+        # Why a due pulse start is held; it is due again as soon as the hold ends
         self._held: str | None = None
 
         # Last status change: the pulse start while ON, the pulse end while OFF
@@ -143,20 +150,19 @@ class PWM:
         self._duty_cycle_branch: str | None = None
         self._hold: str | None = None
 
-    def reset(self, reason: str = "reset") -> None:
-        """Reset the PWM control, logging "pwm OFF (`reason`)" on the timeline at every call.
+    def reset(self) -> None:
+        """Reset the PWM control.
 
         A running pulse ends at once, like a normal pulse end, also before the minimum pulse; a running off phase is left as it is. The duty
-        is cleared, so no pulse starts until an update computes one; a hot water hold ends and the mode is MINIMUM, logged after the
-        "pwm OFF" line if it changes.
+        is cleared, so no pulse starts until an update computes one; a hot water hold ends and the mode is MINIMUM.
         """
-        timeline.LOGGER.info("pwm OFF (%s)", reason)
         if self._status == PWMStatus.ON:
             self._end_pulse()
 
-        self._set_held(None)
+        self._held = None
         self._set_mode(ModulationMode.MINIMUM)
         self._rolled_over = False
+        self._minimum_pulse_held = False
         # A missing-flow episode ends with the reset, so the next one is warned about again
         self._flow_missing = False
 
@@ -194,6 +200,7 @@ class PWM:
         """
         flow_temperature = boiler.reliable_flow_temperature
         self._rolled_over = False
+        self._minimum_pulse_held = False
 
         # The mode is decided before the duty, which follows it; a mode change while ON starts a new period, so the new duty runs from now
         mode = ModulationMode.UNRESTRICTED if allow_unrestricted and requested_setpoint > minimum_setpoint else ModulationMode.MINIMUM
@@ -255,7 +262,7 @@ class PWM:
         )
 
         # A held pulse starts nothing: it latches no N; the next cycle decides again
-        self._set_held(self._hold if start_due else None)
+        self._held = self._hold if start_due else None
         if self._held is not None:
             return
 
@@ -264,8 +271,6 @@ class PWM:
             now = monotonic()
             self._last_update = now
             self._start_period(now, flow_temperature)
-            self._minimum_pulse_held = False
-            timeline.LOGGER.info("pwm ON (%d cycles/h)", self._latched_cycles_per_hour)
             return
 
         # A 100% period that ends rolls over into the next: the pulse goes on, unaffected by a hold
@@ -276,16 +281,13 @@ class PWM:
 
         # A started pulse runs at least the minimum on time
         if self._status == PWMStatus.ON and elapsed < thresholds.on_time_lower:
-            # Logged once per pulse, when the duty cycle alone would end it
-            if not self._minimum_pulse_held and (self._duty_cycle[0] < MINIMUM_PULSE_TIME or period_elapsed >= self._duty_cycle[0]):
-                self._minimum_pulse_held = True
-                timeline.LOGGER.info("pwm ON held for the minimum pulse (%.0fs)", thresholds.on_time_lower)
+            # Held beyond its duty cycle when the duty cycle alone would end it
+            self._minimum_pulse_held = self._duty_cycle[0] < MINIMUM_PULSE_TIME or period_elapsed >= self._duty_cycle[0]
             return
 
         # The on-time runs from the period start, the minimum pulse above from the pulse start
         if self._status == PWMStatus.ON and (self._duty_cycle[0] < MINIMUM_PULSE_TIME or period_elapsed >= self._duty_cycle[0]):
             self._end_pulse()
-            timeline.LOGGER.info("pwm OFF")
 
     def _end_pulse(self) -> None:
         """End the running pulse: the status is OFF and the off phase starts now."""
@@ -304,12 +306,11 @@ class PWM:
         self._last_boiler_temperature = flow_temperature
 
     def _set_mode(self, mode: ModulationMode) -> bool:
-        """Set the modulation mode; a change is logged on the timeline. Returns whether the mode changed."""
+        """Set the modulation mode. Returns whether the mode changed."""
         if mode == self._mode:
             return False
 
         self._mode = mode
-        timeline.LOGGER.info("pwm mode %s", mode.name)
         return True
 
     def _hot_water_hold(self, boiler: "BoilerState", flame: "FlameState") -> str | None:
@@ -321,18 +322,6 @@ class PWM:
             return "hot water delay"
 
         return None
-
-    def _set_held(self, reason: str | None) -> None:
-        """Record why a due pulse start is held, None if none is; a change is logged on the timeline."""
-        if reason == self._held:
-            return
-
-        if reason is None:
-            timeline.LOGGER.info("pwm hold ended")
-        else:
-            timeline.LOGGER.info("pwm hold (%s)", reason)
-
-        self._held = reason
 
     def _calculate_duty_cycle(self, requested_setpoint: float, thresholds: CycleThresholds) -> Tuple[int, int]:
         """Calculate the duty cycle in seconds based on the output of a PID controller and a heating curve value; records the branch that applied."""
@@ -390,6 +379,16 @@ class PWM:
         return self._rolled_over
 
     @property
+    def start_held(self) -> str | None:
+        """Why a pulse start that is due is held, as of the last update: `hot water` or `hot water delay`; None if no start is held, also after a reset."""
+        return self._held
+
+    @property
+    def minimum_pulse_held(self) -> bool:
+        """True when the last update held a pulse on for the minimum pulse beyond its duty cycle; False after a reset."""
+        return self._minimum_pulse_held
+
+    @property
     def cycles_per_hour(self) -> int:
         """The cycles per hour in effect: the value latched at pulse start, and again at each rollover of a 100% period or a mode change while ON, during its ON phase and its OFF phase up to the cycle's maximum length, otherwise the current value."""
         latched = self._latched_cycles_per_hour
@@ -407,6 +406,13 @@ class PWM:
             status=self._status,
             duty_cycle=self._duty_cycle,
             mode=self._mode,
+            cycles_per_hour=self.cycles_per_hour,
+            last_duty_cycle_percentage=self.last_duty_cycle_percentage,
+            duty_cycle_branch=self.duty_cycle_branch,
+            hold=self.hold,
+            start_held=self.start_held,
+            minimum_pulse_held=self.minimum_pulse_held,
+            rolled_over=self.rolled_over,
         )
 
     @property

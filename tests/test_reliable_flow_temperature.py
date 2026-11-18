@@ -31,7 +31,7 @@ from custom_components.sat.fake import SatFakeCoordinator
 from custom_components.sat.minimum_setpoint import MinimumSetpoint
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
 from custom_components.sat.pwm import PWM
-from tests.conftest import TIMELINE, advance
+from tests.conftest import TIMELINE, advance, last_cycle
 from tests.const import EMS_BOILER_DATA, IDLE, ems_entry, otgw_entry
 from tests.test_pwm_cycles import BASE, CURVE, Clock, config, setpoint_for
 
@@ -721,28 +721,24 @@ async def test_with_a_known_pump_state_the_cold_guess_does_not_give_the_pump_sta
     assert ems.device_status != BoilerStatus.PUMP_STARTING
 
 
-# The debug cycle line
-
-def cycle_boiler_lines(caplog) -> list[str]:
-    return [message for record in caplog.records if record.name == TIMELINE and (message := record.getMessage()).startswith("cycle ") and " boiler flow=" in message]
-
+# The cycle record
 
 @pytest.mark.parametrize(*ems_entry())
 @pytest.mark.usefixtures("loop_entry")
-async def test_the_cycle_line_shows_the_reliable_temperature_only_when_it_differs(entry, climate, boiler_data, caplog):
+async def test_the_cycle_record_shows_the_reliable_temperature_only_when_it_differs(entry, climate, boiler_data, caplog):
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
     await boiler_data(**PUMP_ON | {"curflowtemp": 45.0})
     await climate.async_control_heating_loop()
-    assert " flow=45" in cycle_boiler_lines(caplog)[-1]
-    assert "reliable=" not in cycle_boiler_lines(caplog)[-1]
+    assert last_cycle(caplog)["boiler"].flow_temperature == 45
+    assert last_cycle(caplog)["boiler"].reliable_flow_temperature == 45
 
     await boiler_data(**PUMP_ON | {"curflowtemp": 60.0} | DRAW)
     await climate.async_control_heating_loop()
-    line = cycle_boiler_lines(caplog)[-1]
-    assert " flow=60 reliable=45 " in line or " flow=60.0 reliable=45.0 " in line
+    assert last_cycle(caplog)["boiler"].flow_temperature == 60
+    assert last_cycle(caplog)["boiler"].reliable_flow_temperature == 45
 
 
 # A pump that starts with a draw is no pump start, and a hot water burn ends a running one

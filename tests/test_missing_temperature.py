@@ -8,6 +8,7 @@ import pytest
 from homeassistant.components.climate import HVACMode
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
+from custom_components.sat.channels import RELEASE, DesiredState
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
@@ -18,7 +19,8 @@ from custom_components.sat.const import (
     SIGNAL_PWM_UPDATED,
     PWMStatus,
 )
-from tests.conftest import TIMELINE, advance
+from custom_components.sat.coordinator import DeviceState
+from tests.conftest import TIMELINE, advance, last_cycle
 from tests.const import IDLE, ems_entry, otgw_entry, with_data
 
 # These pin the path once the grace period of a missing input has run out
@@ -27,7 +29,6 @@ pytestmark = pytest.mark.usefixtures("loop_entry", "no_input_grace")
 INSIDE = "sensor.test_inside_sensor"
 OUTSIDE = "sensor.test_outside_sensor"
 HUMIDITY = "sensor.test_humidity"
-RELEASED = "control setpoint released (missing temperature)"
 
 OFF_WRITES = ['{"cmd": "selflowtemp", "value": 0}', '{"cmd": "heatingoff", "value": "on"}']
 
@@ -35,6 +36,16 @@ OFF_WRITES = ['{"cmd": "selflowtemp", "value": 0}', '{"cmd": "heatingoff", "valu
 @pytest.fixture(autouse=True)
 def timeline_debug(caplog):
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
+
+
+INPUT = {"inside": "current_temperature", "outside": "outside_temperature", "humidity": "current_temperature"}
+
+
+def complete(caplog) -> bool:
+    """Whether the latest cycle had all its temperatures."""
+    inputs = last_cycle(caplog)["inputs"]
+
+    return None not in (inputs.target_temperature, inputs.current_temperature, inputs.outside_temperature)
 
 
 def sent(published) -> list[str]:
@@ -49,10 +60,6 @@ def echo(published) -> dict[str, Any]:
         values[command["cmd"]] = command["value"]
 
     return values
-
-
-def timeline(caplog, prefix: str) -> list[str]:
-    return [m for r in caplog.records if r.name == TIMELINE and (m := r.getMessage()).startswith(prefix)]
 
 
 async def heating(climate, boiler_data, freezer, mqtt_mock, published, **data: Any) -> dict[str, Any]:
@@ -84,10 +91,10 @@ async def assert_off_then_released(hass, climate, boiler_data, freezer, mqtt_moc
 
     # Heater ON to OFF: the setpoint is sent as 0 (the minimum), then the heater off; no modulation
     assert sent(published) == OFF_WRITES
-    line = timeline(caplog, "cycle ")[-1]
-    assert f"| missing temperature: {which} | want setpoint=10 heater=OFF | sent " in line
+    fields = last_cycle(caplog)
+    assert getattr(fields["inputs"], INPUT[which]) is None
+    assert fields["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
     assert climate.setpoint == setpoint
-    assert not timeline(caplog, RELEASED)
 
     # Heater OFF is read back: the setpoint is released and nothing more is sent
     freezer.tick(1)
@@ -98,9 +105,8 @@ async def assert_off_then_released(hass, climate, boiler_data, freezer, mqtt_moc
     else:
         await climate.async_control_heating_loop()
 
-    assert timeline(caplog, RELEASED) == [RELEASED]
     assert sent(published) == []
-    assert "want setpoint=RELEASE heater=OFF" in timeline(caplog, "cycle ")[-1]
+    assert last_cycle(caplog)["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
 
 
 # Each trigger kind
@@ -144,7 +150,7 @@ async def test_without_a_maximum_age_an_old_sensor_is_fine(hass, entry, climate,
     await boiler_data(**IDLE | readback)
     await missing_cycle(hass, climate, mqtt_mock)
 
-    assert not [m for m in timeline(caplog, "cycle ") if "missing temperature" in m]
+    assert complete(caplog)
 
 
 # Thermal comfort needs the humidity
@@ -189,7 +195,8 @@ async def test_thermal_comfort_without_a_humidity_sensor_turns_the_heater_off(ha
     await climate.async_control_heating_loop()
 
     assert sent(published) == OFF_WRITES
-    assert "| missing temperature: humidity | want setpoint=10 heater=OFF" in timeline(caplog, "cycle ")[-1]
+    assert last_cycle(caplog)["inputs"].current_temperature is None
+    assert last_cycle(caplog)["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
 
 
 @pytest.mark.parametrize(*with_data({CONF_HUMIDITY_SENSOR_ENTITY_ID: HUMIDITY}))
@@ -199,7 +206,7 @@ async def test_humidity_is_no_trigger_without_thermal_comfort(hass, entry, clima
     hass.states.async_set(HUMIDITY, state)
     await missing_cycle(hass, climate, mqtt_mock)
 
-    assert not [m for m in timeline(caplog, "cycle ") if "missing temperature" in m]
+    assert complete(caplog)
     assert not [p for p in sent(published) if json.loads(p)["cmd"] == "heatingoff"]
 
 
@@ -211,8 +218,8 @@ async def test_a_missing_flow_temperature_is_no_trigger(hass, entry, climate, co
 
     # The cycle ran without a flow temperature
     assert coordinator._snapshot.boiler.reliable_flow_temperature is None
-    assert not [m for m in timeline(caplog, "cycle ") if "missing temperature" in m]
-    assert "heater=ON" in timeline(caplog, "cycle ")[-1]
+    assert complete(caplog)
+    assert last_cycle(caplog)["want"].heater_state == DeviceState.ON
     assert not [p for p in sent(published) if json.loads(p)["cmd"] == "heatingoff"]
 
 
@@ -235,8 +242,6 @@ async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_o
     freezer.tick(1)
     readback = echo(published)
     await boiler_data(**IDLE | readback)
-    pulses = timeline(caplog, "pwm ON")
-    resets = len(timeline(caplog, "pwm OFF ("))
     signals.clear()
 
     hass.states.async_set(sensor, "unavailable")
@@ -244,7 +249,7 @@ async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_o
     await hass.async_block_till_done()
 
     # The reset ends the pulse at once, before its minimum pulse
-    assert timeline(caplog, "pwm OFF (")[resets:] == ["pwm OFF (missing temperature)"]
+    assert not complete(caplog) and last_cycle(caplog)["pwm"].status == PWMStatus.OFF
     assert climate.pwm.status == PWMStatus.OFF
     assert signals == [PWMStatus.OFF]
     assert sent(published) == OFF_WRITES
@@ -254,9 +259,8 @@ async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_o
     freezer.tick(1)
     await boiler_data(**IDLE | echo(published))
     await climate.async_control_heating_loop()
-    assert "missing temperature" not in timeline(caplog, "cycle ")[-1]
+    assert complete(caplog)
     assert climate.pwm.status == PWMStatus.OFF
-    assert timeline(caplog, "pwm ON") == pulses
 
     # The off phase lasts the duty's off time, at least 180 s, from the reset
     assert climate.pwm.duty_cycle is not None
@@ -267,19 +271,17 @@ async def test_a_missing_temperature_mid_pulse_resets_pwm_and_turns_the_heater_o
     freezer.tick(1)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.ON
-    assert len(timeline(caplog, "pwm ON")) == len(pulses) + 1
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_a_missing_temperature_logs_a_pwm_reset_at_every_cycle(hass, entry, climate, boiler_data, freezer, mqtt_mock, published, caplog):
+async def test_a_missing_temperature_resets_pwm_at_every_cycle(hass, entry, climate, boiler_data, freezer, mqtt_mock, published, caplog):
     await heating(climate, boiler_data, freezer, mqtt_mock, published)
-    resets = len(timeline(caplog, "pwm OFF ("))
     hass.states.async_set(INSIDE, "unavailable")
 
     for _ in range(3):
         await missing_cycle(hass, climate, mqtt_mock)
-
-    assert timeline(caplog, "pwm OFF (")[resets:] == ["pwm OFF (missing temperature)"] * 3
+        assert not complete(caplog) and last_cycle(caplog)["pwm"].status == PWMStatus.OFF
+        assert climate.pwm.status == PWMStatus.OFF
 
 
 # HVAC OFF is checked first
@@ -291,8 +293,7 @@ async def test_hvac_off_wins_over_a_missing_temperature(hass, entry, climate, bo
     await climate.async_set_hvac_mode(HVACMode.OFF)
     await missing_cycle(hass, climate, mqtt_mock)
 
-    assert not [m for m in timeline(caplog, "cycle ") if "missing temperature" in m]
-    assert "hvac OFF" in timeline(caplog, "cycle ")[-1]
+    assert last_cycle(caplog)["hvac"] == HVACMode.OFF
 
 
 # A backend without a control setpoint channel
@@ -308,5 +309,5 @@ async def test_opentherm_receives_the_minimum_setpoint_on_the_missing_temperatur
     await missing_cycle(hass, climate, mqtt_mock)
 
     assert "CS=10" in sent(published)
-    assert "| missing temperature: inside | want setpoint=10 heater=OFF" in timeline(caplog, "cycle ")[-1]
-    assert not timeline(caplog, RELEASED)
+    assert last_cycle(caplog)["inputs"].current_temperature is None
+    assert last_cycle(caplog)["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)

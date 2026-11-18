@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.util import dt as dt_util
 
-from . import timeline
 from .const import DIAGNOSTIC_WINDOW, WAITING_CYCLES_BEFORE_WARNING
 
 if TYPE_CHECKING:
@@ -60,10 +59,6 @@ class ChannelStatus(str, Enum):
     READ_ONLY = "read_only"
 
 
-# Statuses whose transitions are logged on the timeline
-_PROBLEM_STATUSES: Final = frozenset({ChannelStatus.DRIFTED, ChannelStatus.OUT_OF_SYNC})
-
-
 class WriteKind(str, Enum):
     SEND = "send"  # a value different from the last sent one
     RESEND = "resend"  # the same value, because this cycle's verify found a mismatch
@@ -72,18 +67,21 @@ class WriteKind(str, Enum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WriteRecord:
-    """A value written to the device in a reconcile, and why."""
+    """A value written to the device in a reconcile, and why; `read_back` is the channel's read-back when the record is made."""
     quantity: Quantity
     value: Any
     kind: WriteKind
+    read_back: Any
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StatusChange:
-    """A channel status change found by a verify."""
+    """A channel status change found by a verify, with the channel's sent value and read-back right after it."""
     quantity: Quantity
     previous: ChannelStatus
     current: ChannelStatus
+    sent: Any
+    read_back: Any
 
 
 def _identity(value: Any) -> Any:
@@ -230,9 +228,6 @@ class _Channel:
 
         rewrite, self._mismatch = self._mismatch, False
         if requested is RELEASE:
-            if self.state.target is not None:
-                timeline.release(self.name)
-
             # Without a sent value verify only records read-backs, so the next request is a first write against the latest one.
             self.state = replace(self.state, status=ChannelStatus.IDLE, target=None, sent=None, sent_at=None)
             return None
@@ -268,12 +263,6 @@ class _Channel:
                     kind = WriteKind.REWRITE
 
             if kind is not None:
-                # Logged before the write, so the timeline shows the send before the backend's post-publish wait.
-                if kind == WriteKind.SEND:
-                    timeline.send(self.name, value, self.state.target)
-                elif kind == WriteKind.RESEND:
-                    timeline.resend(self.name, value, self.state.read_back)
-
                 await self.definition.write(value)
         except Exception as err:  # noqa: BLE001
             # A failed encode or write must never stop the other channels; the sent value stays as it was.
@@ -299,13 +288,7 @@ class _Channel:
             status = self.state.status
 
         self.state = replace(self.state, status=status, sent=value, sent_at=dt_util.utcnow())
-        return WriteRecord(quantity=self.definition.quantity, value=value, kind=kind)
-
-    def log_problem_transition(self, previous: ChannelStatus) -> None:
-        """Log on the timeline a status change from `previous` into or out of a problem status."""
-        current = self.state.status
-        if current != previous and (current in _PROBLEM_STATUSES or previous in _PROBLEM_STATUSES):
-            timeline.channel_status(self.name, previous, current, self.state.sent, self.state.read_back)
+        return WriteRecord(quantity=self.definition.quantity, value=value, kind=kind, read_back=self.state.read_back)
 
     def _matches(self, read_back: Any, sent: Any) -> bool:
         if isinstance(read_back, Real) and isinstance(sent, Real):
@@ -343,9 +326,9 @@ class Channels:
             previous = channel.state.status
             channel.verify(snapshot)
             channel.record_seen()
-            channel.log_problem_transition(previous)
-            if channel.state.status != previous:
-                changes.append(StatusChange(quantity=quantity, previous=previous, current=channel.state.status))
+            state = channel.state
+            if state.status != previous:
+                changes.append(StatusChange(quantity=quantity, previous=previous, current=state.status, sent=state.sent, read_back=state.read_back))
 
         return changes
 
@@ -353,10 +336,8 @@ class Channels:
         """Update targets from `desired` and write what is needed, channel by channel in definition order. Returns the successful writes."""
         records: list[WriteRecord] = []
         for quantity, channel in self._channels.items():
-            previous = channel.state.status
             if (record := await channel.async_write(getattr(desired, quantity.value))) is not None:
                 records.append(record)
             channel.record_seen()
-            channel.log_problem_transition(previous)
 
         return records

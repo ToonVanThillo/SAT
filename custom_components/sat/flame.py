@@ -8,7 +8,7 @@ from statistics import median
 from time import monotonic
 from typing import Deque, Optional, Tuple, Iterable, TYPE_CHECKING
 
-from . import timeline
+from .logctx import logger as timeline_logger
 from .const import BoilerStatus, FlameStatus, PWMStatus
 
 if TYPE_CHECKING:
@@ -248,7 +248,7 @@ class Flame:
             self._flame_off_monotonic = None
 
             if previously_active is not None:
-                timeline.LOGGER.info("flame on")
+                timeline_logger.info("flame on")
 
         if (burn := self._burn) is not None:
             if flame_active:
@@ -294,14 +294,14 @@ class Flame:
 
         # A partial burn adds no cycle and no duration sample
         if burn.partial:
-            timeline.LOGGER.info("flame off, %s (burn started before the first observation, not counted)", burn.describe())
+            timeline_logger.info("flame off, %s (burn started before the first observation, not counted)", burn.describe())
             return
 
         duration = now - burn.started
 
         # The statistics count heating burns only
         if burn.hot_water:
-            timeline.LOGGER.info("flame off after %.1fs, %s, not counted", duration, burn.describe())
+            timeline_logger.info("flame off after %.1fs, %s, not counted", duration, burn.describe())
             return
 
         self._last_cycle_duration_seconds = duration
@@ -313,7 +313,7 @@ class Flame:
 
         self._has_completed_first_cycle = True
 
-        timeline.LOGGER.info("flame off after %.1fs, heating (cycles_last_hour=%.1f, samples_4h=%d)", duration, self._cycles_per_hour(now), self.sample_count_4h)
+        timeline_logger.info("flame off after %.1fs, heating (cycles_last_hour=%.1f, samples_4h=%d)", duration, self._cycles_per_hour(now), self.sample_count_4h)
 
     def _recompute_health(self, now: float) -> None:
         state = self._last_boiler_state

@@ -8,7 +8,7 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
-from custom_components.sat.channels import ChannelStatus, Quantity
+from custom_components.sat.channels import RELEASE, ChannelStatus, Quantity
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
@@ -17,14 +17,13 @@ from custom_components.sat.const import (
     PWMStatus,
 )
 from custom_components.sat.coordinator import DeviceState, SatDataUpdateCoordinator
-from tests.conftest import TIMELINE, advance, run_one_loop
+from tests.conftest import TIMELINE, advance, cycle_records, run_one_loop
 from tests.const import IDLE, ems_entry, otgw_entry, with_data
 from tests.test_climate_loop import message, run_loop
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
 
 RADIATOR = "climate.radiator"
-RELEASED = "control setpoint released (heater off)"
 HEATER_OFF = message('{"cmd": "heatingoff", "value": "on"}')
 
 
@@ -46,23 +45,27 @@ async def step(climate, boiler_data, mqtt_mock, published, freezer: FrozenDateTi
     return published()
 
 
-def logged(caplog, text: str) -> bool:
-    return any(text in r.getMessage() for r in caplog.get_records("call") if r.levelno == logging.INFO)
+@pytest.fixture(autouse=True)
+def timeline_debug(caplog):
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
 
 
-def requested_setpoints(caplog) -> list[str]:
-    """The control setpoint requested by each cycle so far in the call phase, from the `want` segment of the timeline's cycle lines."""
-    wants = [segment for r in caplog.get_records("call") if r.name == TIMELINE and r.levelno == logging.DEBUG
-             for segment in r.getMessage().split(" | ") if segment.startswith("want ")]
-    return [field.removeprefix("setpoint=") for want in wants for field in want.split() if field.startswith("setpoint=")]
+def requested_setpoints(caplog) -> list:
+    """The control setpoint requested by each cycle so far, from the `want` of the cycle records (RELEASE when released)."""
+    wants = [r.fields["want"] for r in cycle_records(caplog)]  # type: ignore[attr-defined]
+
+    return [want.control_setpoint for want in wants if want.control_setpoint is not None]
+
+
+def released(caplog) -> bool:
+    """Whether a cycle so far requested the control setpoint released."""
+    return RELEASE in requested_setpoints(caplog)
 
 
 # Off phase on EMS-ESP, via the too-cold path
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_off_phase_is_released_once_the_heater_setting_reads_back(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**IDLE)
 
     # Cycle 1: heating still reads as enabled
@@ -72,16 +75,16 @@ async def test_off_phase_is_released_once_the_heater_setting_reads_back(entry, c
         HEATER_OFF,
     ]
     assert setpoint_status(coordinator) == ChannelStatus.PENDING
-    assert requested_setpoints(caplog) == ["10"]
-    assert not logged(caplog, RELEASED)
+    assert requested_setpoints(caplog) == [10]
+    assert not released(caplog)
 
     # Cycle 2: heating reads back as disabled
     caplog.clear()
     calls = await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on", selflowtemp=0)
     assert selflowtemp(calls) == []
     assert setpoint_status(coordinator) == ChannelStatus.IDLE
-    assert logged(caplog, RELEASED)
-    assert requested_setpoints(caplog) == ["RELEASE"]
+    assert released(caplog)
+    assert requested_setpoints(caplog) == [RELEASE]
 
     # Later off cycles, with the boiler reading selflowtemp 5 or 0
     for value in (5, 0, 5):
@@ -92,7 +95,6 @@ async def test_off_phase_is_released_once_the_heater_setting_reads_back(entry, c
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_unconfirmed_heatingoff_write_keeps_publishing_the_setpoint(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
     await boiler_data(**IDLE)
     await run_loop(climate, mqtt_mock, published, target=15.0)
 
@@ -101,12 +103,11 @@ async def test_unconfirmed_heatingoff_write_keeps_publishing_the_setpoint(entry,
         assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
         assert setpoint_status(coordinator) != ChannelStatus.IDLE
 
-    assert not logged(caplog, RELEASED)
+    assert not released(caplog)
 
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_restored_heatingoff_is_not_confirmation(entry, climate, coordinator, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.INFO)
     coordinator.async_set_updated_data(IDLE | {"heatingoff": "on"}, restored=True)
     await climate.async_set_target_temperature(15.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
@@ -114,7 +115,7 @@ async def test_restored_heatingoff_is_not_confirmation(entry, climate, coordinat
 
     await climate.async_control_heating_loop()
 
-    assert not logged(caplog, RELEASED)
+    assert not released(caplog)
     assert setpoint_status(coordinator) != ChannelStatus.IDLE
     assert coordinator.confirmed_value(Quantity.HEATER_STATE) is None
 
@@ -140,7 +141,6 @@ async def test_heater_on_after_release_is_a_first_write(hass: HomeAssistant, ent
 
 @pytest.mark.parametrize(*with_data({CONF_RADIATORS: [RADIATOR]}))
 async def test_no_open_valve_releases_the_setpoint(hass: HomeAssistant, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
     await boiler_data(**IDLE | {"heatingoff": "on"})
     hass.states.async_set(RADIATOR, "heat", {"hvac_action": "idle", "hvac_modes": ["heat", "off"]})
     await climate.async_set_target_temperature(21.0)
@@ -150,7 +150,7 @@ async def test_no_open_valve_releases_the_setpoint(hass: HomeAssistant, entry, c
     calls = await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on")
     assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
     assert not any('"heatingoff"' in c[1] for c in calls)
-    assert not logged(caplog, RELEASED)
+    assert not released(caplog)
 
     # Next cycles: heater off is confirmed, so the setpoint is released
     for _ in range(2):
@@ -159,13 +159,11 @@ async def test_no_open_valve_releases_the_setpoint(hass: HomeAssistant, entry, c
         assert not any('"heatingoff"' in c[1] for c in calls)
         assert setpoint_status(coordinator) == ChannelStatus.IDLE
 
-    assert logged(caplog, RELEASED)
+    assert released(caplog)
 
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_heater_on_publishes_the_setpoint_every_cycle(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**IDLE | {"heatingoff": "off", "burnmaxpower": 100})
     await run_loop(climate, mqtt_mock, published)
 
@@ -173,8 +171,8 @@ async def test_heater_on_publishes_the_setpoint_every_cycle(entry, climate, coor
         calls = await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="off")
         assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 35}')]
 
-    assert not logged(caplog, RELEASED)
-    assert "35.0" in requested_setpoints(caplog)
+    assert not released(caplog)
+    assert 35.0 in requested_setpoints(caplog)
 
 
 # Off phase via PWM
@@ -182,7 +180,6 @@ async def test_heater_on_publishes_the_setpoint_every_cycle(entry, climate, coor
 @pytest.mark.parametrize(*ems_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_on_with_cold_minimum_setpoint_is_released(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
     # current behaviour, known bug: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF, so it is released too
-    caplog.set_level(logging.INFO)
     await boiler_data(**IDLE)
     assert HEATER_OFF in await run_loop(climate, mqtt_mock, published)
     assert setpoint_status(coordinator) == ChannelStatus.PENDING
@@ -191,22 +188,21 @@ async def test_pwm_on_with_cold_minimum_setpoint_is_released(entry, climate, coo
 
     assert selflowtemp(calls) == []
     assert setpoint_status(coordinator) == ChannelStatus.IDLE
-    assert logged(caplog, RELEASED)
+    assert released(caplog)
 
 
 @pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_off_phase_is_released(hass: HomeAssistant, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
     await boiler_data(**IDLE | {"heatingoff": "on"})
     await run_loop(climate, mqtt_mock, published)
 
     # The ON phase requests heater ON. Advancing the clock past its duty time runs the pending scheduled loop, in which PWM switches to its OFF phase.
-    assert "pwm ON (" in caplog.text
+    assert climate.pwm.status == PWMStatus.ON
     freezer.tick(1)
     await boiler_data(heatingoff="off")
     mqtt_mock.async_publish.reset_mock()
     await advance(hass, freezer, 1800)
-    assert "pwm OFF" in caplog.text
+    assert climate.pwm.status == PWMStatus.OFF
     assert selflowtemp(published()) == [message('{"cmd": "selflowtemp", "value": 0}')]
     assert HEATER_OFF in published()
     assert setpoint_status(coordinator) == ChannelStatus.PENDING
@@ -215,7 +211,7 @@ async def test_pwm_off_phase_is_released(hass: HomeAssistant, entry, climate, co
 
     assert selflowtemp(calls) == []
     assert setpoint_status(coordinator) == ChannelStatus.IDLE
-    assert logged(caplog, RELEASED)
+    assert released(caplog)
 
 
 # HVAC OFF and other backends
@@ -230,8 +226,6 @@ async def test_hvac_off_releases_unconditionally(entry, climate, coordinator, bo
 
 @pytest.mark.parametrize(*otgw_entry())
 async def test_opentherm_still_receives_the_minimum_setpoint_when_heater_off(hass, entry, climate, coordinator, mqtt_mock, published, caplog):
-    caplog.set_level(logging.INFO)
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     async_fire_mqtt_message(hass, "otgw/value/gw1/centralheating", "ON")
     await hass.async_block_till_done()
 
@@ -239,8 +233,8 @@ async def test_opentherm_still_receives_the_minimum_setpoint_when_heater_off(has
         calls = await run_loop(climate, mqtt_mock, published, target=15.0)
         assert "CS=10" in [c[1] for c in calls]
 
-    assert not logged(caplog, RELEASED)
-    assert "10" in requested_setpoints(caplog)
+    assert not released(caplog)
+    assert 10 in requested_setpoints(caplog)
 
 
 # Confirmation must come from a read-back received after the send
@@ -251,15 +245,13 @@ def heater_status(coordinator: SatDataUpdateCoordinator) -> ChannelStatus:
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_stale_readback_does_not_confirm_heater_off(hass: HomeAssistant, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**IDLE | {"heatingoff": "on", "selflowtemp": 5})
 
     # Cycle N: heater ON requested
     assert selflowtemp(await run_loop(climate, mqtt_mock, published, target=21.0)) == [message('{"cmd": "selflowtemp", "value": 35}')]
     assert message('{"cmd": "heatingoff", "value": "off"}') in published()
     assert (setpoint_status(coordinator), heater_status(coordinator)) == (ChannelStatus.PENDING, ChannelStatus.PENDING)
-    assert "35.0" in requested_setpoints(caplog)
+    assert 35.0 in requested_setpoints(caplog)
 
     # The pulse runs past its minimum
     await advance(hass, freezer, MINIMUM_PULSE_TIME)
@@ -271,14 +263,14 @@ async def test_stale_readback_does_not_confirm_heater_off(hass: HomeAssistant, e
     mqtt_mock.async_publish.reset_mock()
     await climate.async_set_target_temperature(15.0)
     await run_one_loop(hass, climate, caplog, 0)
-    assert "pwm OFF" in caplog.text
+    assert climate.pwm.status == PWMStatus.OFF
     calls = published()
     assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
     assert HEATER_OFF in calls
     assert (setpoint_status(coordinator), heater_status(coordinator)) == (ChannelStatus.PENDING, ChannelStatus.PENDING)
     assert coordinator.confirmed_value(Quantity.HEATER_STATE) is None
-    assert requested_setpoints(caplog) == ["10"]
-    assert not logged(caplog, RELEASED)
+    assert requested_setpoints(caplog) == [10]
+    assert not released(caplog)
 
     # Cycle N+2: the read-back after the OFF send arrives
     caplog.clear()
@@ -286,12 +278,11 @@ async def test_stale_readback_does_not_confirm_heater_off(hass: HomeAssistant, e
     assert selflowtemp(calls) == []
     assert (setpoint_status(coordinator), heater_status(coordinator)) == (ChannelStatus.IDLE, ChannelStatus.IN_SYNC)
     assert coordinator.confirmed_value(Quantity.HEATER_STATE) == DeviceState.OFF
-    assert logged(caplog, RELEASED)
+    assert released(caplog)
 
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_heater_off_answered_with_off_is_never_confirmed(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
     await boiler_data(**IDLE | {"heatingoff": "off"})
     await run_loop(climate, mqtt_mock, published, target=15.0)
 
@@ -302,13 +293,11 @@ async def test_heater_off_answered_with_off_is_never_confirmed(entry, climate, c
         assert heater_status(coordinator) == ChannelStatus.OUT_OF_SYNC
         assert coordinator.confirmed_value(Quantity.HEATER_STATE) is None
 
-    assert not logged(caplog, RELEASED)
+    assert not released(caplog)
 
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_drift_after_release_requests_the_setpoint_again(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**IDLE)
     await run_loop(climate, mqtt_mock, published, target=15.0)
     await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on", selflowtemp=5)
@@ -322,13 +311,12 @@ async def test_drift_after_release_requests_the_setpoint_again(entry, climate, c
     assert coordinator.confirmed_value(Quantity.HEATER_STATE) is None
     assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
     assert HEATER_OFF in calls
-    assert not logged(caplog, RELEASED)
-    assert "10" in requested_setpoints(caplog)
+    assert not released(caplog)
+    assert 10 in requested_setpoints(caplog)
 
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_adopted_first_write_observed(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
     await boiler_data(**IDLE | {"heatingoff": "on", "selflowtemp": 5})
 
     calls = await run_loop(climate, mqtt_mock, published, target=15.0)
@@ -338,7 +326,7 @@ async def test_adopted_first_write_observed(entry, climate, coordinator, boiler_
 
     calls = await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on", selflowtemp=5)
     assert selflowtemp(calls) == []
-    assert logged(caplog, RELEASED)
+    assert released(caplog)
 
 
 # confirmed_value accessor

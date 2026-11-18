@@ -38,8 +38,7 @@ from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.start import async_at_started
 
 from .area import Areas, SENSOR_TEMPERATURE_ID
-from . import timeline
-from .channels import RELEASE, DesiredState, Quantity, Release, StatusChange, WriteRecord
+from .channels import RELEASE, DesiredState, Quantity, Release
 from .const import *
 from .const import ModulationMode, PWMStatus
 from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
@@ -47,6 +46,7 @@ from .entity import SatEntity
 from .errors import Error
 from .held_input import HeldInput
 from .helpers import convert_time_str_to_seconds, float_value, is_state_stale, state_age_seconds
+from .logctx import annotate_event, logged_event
 from .manufacturers.geminox import Geminox
 from .pwm import PWMState
 from .relative_modulation import RelativeModulation, RelativeModulationState
@@ -223,16 +223,13 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.pwm = create_pwm_controller(self.heating_curve, config_options)
 
         # The inputs of the cycle, each held through a short gap; the humidity only counts with thermal comfort
-        self._held_target = HeldInput("target", "target temperature")
-        self._held_inside = HeldInput("inside", "inside temperature")
-        self._held_outside = HeldInput("outside", "outside temperature")
-        self._held_humidity = HeldInput("humidity", "humidity")
+        self._held_target = HeldInput("target")
+        self._held_inside = HeldInput("inside")
+        self._held_outside = HeldInput("outside")
+        self._held_humidity = HeldInput("humidity")
 
-        # To log only changes: whether a control setpoint is requested (None until the first request) and whether overshoot handling is on
-        self._setpoint_requested: bool | None = None
         # A PID reset that a change asked for while the inside or target temperature was missing; done once both are back
         self._pid_reset_pending: bool = False
-        self._overshoot_handling: bool = False
 
         if self._simulation:
             _LOGGER.warning("Simulation mode!")
@@ -969,6 +966,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         self._control_heating_loop_unsub = async_call_later(self.hass, 10, HassJob(self.async_control_heating_loop))
 
+    @logged_event("cycle")
     async def async_control_heating_loop(self, _time: Optional[datetime] = None) -> None:
         """Control the heating based on current temperature, target temperature, and outside temperature."""
         # Let the sub know we have run
@@ -979,38 +977,26 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Control the heating through the coordinator
         await self._coordinator.async_control_heating_loop(climate=self, pwm_state=self.pwm.state)
         snapshot = self._coordinator.snapshot()
-        changes = self._coordinator.verify(snapshot)
+        annotate_event(cycle=snapshot.cycle, hvac=self.hvac_mode, inputs=inputs, boiler=snapshot.boiler, verify=self._coordinator.verify(snapshot))
 
         # The PWM cycles per hour follow the captured outside temperature
         self.pwm.update_cycles_per_hour(inputs.outside_temperature)
 
         # In HVAC mode OFF the decide phase requests heater OFF and releases the control setpoint
         if self.hvac_mode != HVACMode.HEAT:
-            desired = DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
-            self._log_setpoint_release(desired, "hvac off")
-            writes = await self._coordinator.async_submit(desired)
+            await self._async_submit(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))
             self.async_send_pwm_updated()
-
-            timeline.cycle(snapshot.cycle, lambda: (
-                f"hvac {timeline.fmt(self.hvac_mode)}", f"want {timeline.desired(desired)}", f"sent {timeline.writes(writes)}", timeline.verified(changes)
-            ))
             return
 
         # Without the current, target or outside temperature, request heater OFF; as with no open valve, PWM is reset, so a pulse
         # doesn't resume when the temperature returns
         if inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
-            missing = [held.name for held in self._held_inputs() if held.missing]
-            self.pwm.reset("missing temperature")
+            self.pwm.reset()
             self.async_send_pwm_updated()
 
-            desired = DesiredState(control_setpoint=RELEASE if self._heater_off_releases_setpoint() else MINIMUM_SETPOINT, heater_state=DeviceState.OFF)
-            self._log_setpoint_release(desired, "missing temperature")
-            writes = await self._coordinator.async_submit(desired)
-
-            timeline.cycle(snapshot.cycle, lambda: (
-                "missing temperature: " + " ".join(missing),
-                f"want {timeline.desired(desired)}", f"sent {timeline.writes(writes)}", timeline.verified(changes)
-            ))
+            await self._async_submit(
+                DesiredState(control_setpoint=RELEASE if self._heater_off_releases_setpoint() else MINIMUM_SETPOINT, heater_state=DeviceState.OFF)
+            )
             return
 
         requested_setpoint = self._calculate_control_setpoint()
@@ -1021,15 +1007,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             # Apply low filter on the requested setpoint
             self._calculated_setpoint = round(self._alpha * requested_setpoint + (1 - self._alpha) * self._calculated_setpoint, 1)
 
-        # Check for overshoot
-        overshoot_handling = snapshot.boiler.status == BoilerStatus.OVERSHOOT_HANDLING
-        if overshoot_handling != self._overshoot_handling:
-            self._overshoot_handling = overshoot_handling
-            timeline.LOGGER.info("overshoot handling started" if overshoot_handling else "overshoot handling ended")
-
         # Pulse Width Modulation runs whenever a valve is open; unrestricted modulation needs setpoint management and the option allowing it
         if not inputs.valves_open:
-            self.pwm.reset("valves closed")
+            self.pwm.reset()
         else:
             await self.pwm.update(
                 flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint,
@@ -1067,10 +1047,12 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if heater_state == DeviceState.OFF and self._heater_off_releases_setpoint():
             control_setpoint = RELEASE
 
-        desired = DesiredState(control_setpoint=control_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state)
-        self._log_setpoint_release(desired, "heater off")
-        writes = await self._coordinator.async_submit(desired)
-        timeline.cycle(snapshot.cycle, lambda: self._cycle_segments(snapshot, inputs, setpoint_reason, requested_setpoint, desired, writes, changes))
+        # The curve and PID terms as held now; they need not add up to the requested setpoint
+        annotate_event(
+            setpoint=self._calculated_setpoint, setpoint_rule=setpoint_reason, requested=requested_setpoint,
+            curve=self.heating_curve.value, p=self.pid.proportional, i=self.pid.integral, d=self.pid.derivative,
+        )
+        await self._async_submit(DesiredState(control_setpoint=control_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state))
 
         self.async_write_ha_state()
 
@@ -1100,70 +1082,10 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             held=tuple(held.name for held in self._held_inputs() if held.held),
         )
 
-    def _log_setpoint_release(self, desired: DesiredState, reason: str) -> None:
-        """Log on the timeline when a requested control setpoint is released (with `reason`) or requested again, across HVAC modes.
-
-        Only on backends with a control setpoint channel, the only ones where a release takes effect. A release before the first request and
-        the first request itself aren't logged.
-        """
-        if Quantity.CONTROL_SETPOINT not in self._coordinator.channel_states:
-            return
-
-        requested = desired.control_setpoint is not RELEASE
-        if self._setpoint_requested is None:
-            if requested:
-                self._setpoint_requested = True
-            return
-
-        if requested == self._setpoint_requested:
-            return
-
-        self._setpoint_requested = requested
-        if requested:
-            timeline.LOGGER.info("control setpoint requested again")
-        else:
-            timeline.LOGGER.info("control setpoint released (%s)", reason)
-
-    def _cycle_segments(
-            self, snapshot: BoilerSnapshot, inputs: ClimateInputs, setpoint_reason: str, requested_setpoint: float, desired: DesiredState,
-            writes: list[WriteRecord], changes: list[StatusChange]
-    ) -> list[str]:
-        """The cycle line of a HEAT cycle: inputs, boiler, PWM, the setpoint rule, the desired state, the writes and the verify changes.
-
-        The setpoint rule shows the filtered setpoint, `requested_setpoint` (the filter's input this cycle), and the heating curve and PID terms as
-        held when the line is built.
-        """
-        fmt = timeline.fmt
-        boiler = snapshot.boiler
-        # The reliable flow temperature only when it differs from the raw one
-        reliable = "" if boiler.reliable_flow_temperature == boiler.flow_temperature else f" reliable={fmt(boiler.reliable_flow_temperature)}"
-        pwm = "pwm ?"
-        if (controller := self.pwm) is not None:
-            pwm = f"pwm {fmt(controller.status)} {fmt(controller.mode)}"
-            if (duty := controller.last_duty_cycle_percentage) is not None and (times := controller.duty_cycle) is not None:
-                pwm += f" duty={duty}% {times[0]}/{times[1]}s ({controller.duty_cycle_branch})"
-            if controller.hold is not None:
-                pwm += f" hold={controller.hold}"
-            if controller.rolled_over:
-                pwm += " rollover"
-
-        held = f" held={','.join(inputs.held)}" if inputs.held else ""
-        fmt_number = timeline.fmt_number
-        pid = self.pid
-        request = (
-            f"req={fmt_number(requested_setpoint)} curve={fmt_number(self.heating_curve.value)}"
-            f" p={fmt_number(pid.proportional, signed=True)} i={fmt_number(pid.integral, signed=True)} d={fmt_number(pid.derivative, signed=True)}"
-        )
-
-        return [
-            f"in target={fmt(inputs.target_temperature)} inside={fmt(inputs.current_temperature)} out={fmt(inputs.outside_temperature)} valves={'open' if inputs.valves_open else 'closed'}{held}",
-            f"boiler flow={fmt(boiler.flow_temperature)}{reliable} flame={fmt(boiler.flame_active)} hw={fmt(boiler.hot_water_active)} active={fmt(boiler.is_active)} status={fmt(boiler.status)}",
-            pwm,
-            f"setpoint calc={fmt(self._calculated_setpoint)} ({setpoint_reason}) {request}",
-            f"want {timeline.desired(desired)}",
-            f"sent {timeline.writes(writes)}",
-            timeline.verified(changes),
-        ]
+    async def _async_submit(self, desired: DesiredState) -> None:
+        """Submit `desired` to the coordinator; add the PWM state and `desired`, then the writes, to the cycle record."""
+        annotate_event(pwm=self.pwm.state, want=desired)
+        annotate_event(sent=await self._coordinator.async_submit(desired))
 
     @staticmethod
     def _heater_state(setpoint: float | None) -> DeviceState:
@@ -1212,7 +1134,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         # Reset the climate and PWM
         self.reset_control_state()
-        self.pwm.reset("hvac mode change")
+        self.pwm.reset()
         self.async_send_pwm_updated()
 
         # Collect which climates to control

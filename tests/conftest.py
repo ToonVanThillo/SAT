@@ -1,8 +1,10 @@
 """Fixtures for testing."""
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import timedelta
+from typing import Any
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -139,20 +141,29 @@ async def advance(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: 
     await hass.async_block_till_done()
 
 
-def timeline_since(caplog: LogCaptureFixture, mark: int) -> list[str]:
-    """Return the timeline messages logged after `mark` (a `len(caplog.records)` taken earlier)."""
-    return [r.getMessage() for r in caplog.records[mark:] if r.name == TIMELINE]
+def cycle_records(caplog: LogCaptureFixture, mark: int = 0) -> list[logging.LogRecord]:
+    """Return the cycle records logged after `mark` (a `len(caplog.records)` taken earlier); they need the timeline logger at DEBUG."""
+    return [r for r in caplog.records[mark:] if r.name == TIMELINE and getattr(r, "fields", {}).get("event") == "cycle"]
 
 
-async def run_one_loop(hass: HomeAssistant, climate: SatClimate, caplog: LogCaptureFixture, mark: int) -> list[str]:
-    """Make sure exactly one climate control loop ran since `mark` and return the timeline messages since then.
+def last_cycle(caplog: LogCaptureFixture) -> dict[str, Any]:
+    """Return the fields of the latest cycle record."""
+    records = cycle_records(caplog)
+    assert records, "no cycle record logged; is the timeline logger at DEBUG?"
+
+    return records[-1].fields  # type: ignore[attr-defined, no-any-return]
+
+
+async def run_one_loop(hass: HomeAssistant, climate: SatClimate, caplog: LogCaptureFixture, mark: int) -> dict[str, Any]:
+    """Make sure exactly one climate control loop ran since `mark` and return the fields of its cycle record.
 
     Events (boiler data, sensor changes) debounce a loop of their own, which runs by itself once enough time has passed. If one ran, that is
     the loop; otherwise the pending debounce handle is dropped and the loop is run here, so a cycle never has two loops racing each other.
     """
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await hass.async_block_till_done()
 
-    if not [m for m in timeline_since(caplog, mark) if m.startswith("cycle ")]:
+    if not cycle_records(caplog, mark):
         cancel = climate._control_heating_loop_unsub
         if cancel is not None:
             cancel()
@@ -160,10 +171,10 @@ async def run_one_loop(hass: HomeAssistant, climate: SatClimate, caplog: LogCapt
         await climate.async_control_heating_loop()
         await hass.async_block_till_done()
 
-    new = timeline_since(caplog, mark)
-    assert len([m for m in new if m.startswith("cycle ")]) == 1, "exactly one loop per cycle"
+    new = cycle_records(caplog, mark)
+    assert len(new) == 1, "exactly one loop per cycle"
 
-    return new
+    return new[0].fields  # type: ignore[attr-defined, no-any-return]
 
 
 async def settle() -> None:

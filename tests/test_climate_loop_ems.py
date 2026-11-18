@@ -21,10 +21,11 @@ from custom_components.sat.const import (
     CONF_MAXIMUM_SETPOINT,
     CONF_MINIMUM_SETPOINT,
     CONF_RADIATORS,
+    BoilerStatus,
     ModulationMode,
     PWMStatus,
 )
-from tests.conftest import TIMELINE, advance
+from tests.conftest import TIMELINE, advance, last_cycle
 from tests.const import IDLE, ems_entry, with_data
 from tests.test_climate_loop import message, run_loop
 
@@ -214,12 +215,12 @@ OVERSHOOT = IDLE | {"curflowtemp": 50, "selflowtemp": 40, "burngas": "on", "heat
 
 @pytest.mark.parametrize(ems_entry()[0], [*ems_entry()[1], *ems_entry({CONF_DYNAMIC_MINIMUM_SETPOINT: True, CONF_DYNAMIC_MINIMUM_SETPOINT_VERSION: 2})[1]], ids=["default", "dynamic-v2"])
 async def test_overshoot_handling_leaves_pwm_alone(hass, entry, climate, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**OVERSHOOT)
 
     # The calculated setpoint (35) is above the minimum (20): an unrestricted pulse at the calculated setpoint, as without overshoot
     assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 35}')
-    assert "overshoot handling started" in [r.getMessage() for r in caplog.records if r.name == TIMELINE]
+    assert last_cycle(caplog)["boiler"].status == BoilerStatus.OVERSHOOT_HANDLING
     assert climate.pwm.status == PWMStatus.ON
     assert climate.pwm.mode == ModulationMode.UNRESTRICTED
 

@@ -1,7 +1,8 @@
-"""Timeline logger at the MQTT boundary, from the spec: boiler signal changes, ordering, edges, cycle lines and the absence of per-cycle noise."""
+"""The timeline logger: the info lines that remain (boiler changes, flame, coordinator) and the structured `cycle` record of each control-loop
+run, with its rendering, from the spec (docs/design.md, Timeline)."""
 import logging
 import re
-from dataclasses import dataclass
+from typing import Any
 from unittest.mock import PropertyMock, patch
 
 import pytest
@@ -9,36 +10,32 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
-from custom_components.sat import timeline as timeline_module
-from custom_components.sat.channels import DesiredState, Quantity, WriteKind
+from custom_components.sat.channels import (
+    RELEASE,
+    ChannelStatus,
+    DesiredState,
+    Quantity,
+    WriteKind,
+)
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
     BoilerStatus,
+    PWMStatus,
 )
 from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.fake import SatFakeCoordinator
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
-from tests.conftest import TIMELINE, advance, run_one_loop
-from tests.const import IDLE, ems_entry, otgw_entry, with_data
-from tests.test_climate_loop import run_loop
+from tests.conftest import TIMELINE, advance, cycle_records, last_cycle
+from tests.const import IDLE, ems_entry, with_data
+from tests.test_climate_loop import message, run_loop
 from tests.test_mqtt_ems import start
 
-BRANCHES = {"low-duty", "low", "mid", "high", "max", "unrestricted"}
-# The pwm segment of a cycle line with a duty: status, mode, duty, on/off times and branch, then an optional hold and rollover marker
-PWM_SEGMENT = re.compile(r"pwm (ON|OFF) (MINIMUM|UNRESTRICTED) duty=[\d.]+% \d+/\d+s \(([^)]+)\)(?: hold=[a-z ]+)?( rollover)?")
+HEAT_BOILER = IDLE | {"heatingoff": "on"}
 
 
 def timeline(caplog, level=logging.INFO, phase="call") -> list[str]:
     return [r.getMessage() for r in caplog.get_records(phase) if r.name == TIMELINE and r.levelno == level]
-
-
-def cycle_lines(caplog) -> list[str]:
-    return [m for m in timeline(caplog, logging.DEBUG) if m.startswith("cycle ")]
-
-
-def segments(line: str) -> list[str]:
-    return line.split(" | ")
 
 
 # Boiler signal changes (EMS coordinator without a climate)
@@ -141,60 +138,307 @@ async def test_coordinator_set_up_and_removed_once(hass, mqtt_mock, no_publish_d
 
 # Backends without channels
 
-async def test_submit_fallback_logs_each_supported_setter_call(hass: HomeAssistant, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
+async def test_submit_without_channels_returns_its_records_and_logs_nothing(hass: HomeAssistant, caplog):
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     coordinator = SatFakeCoordinator(hass, {}, None, config_entry=None)
     desired = DesiredState(control_setpoint=40.0, heater_state=DeviceState.ON)
 
     records = await coordinator.async_submit(desired)
-    first = timeline(caplog)
-    caplog.clear()
     await coordinator.async_submit(desired)
 
-    # Every call is logged: no last-sent state without channels
-    assert first == ["send control_setpoint=40.0", "send heater_state=ON"]
-    assert timeline(caplog) == first
     assert [(r.quantity, r.value, r.kind) for r in records] == [(Quantity.CONTROL_SETPOINT, 40.0, WriteKind.SEND), (Quantity.HEATER_STATE, DeviceState.ON, WriteKind.SEND)]
+    assert [r for r in caplog.records if r.name == TIMELINE] == []
 
 
-async def test_submit_fallback_does_not_log_unsupported_quantities(hass: HomeAssistant, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
+async def test_submit_fallback_ignores_unsupported_quantities(hass: HomeAssistant, caplog):
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     coordinator = SatFakeCoordinator(hass, {}, None, config_entry=None)
 
     records = await coordinator.async_submit(DesiredState(maximum_relative_modulation=50, maximum_setpoint=60.0))
 
-    assert timeline(caplog) == []
+    assert [r for r in caplog.records if r.name == TIMELINE] == []
     assert records == []
 
 
-# Climate loop (EMS entry)
+async def test_removed_is_not_logged_when_the_start_failed(hass, caplog):
+    # Without the MQTT mock the start fails
+    caplog.set_level(logging.INFO, logger=TIMELINE)
+    coordinator = await start(hass, {})
+    assert not [m for m in timeline(caplog, phase="call") if m.startswith("coordinator set up")]
+    assert any(r.levelno == logging.ERROR and "Failed to start" in r.getMessage() for r in caplog.get_records("call"))
 
-def index_of(entries: list[str], prefix: str) -> int:
-    return next(i for i, entry in enumerate(entries) if entry.startswith(prefix))
+    await coordinator.async_will_remove_from_hass()
+
+    assert not [m for m in timeline(caplog, phase="call") if m.startswith("coordinator removed")]
+
+
+# The cycle record: one per run
+
+@pytest.fixture
+def heating(hass, loop_entry, climate, boiler_data, caplog):
+    """The EMS climate in HEAT at target 21 with the timeline at debug and the debounced loops of the setup done."""
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
+
+    async def go(**data: Any) -> None:
+        await boiler_data(**HEAT_BOILER | data)
+        await climate.async_set_target_temperature(21.0)
+        await climate.async_set_hvac_mode(HVACMode.HEAT)
+        await hass.async_block_till_done()
+        caplog.clear()
+
+    return go
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_ordering_boiler_message_then_cycle_and_send_before_publish(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await climate.async_set_target_temperature(21.0)
+async def test_one_debug_record_per_run_with_consecutive_numbers(heating, climate, caplog):
+    await heating()
+
+    numbers = []
+    for _ in range(3):
+        before = len(caplog.records)
+        await climate.async_control_heating_loop()
+        [record] = cycle_records(caplog, before)
+        assert record.levelno == logging.DEBUG
+        assert record.name == TIMELINE
+        assert next(iter(record.fields)) == "event"  # type: ignore[attr-defined]
+        assert "error" not in record.fields  # type: ignore[attr-defined]
+        assert record.getMessage().startswith("cycle ")
+        numbers.append(record.fields["cycle"])  # type: ignore[attr-defined]
+
+    assert numbers == [numbers[0], numbers[0] + 1, numbers[0] + 2]
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_a_failing_run_logs_a_record_with_the_error_and_the_fields_so_far_and_raises(heating, climate, coordinator, caplog):
+    await heating()
+
+    with patch.object(coordinator, "async_submit", side_effect=RuntimeError('boom "now"')), pytest.raises(RuntimeError, match="boom"):
+        await climate.async_control_heating_loop()
+
+    [record] = cycle_records(caplog)
+    fields = record.fields  # type: ignore[attr-defined]
+    assert fields["error"] == 'RuntimeError: boom "now"'
+    assert fields["hvac"] == HVACMode.HEAT
+    assert fields["inputs"].current_temperature == 20.9
+    assert fields["want"].heater_state == DeviceState.ON
+    assert fields["pwm"].status == PWMStatus.ON
+    assert "sent" not in fields
+    assert r'error="RuntimeError: boom \"now\""' in record.getMessage()
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_debounced_run_executes_the_loop_body(heating, hass, climate, caplog, freezer, mqtt_mock, published):
+    await heating()
+    mqtt_mock.async_publish.reset_mock()
+
+    climate.schedule_control_heating_loop()
+    await hass.async_block_till_done()
+    assert cycle_records(caplog) == []
+
+    await advance(hass, freezer, 11)
+
+    [record] = cycle_records(caplog)
+    assert record.fields["hvac"] == HVACMode.HEAT  # type: ignore[attr-defined]
+    assert message('{"cmd": "selflowtemp", "value": 35}') in published()
+
+
+# The fields per branch
+
+COMMON = ["cycle", "hvac", "inputs", "boiler", "verify", "pwm", "want", "sent"]
+HEAT_ONLY = ["setpoint", "setpoint_rule", "requested", "curve", "p", "i", "d"]
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_hvac_off_has_the_common_fields_only(heating, climate, caplog):
+    await heating()
+    await climate.async_set_hvac_mode(HVACMode.OFF)
+    caplog.clear()
+
+    await climate.async_control_heating_loop()
+
+    fields = last_cycle(caplog)
+    assert fields["hvac"] == HVACMode.OFF
+    assert fields["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
+    assert [key for key in fields if key != "event"] == COMMON
+
+
+@pytest.mark.parametrize(*ems_entry())
+@pytest.mark.usefixtures("no_input_grace")
+async def test_a_missing_temperature_shows_in_the_inputs_and_has_no_setpoint_fields(heating, hass, climate, caplog):
+    await heating()
+    hass.states.async_set("sensor.test_inside_sensor", "unavailable")
+    await hass.async_block_till_done()
+    caplog.clear()
+
+    await climate.async_control_heating_loop()
+
+    fields = last_cycle(caplog)
+    assert fields["inputs"].current_temperature is None
+    assert fields["pwm"].status == PWMStatus.OFF
+    assert fields["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
+    assert [key for key in fields if key != "event"] == COMMON
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_heat_adds_the_setpoint_fields(heating, climate, caplog):
+    await heating()
+
+    await climate.async_control_heating_loop()
+
+    fields = last_cycle(caplog)
+    assert {key for key in fields if key != "event"} == set(COMMON + HEAT_ONLY)
+    inputs = fields["inputs"]
+    assert (inputs.target_temperature, inputs.current_temperature, inputs.outside_temperature, inputs.valves_open) == (21.0, 20.9, 9.9, True)
+    assert inputs.held == ()
+    assert isinstance(fields["boiler"].status, BoilerStatus)
+    assert (fields["boiler"].flame_active, fields["boiler"].hot_water_active) == (False, False)
+    assert fields["pwm"].status == PWMStatus.ON
+    assert (fields["pwm"].duty_cycle, fields["pwm"].duty_cycle_branch, fields["pwm"].last_duty_cycle_percentage) == ((3600, 0), "unrestricted", 100.0)
+    assert fields["setpoint"] == fields["requested"] == 35.0
+    assert fields["want"].control_setpoint == 35.0
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_boiler_state_has_an_unknown_flow_as_none(heating, climate, caplog, boiler_data):
+    await heating()
+    await boiler_data(curflowtemp=None)
+
+    await climate.async_control_heating_loop()
+
+    assert last_cycle(caplog)["boiler"].flow_temperature is None
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_sent_shows_encoded_values_and_the_want_shows_the_request(heating, climate, caplog, boiler_data):
+    await boiler_data(**IDLE)
+    await climate.async_set_target_temperature(15.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     caplog.clear()
-    events: list[str] = []
 
-    class Handler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            events.append("log " + record.getMessage())
+    await climate.async_control_heating_loop()
 
-    handler = Handler()
-    logging.getLogger(TIMELINE).addHandler(handler)
+    fields = last_cycle(caplog)
+    assert fields["want"].control_setpoint == 10
+    sent = {record.quantity: record for record in fields["sent"]}
+    assert sent[Quantity.CONTROL_SETPOINT].value == 0
+    assert sent[Quantity.CONTROL_SETPOINT].kind == WriteKind.SEND
+    assert sent[Quantity.HEATER_STATE].value == DeviceState.OFF
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_sent_marks_rewrites_and_resends_with_the_read_back(heating, climate, caplog, boiler_data, freezer):
+    await heating()
+    await climate.async_control_heating_loop()
+    first = {record.quantity: record for record in last_cycle(caplog)["sent"]}
+    assert (first[Quantity.CONTROL_SETPOINT].value, first[Quantity.CONTROL_SETPOINT].kind) == (35, WriteKind.SEND)
+
+    freezer.tick(5)
+    await boiler_data(**HEAT_BOILER | {"selflowtemp": 35, "burnmaxpower": 100, "heatingoff": "off"})
+    await climate.async_control_heating_loop()
+    again = {record.quantity: record for record in last_cycle(caplog)["sent"]}
+    assert (again[Quantity.CONTROL_SETPOINT].value, again[Quantity.CONTROL_SETPOINT].kind) == (35, WriteKind.REWRITE)
+
+    # The boiler answers the heater with the opposite of what was sent: the next cycle sends it again, with the read-back
+    await climate.async_set_target_temperature(15.0)
+    await climate.async_control_heating_loop()
+    freezer.tick(5)
+    await boiler_data(**HEAT_BOILER | {"heatingoff": "off", "selflowtemp": 0})
+    await climate.async_control_heating_loop()
+    heater = {record.quantity: record for record in last_cycle(caplog)["sent"]}[Quantity.HEATER_STATE]
+    assert (heater.value, heater.kind, heater.read_back) == (DeviceState.OFF, WriteKind.RESEND, DeviceState.ON)
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_verify_lists_the_status_changes_with_what_was_sent_and_read_back(heating, climate, caplog, boiler_data, freezer):
+    await boiler_data(**HEAT_BOILER)
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    await climate.async_control_heating_loop()
+
+    freezer.tick(5)
+    await boiler_data(**HEAT_BOILER | {"selflowtemp": 35, "burnmaxpower": 100, "heatingoff": "off"})
+    await climate.async_control_heating_loop()
+    [change] = [c for c in last_cycle(caplog)["verify"] if c.quantity == Quantity.CONTROL_SETPOINT]
+    assert (change.previous, change.current, change.sent, change.read_back) == (ChannelStatus.PENDING, ChannelStatus.IN_SYNC, 35, 35)
+
+    freezer.tick(5)
+    await boiler_data(**HEAT_BOILER | {"selflowtemp": 35, "burnmaxpower": 100, "heatingoff": "off"})
+    await climate.async_control_heating_loop()
+    assert last_cycle(caplog)["verify"] == []
+
+
+@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
+async def test_the_pwm_state_shows_a_pulse_held_on_for_the_minimum_pulse(heating, climate, caplog, freezer):
+    await heating()
+    await climate.async_control_heating_loop()
+    assert climate.pwm.status == PWMStatus.ON
+    assert last_cycle(caplog)["pwm"].minimum_pulse_held is False
+
+    # A lower target gives a duty with no on time; the pulse is within its minimum
+    freezer.tick(10)
+    await climate.async_set_target_temperature(15.0)
+    await climate.async_control_heating_loop()
+
+    assert last_cycle(caplog)["pwm"].status == PWMStatus.ON
+    assert last_cycle(caplog)["pwm"].minimum_pulse_held is True
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_pwm_state_shows_a_rollover_only_in_its_cycle(heating, climate, caplog, freezer, boiler_data):
+    await heating()
+    await climate.async_control_heating_loop()
+    assert last_cycle(caplog)["pwm"].rolled_over is False
+
+    freezer.tick(3600)
+    await boiler_data(**HEAT_BOILER)
+    await climate.async_control_heating_loop()
+    assert last_cycle(caplog)["pwm"].rolled_over is True
+    assert climate.pwm.status == PWMStatus.ON
+
+    freezer.tick(10)
+    await climate.async_control_heating_loop()
+    assert last_cycle(caplog)["pwm"].rolled_over is False
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_record_keeps_the_objects_and_the_message_renders_them(heating, climate, caplog, boiler_data):
+    await heating()
+    await boiler_data(curflowtemp=40.26)
+
+    await climate.async_control_heating_loop()
+
+    [record] = cycle_records(caplog)
+    fields = record.fields  # type: ignore[attr-defined]
+    text = record.getMessage()
+    assert fields["boiler"].flow_temperature == 40.26
+    assert 'hvac="HEAT"' in text
+    assert "flow_temperature:40.3" in text
+    assert "flame_active:false" in text
+    assert "valves_open:true" in text
+    assert 'held:[]' in text
+    assert f"status:{fields['boiler'].status.name}" in text
+    assert re.search(r'want="\{control_setpoint:35\.0, heater_state:ON, [^"]*\}"', text)
+    # Keys come in the order the fields were added
+    assert [m.group(1) for m in re.finditer(r'(\w+)="', text)][:4] == ["cycle", "hvac", "inputs", "boiler"]
+
+
+@pytest.mark.parametrize(*ems_entry())
+async def test_the_cycle_record_is_logged_when_the_run_ends_after_the_boiler_line_and_the_publishes(heating, hass, climate, mqtt_mock, boiler_data):
+    await heating(burngas="off")
+    order: list[str] = []
     real = mqtt_mock.async_publish.side_effect
 
     async def record_publish(topic, payload, *args, **kwargs):
-        events.append(f"publish {payload}")
+        order.append(f"publish {payload}")
         if real is not None:
             return await real(topic, payload, *args, **kwargs)
 
+    class Order(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            order.append("log " + record.getMessage().split(" ")[0] + " " + record.getMessage().split(" ")[1])
+
+    handler = Order()
+    logging.getLogger(TIMELINE).addHandler(handler)
     mqtt_mock.async_publish.side_effect = record_publish
     try:
         await boiler_data(burngas="on")
@@ -202,380 +446,9 @@ async def test_ordering_boiler_message_then_cycle_and_send_before_publish(loop_e
     finally:
         logging.getLogger(TIMELINE).removeHandler(handler)
 
-    assert index_of(events, "log boiler burngas") < index_of(events, "log cycle ")
-    assert index_of(events, "log send control_setpoint=35") < index_of(events, 'publish {"cmd": "selflowtemp", "value": 35}')
-    assert index_of(events, "log send heater_state=ON") < index_of(events, 'publish {"cmd": "heatingoff", "value": "off"}')
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_old_write_lines_do_not_appear(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.DEBUG)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await run_loop(climate, mqtt_mock, published)
-
-    assert "Wrote " not in caplog.text
-    assert "Publishing MQTT command" not in caplog.text
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_cold_setpoint_send_shows_requested_value(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    await boiler_data(**IDLE)
-
-    await run_loop(climate, mqtt_mock, published, target=15.0)
-
-    assert "send control_setpoint=0 (requested 10)" in timeline(caplog)
-    assert any(m.startswith("send heater_state=OFF") for m in timeline(caplog))
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_one_debug_cycle_line_per_loop_with_consecutive_numbers(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await climate.async_set_target_temperature(21.0)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
-    caplog.clear()
-
-    numbers = []
-    for _ in range(3):
-        freezer.tick(1)
-        await boiler_data(heatingoff="on")
-        caplog.clear()
-        await climate.async_control_heating_loop()
-        lines = cycle_lines(caplog)
-        assert len(lines) == 1
-        numbers.append(int(re.match(r"cycle (\d+) \|", lines[0]).group(1)))
-
-    assert numbers == [numbers[0], numbers[0] + 1, numbers[0] + 2]
-    assert numbers[0] >= 1
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_heat_cycle_line_segments(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await climate.async_set_target_temperature(21.0)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
-    caplog.clear()
-
-    await climate.async_control_heating_loop()
-
-    [line] = cycle_lines(caplog)
-    parts = segments(line)
-    assert parts[1].startswith("in ") or parts[1].startswith("input")
-    assert "target=21" in parts[1] and "inside=20.9" in parts[1] and "out=9.9" in parts[1]
-    assert any(p.startswith("boiler ") and "flow=40.5" in p for p in parts)
-    assert any(p.startswith("pwm ") for p in parts)
-    assert any(p.startswith("setpoint calc=") and re.search(r"\(.+\)", p) for p in parts)
-    want = next(p for p in parts if p.startswith("want "))
-    assert "setpoint=35.0" in want and "heater=ON" in want
-    sent = next(p for p in parts if p.startswith("sent "))
-    assert "control_setpoint=35" in sent and "heater_state=ON" in sent
-
-
-SETPOINT_SEGMENT = re.compile(r"setpoint calc=(\S+) \((.+)\) req=(\S+) curve=(\S+) p=(\S+) i=(\S+) d=(\S+)")
-
-
-def setpoint_segment(caplog) -> str:
-    [line] = cycle_lines(caplog)
-    return next(p for p in segments(line) if p.startswith("setpoint "))
-
-
-async def start_heating(climate, boiler_data, caplog) -> None:
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await climate.async_set_target_temperature(21.0)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
-    caplog.clear()
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_setpoint_segment_shows_the_filter_input_curve_and_pid_terms(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    await start_heating(climate, boiler_data, caplog)
-    await climate.async_control_heating_loop()
-
-    assert setpoint_segment(caplog) == "setpoint calc=35.0 (pwm on unrestricted) req=35.0 curve=32.8 p=+2.2 i=+0.0 d=+0.0"
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_req_is_the_request_the_filter_got_not_a_later_recomputation(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    await start_heating(climate, boiler_data, caplog)
-    await climate.async_control_heating_loop()
-
-    # The integral changes after the filter step and before the line is built
-    pid = type(climate.pid)
-    integral = PropertyMock(return_value=0.0)
-
-    def bump(*_args, **_kwargs) -> None:
-        integral.return_value = 5.0
-
-    freezer.tick(1)
-    await boiler_data(heatingoff="on")
-    caplog.clear()
-    with (
-        patch.object(pid, "proportional", PropertyMock(return_value=-4.04)),
-        patch.object(pid, "integral", integral),
-        patch.object(pid, "derivative", PropertyMock(return_value=2.76)),
-        patch.object(climate.pid, "update_integral", side_effect=bump),
-    ):
-        await climate.async_control_heating_loop()
-
-    # req is curve 32.8 + output -1.28 from before the change (a recomputation gives 36.5); calc = 0.2 * 31.5 + 0.8 * 35.0
-    assert setpoint_segment(caplog) == "setpoint calc=34.3 (pwm on unrestricted) req=31.5 curve=32.8 p=-4.0 i=+5.0 d=+2.8"
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_calc_follows_req_through_the_filter_over_cycles_including_a_clamped_request(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    await start_heating(climate, boiler_data, caplog)
-
-    calc = None
-    # Output offsets chosen so that the third request is far below the minimum setpoint and so is clamped to 10
-    for offset in (0.0, -3.0, -500.0, 4.0, 4.0):
-        freezer.tick(1)
-        await boiler_data(heatingoff="on")
-        caplog.clear()
-        with (
-            patch.object(type(climate.pid), "proportional", PropertyMock(return_value=offset)),
-            patch.object(type(climate.pid), "integral", PropertyMock(return_value=0.0)),
-            patch.object(type(climate.pid), "derivative", PropertyMock(return_value=0.0)),
-        ):
-            await climate.async_control_heating_loop()
-
-        match = SETPOINT_SEGMENT.fullmatch(setpoint_segment(caplog))
-        assert match
-        req = float(match.group(3))
-        curve = float(match.group(4))
-        assert req == max(round(curve + offset, 1), 10.0)
-        if calc is None:
-            assert float(match.group(1)) == req
-        else:
-            assert float(match.group(1)) == round(0.2 * req + 0.8 * calc, 1)
-        if offset == -500.0:
-            assert req == 10.0
-        calc = float(match.group(1))
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_setpoint_segment_shows_an_unknown_heating_curve_as_unknown(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    await start_heating(climate, boiler_data, caplog)
-
-    with patch.object(type(climate.heating_curve), "value", PropertyMock(return_value=None)):
-        await climate.async_control_heating_loop()
-
-    # Without a heating curve the request is the minimum setpoint
-    assert re.fullmatch(r"setpoint calc=\S+ \(.+\) req=10\.0 curve=\? p=[+-]\d+\.\d i=[+-]\d+\.\d d=[+-]\d+\.\d", setpoint_segment(caplog))
-
-
-@pytest.mark.parametrize(("value", "signed", "expected"), [
-    (None, False, "?"),
-    (None, True, "?"),
-    (-0.04, True, "+0.0"),
-    (-0.04, False, "0.0"),
-    (12.0, True, "+12.0"),
-    (1.26, True, "+1.3"),
-    (-4.04, True, "-4.0"),
-])
-def test_fmt_number(value, signed, expected):
-    assert timeline_module.fmt_number(value, signed=signed) == expected
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_sent_is_dash_and_resend_marked(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "off", "burnmaxpower": 100})
-    await run_loop(climate, mqtt_mock, published)
-
-    # heater and modulation already read back as wanted, EMS rewrites the control setpoint every cycle
-    freezer.tick(1)
-    await boiler_data(heatingoff="off", selflowtemp=35)
-    caplog.clear()
-    await climate.async_control_heating_loop()
-    [line] = cycle_lines(caplog)
-    sent = next(p for p in segments(line) if p.startswith("sent "))
-    assert "control_setpoint=35(rewrite)" in sent
-    # The rewrite is not an INFO line
-    assert not [m for m in timeline(caplog) if m.startswith(("send ", "resend "))]
-
-    # A boiler that reverts the setpoint is a drift: verify is shown and the same value is resent
-    freezer.tick(1)
-    await boiler_data(selflowtemp=50)
-    caplog.clear()
-    await climate.async_control_heating_loop()
-    [line] = cycle_lines(caplog)
-    assert any(p.startswith("verify ") and "control_setpoint IN_SYNC->DRIFTED" in p for p in segments(line))
-    assert "resend control_setpoint=35 (read back 50.0)" in timeline(caplog)
-    assert any(p.startswith("sent ") and "control_setpoint=35(resend)" in p for p in segments(line))
-    assert any(m.startswith("channel control_setpoint IN_SYNC -> DRIFTED") for m in timeline(caplog))
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_hvac_off_short_form(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "off"})
-    await climate.async_set_hvac_mode(HVACMode.OFF)
-    caplog.clear()
-
-    await climate.async_control_heating_loop()
-
-    [line] = cycle_lines(caplog)
-    parts = segments(line)
-    assert re.fullmatch(r"cycle \d+", parts[0])
-    assert parts[1] == "hvac OFF"
-    assert parts[2].startswith("want ") and "heater=OFF" in parts[2]
-    assert parts[3].startswith("sent ")
-    assert not any(p.startswith(("in ", "boiler ", "pwm ")) for p in parts)
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_cycle_line_is_debug_only(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await run_loop(climate, mqtt_mock, published)
-
-    assert not [r for r in caplog.get_records("call") if r.name == TIMELINE and r.levelno < logging.INFO]
-    assert cycle_lines(caplog) == []
-
-
-@pytest.mark.parametrize(*ems_entry())
-@pytest.mark.usefixtures("no_input_grace")
-async def test_missing_temperature_short_form(hass, loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await boiler_data(**IDLE)
-    await climate.async_set_target_temperature(21.0)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
-    hass.states.async_set("sensor.test_outside_sensor", "unavailable")
-    await hass.async_block_till_done()
-    caplog.clear()
-
-    await climate.async_control_heating_loop()
-
-    [line] = cycle_lines(caplog)
-    assert re.fullmatch(r"cycle \d+ \| missing temperature: outside \| want setpoint=10 heater=OFF \| sent .*", line)
-    assert not any(field in line for field in ("calc=", "req=", "curve=", " p=", " i=", " d="))
-
-
-# PWM and flame edges, branches and noise
-
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
-async def test_pwm_cycle_line_has_state_duty_and_branch_and_edges_log_once(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await run_loop(climate, mqtt_mock, published)
-
-    pwm_part = next(p for line in cycle_lines(caplog) for p in segments(line) if p.startswith("pwm "))
-    match = PWM_SEGMENT.fullmatch(pwm_part)
-    assert match is not None and match.group(2) == "MINIMUM" and match.group(3) in BRANCHES, pwm_part
-    assert len([m for m in timeline(caplog) if m.startswith("pwm ON (")]) == 1
-    assert "pwm OFF" not in timeline(caplog)
-
-    freezer.tick(1)
-    await boiler_data(heatingoff="off")
-    await advance(hass, freezer, 1800)
-    assert timeline(caplog).count("pwm OFF") == 1
-
-
-@pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
-async def test_steady_pwm_off_phase_emits_no_per_cycle_info_lines(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await run_loop(climate, mqtt_mock, published)
-    freezer.tick(1)
-    await boiler_data(heatingoff="off")
-    await advance(hass, freezer, 1800)
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    # Let the boiler settle into the off phase
-    for _ in range(2):
-        freezer.tick(1)
-        await boiler_data(heatingoff="on", selflowtemp=0)
-        await climate.async_control_heating_loop()
-    caplog.clear()
-
-    for _ in range(4):
-        freezer.tick(1)
-        await boiler_data(heatingoff="on", selflowtemp=0)
-        await climate.async_control_heating_loop()
-
-    noisy = [m for m in timeline(caplog)]
-    assert noisy == [], noisy
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_control_setpoint_release_edge_logged_once(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    await boiler_data(**IDLE)
-    # Only the edges after the first HEAT cycle count
-    await run_loop(climate, mqtt_mock, published, target=15.0)
-    caplog.clear()
-
-    for _ in range(3):
-        freezer.tick(1)
-        await boiler_data(heatingoff="on", selflowtemp=0)
-        await climate.async_control_heating_loop()
-
-    assert timeline(caplog).count("control setpoint released (heater off)") == 1
-    assert "release control_setpoint" in timeline(caplog)
-    assert "control setpoint requested again" not in timeline(caplog)
-
-    await climate.async_set_target_temperature(21.0)
-    for _ in range(3):
-        freezer.tick(1)
-        await boiler_data(heatingoff="on", selflowtemp=0)
-        await climate.async_control_heating_loop()
-
-    assert timeline(caplog).count("control setpoint requested again") == 1
-    assert timeline(caplog).count("control setpoint released (heater off)") == 1
-
-
-# The modulation mode: mode lines and the cycle line's mode and rollover marker
-
-def pwm_segment(line: str) -> str:
-    """The pwm segment of a cycle line."""
-    return next(p for p in segments(line) if p.startswith("pwm "))
-
-
-def mode_lines(caplog) -> list[str]:
-    return [m for m in timeline(caplog) if m.startswith("pwm mode ")]
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_the_cycle_line_shows_the_unrestricted_mode(loop_entry, climate, boiler_data, mqtt_mock, published, caplog):
-    await start_heating(climate, boiler_data, caplog)
-    await climate.async_control_heating_loop()
-
-    [line] = cycle_lines(caplog)
-    tokens = pwm_segment(line).split()
-    assert tokens[:3] == ["pwm", "ON", "UNRESTRICTED"]
-    assert "(unrestricted)" in tokens
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_a_mode_change_logs_one_mode_line_and_a_steady_mode_none(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    await start_heating(climate, boiler_data, caplog)
-    await climate.async_control_heating_loop()
-    assert mode_lines(caplog) == ["pwm mode UNRESTRICTED"]
-
-    for _ in range(4):
-        freezer.tick(60)
-        await boiler_data(heatingoff="on")
-        await climate.async_control_heating_loop()
-
-    assert climate.pwm.mode.name == "UNRESTRICTED"
-    assert mode_lines(caplog) == ["pwm mode UNRESTRICTED"]
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_the_rollover_marker_shows_only_in_the_cycle_where_a_100_percent_period_rolls_over(hass, loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    # N=2 at the default outside temperature: a 100% period lasts 3600 s, so with a cycle every 600 s it rolls over in the cycle at 3600 s
-    await start_heating(climate, boiler_data, caplog)
-    found = []
-    for _ in range(9):
-        new = await run_one_loop(hass, climate, caplog, len(caplog.records))
-        [line] = [m for m in new if m.startswith("cycle ")]
-        found.append(pwm_segment(line))
-        freezer.tick(600)
-
-    assert [part.split()[:3] for part in found] == [["pwm", "ON", "UNRESTRICTED"]] * 9
-    assert [part.endswith(" rollover") for part in found] == [False] * 6 + [True] + [False] * 2
-    assert not any("rollover" in m for m in timeline(caplog))
+    cycle_at = next(i for i, entry in enumerate(order) if entry.startswith("log cycle"))
+    assert order.index("log boiler burngas") < cycle_at
+    assert all(i < cycle_at for i, entry in enumerate(order) if entry.startswith("publish"))
 
 
 # PWM.duty_cycle_branch, with the names the spec lists
@@ -598,197 +471,7 @@ async def test_duty_cycle_branch_names_match_the_spec():
     assert seen == {"low-duty flame": "low-duty", "low-duty no flame": "low-duty", "max": "max"}
 
 
-# Round 2: coordinator removal, overshoot, release edges, logging never raises
-
-async def test_removed_is_not_logged_when_the_start_failed(hass, caplog):
-    # Without the MQTT mock the start fails
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    coordinator = await start(hass, {})
-    assert not [m for m in timeline(caplog, phase="call") if m.startswith("coordinator set up")]
-    assert any(r.levelno == logging.ERROR and "Failed to start" in r.getMessage() for r in caplog.get_records("call"))
-
-    await coordinator.async_will_remove_from_hass()
-
-    assert not [m for m in timeline(caplog, phase="call") if m.startswith("coordinator removed")]
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_overshoot_handling_edges_are_logged_once_each(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO)
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await climate.async_set_target_temperature(21.0)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
-    caplog.clear()
-
-    status = PropertyMock(return_value=BoilerStatus.OVERSHOOT_HANDLING)
-    with patch.object(SatEmsMqttCoordinator, "device_status", status):
-        for _ in range(3):
-            freezer.tick(1)
-            await boiler_data(heatingoff="on")
-            await climate.async_control_heating_loop()
-
-        assert timeline(caplog).count("overshoot handling started") == 1
-        assert "overshoot handling ended" not in timeline(caplog)
-
-        status.return_value = BoilerStatus.AT_SETPOINT
-        for _ in range(3):
-            freezer.tick(1)
-            await boiler_data(heatingoff="on")
-            await climate.async_control_heating_loop()
-
-    assert timeline(caplog).count("overshoot handling started") == 1
-    assert timeline(caplog).count("overshoot handling ended") == 1
-    assert "Overshoot Handling detected" not in caplog.text
-
-
-def release_lines(caplog) -> list[str]:
-    return [m for m in timeline(caplog) if m.startswith("control setpoint")]
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_release_edges_follow_hvac_mode_changes_with_reasons(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    await boiler_data(**IDLE | {"heatingoff": "off", "burnmaxpower": 100})
-
-    # The entry starts in HVAC OFF: nothing was requested yet, so nothing is logged for the release, nor for the first request
-    assert not [r for r in caplog.records if r.getMessage().startswith("control setpoint")]
-    await run_loop(climate, mqtt_mock, published, target=21.0)
-    assert release_lines(caplog) == []
-    assert "send control_setpoint=35" in timeline(caplog)
-
-    # HVAC OFF releases once, however many cycles it lasts
-    await climate.async_set_hvac_mode(HVACMode.OFF)
-    for _ in range(3):
-        freezer.tick(1)
-        await boiler_data(heatingoff="on")
-        await climate.async_control_heating_loop()
-    assert release_lines(caplog) == ["control setpoint released (hvac off)"]
-
-    # Back to HEAT with the heater ON requests the setpoint again, once
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
-    for _ in range(3):
-        freezer.tick(1)
-        await boiler_data(heatingoff="off")
-        await climate.async_control_heating_loop()
-    assert release_lines(caplog) == ["control setpoint released (hvac off)", "control setpoint requested again"]
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_heater_off_in_heat_releases_with_that_reason_once(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    await boiler_data(**IDLE)
-    await run_loop(climate, mqtt_mock, published, target=15.0)
-
-    for _ in range(4):
-        freezer.tick(1)
-        await boiler_data(heatingoff="on", selflowtemp=0)
-        await climate.async_control_heating_loop()
-
-    assert release_lines(caplog) == ["control setpoint released (heater off)"]
-
-
-@pytest.mark.parametrize(*otgw_entry())
-async def test_backend_without_channels_never_logs_release_edges(hass, loop_entry, climate, mqtt_mock, published, caplog):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    async_fire_mqtt_message(hass, "otgw/value/gw1/centralheating", "ON")
-    await hass.async_block_till_done()
-
-    await run_loop(climate, mqtt_mock, published, target=15.0)
-    await run_loop(climate, mqtt_mock, published, target=21.0)
-    await run_loop(climate, mqtt_mock, published, target=21.0, mode=HVACMode.OFF)
-    await run_loop(climate, mqtt_mock, published, target=15.0)
-
-    assert release_lines(caplog) == []
-    assert any(m.startswith("send ") for m in timeline(caplog))
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_failure_building_the_cycle_line_does_not_stop_the_loop(loop_entry, climate, boiler_data, mqtt_mock, published, freezer, caplog, monkeypatch):
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    monkeypatch.setattr(timeline_module, "_failure_logged", False)
-
-    def boom(_state):
-        raise RuntimeError("cannot format")
-
-    monkeypatch.setattr(timeline_module, "desired", boom)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await climate.async_set_target_temperature(21.0)
-    await climate.async_set_hvac_mode(HVACMode.HEAT)
-    caplog.clear()
-    mqtt_mock.async_publish.reset_mock()
-
-    with patch.object(climate, "async_write_ha_state", wraps=climate.async_write_ha_state) as write_state:
-        await climate.async_control_heating_loop()
-
-        # Control behaviour is unchanged: the writes happened and the entity state was written
-        assert [c[1] for c in published()] == ['{"cmd": "selflowtemp", "value": 35}', '{"cmd": "burnmaxpower", "value": 100}', '{"cmd": "heatingoff", "value": "off"}']
-        assert write_state.call_count == 1
-
-        failures = [r for r in caplog.get_records("call") if r.name == TIMELINE and r.levelno >= logging.WARNING]
-        assert [(r.levelno, r.exc_info is not None) for r in failures] == [(logging.ERROR, True)]
-
-        # Later failures are one-line warnings
-        caplog.clear()
-        freezer.tick(1)
-        await boiler_data(heatingoff="on")
-        await climate.async_control_heating_loop()
-        failures = [r for r in caplog.get_records("call") if r.name == TIMELINE and r.levelno >= logging.WARNING]
-        assert [(r.levelno, r.exc_info is not None) for r in failures] == [(logging.WARNING, False)]
-        assert write_state.call_count == 2
-
-
-@pytest.mark.parametrize(*ems_entry())
-async def test_cycle_line_is_only_built_when_debug_is_enabled(loop_entry, climate, boiler_data, mqtt_mock, published, caplog, monkeypatch):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    built = []
-    real = timeline_module.desired
-
-    def counting(state):
-        built.append(state)
-        return real(state)
-
-    monkeypatch.setattr(timeline_module, "desired", counting)
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await run_loop(climate, mqtt_mock, published)
-    assert built == []
-
-    caplog.set_level(logging.DEBUG, logger=TIMELINE)
-    await climate.async_control_heating_loop()
-    assert len(built) == 1
-
-
-class Unprintable:
-    def __str__(self) -> str:
-        raise RuntimeError("no str")
-
-
-async def test_unprintable_value_in_a_boiler_change_does_not_raise(hass, mqtt_mock, no_publish_delay, caplog, monkeypatch):
-    caplog.set_level(logging.INFO, logger=TIMELINE)
-    monkeypatch.setattr(timeline_module, "_failure_logged", False)
-    coordinator = await start(hass, {})
-    caplog.clear()
-
-    coordinator.async_set_updated_data({"heatingactive": Unprintable()})
-    coordinator.async_set_updated_data({"burngas": Unprintable()})
-
-    # The data is stored; the first failure has a traceback, the later one doesn't
-    assert isinstance(coordinator.data["heatingactive"], Unprintable)
-    failures = [r for r in caplog.records if r.name == TIMELINE and r.levelno >= logging.WARNING]
-    assert [(r.levelno, r.exc_info is not None) for r in failures] == [(logging.ERROR, True), (logging.WARNING, False)]
-
-
-def test_unknown_desired_field_is_shown_by_its_own_name():
-    @dataclass(frozen=True)
-    class Extended:
-        control_setpoint: float | None = None
-        brand_new_field: int | None = None
-
-    assert timeline_module.desired(Extended(control_setpoint=40.0, brand_new_field=3)) == "setpoint=40.0 brand_new_field=3"  # type: ignore[arg-type]
-    assert timeline_module.desired(Extended()) == "-"  # type: ignore[arg-type]
-
-
-# Round 3: no per-cycle repeats in steady states
+# No per-cycle repeats in steady states
 
 STEADY_CYCLES = 8
 

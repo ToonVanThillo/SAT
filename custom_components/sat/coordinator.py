@@ -18,7 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .boiler import BoilerTemperatureTracker, BoilerState, STABILIZATION_MARGIN
-from . import timeline
+from .logctx import fmt, logger as timeline_logger
 from .channels import RELEASE, Channels, ChannelState, ChannelStatus, DesiredState, Quantity, StatusChange, WriteKind, WriteRecord
 from .const import *
 from .flame import Flame, FlameState, HotWaterSignal
@@ -87,7 +87,7 @@ class SatData(dict):
             if received_at is not None and key in self._traced_keys:
                 previous_is_live = self._received_at.get(key) is not None
                 if previous != value or not previous_is_live:
-                    timeline.boiler_change(key, previous if previous_is_live else None, value)
+                    timeline_logger.info("boiler %s %s -> %s", key, fmt(previous if previous_is_live else None), fmt(value))
 
             super().__setitem__(key, value)
             self._received_at[key] = received_at
@@ -614,7 +614,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
             return
 
         if not self._torn_down:
-            timeline.LOGGER.info("coordinator set up (%s)", self.device_type)
+            timeline_logger.info("coordinator set up (%s)", self.device_type)
             self._set_up_logged = True
             await self.async_submit(DesiredState(maximum_setpoint=self.maximum_setpoint))
 
@@ -627,7 +627,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         Backends call this first, then release their own resources. Safe to call more than once.
         """
         if self._set_up_logged:
-            timeline.LOGGER.info("coordinator removed (%s)", self.device_type)
+            timeline_logger.info("coordinator removed (%s)", self.device_type)
             self._set_up_logged = False
 
         self._torn_down = True
@@ -750,7 +750,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
         Otherwise apply every requested field through the matching setter, in a fixed order; None and RELEASE fields are skipped. The max
         relative modulation and heater state are skipped when the last snapshot shows them already applied; without a snapshot they are always written.
-        Returns the writes made; without channels, those of supported quantities (logged as sent), each as a `WriteKind.SEND`.
+        Returns the writes made; without channels, those of supported quantities, each as a `WriteKind.SEND`.
         """
         if self._channels is not None:
             records = await self._channels.async_write(desired)
@@ -762,8 +762,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
         async def apply(quantity: Quantity, value: Any, setter: Callable[[Any], Awaitable[None]], supported: bool) -> None:
             if supported:
-                timeline.send(quantity.value, value, value)
-                records.append(WriteRecord(quantity=quantity, value=value, kind=WriteKind.SEND))
+                records.append(WriteRecord(quantity=quantity, value=value, kind=WriteKind.SEND, read_back=None))
 
             await setter(value)
 

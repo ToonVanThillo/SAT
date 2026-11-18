@@ -33,11 +33,11 @@ from custom_components.sat.const import (
     PWMStatus,
 )
 from custom_components.sat.fake import SatFakeConfig
-from tests.conftest import TIMELINE, run_one_loop
+from tests.conftest import TIMELINE, last_cycle, run_one_loop
 from tests.const import IDLE, otgw_entry, with_data
 from tests.test_climate_loop import message, run_loop
 from tests.test_climate_loop_ems import OUTSIDE
-from tests.test_heater_off_release import HEATER_OFF, RELEASED, step
+from tests.test_heater_off_release import HEATER_OFF, released, step
 from tests.test_reliable_flow_temperature import boiler_state, warmed_minimum_setpoint
 
 HEATER_ON = message('{"cmd": "heatingoff", "value": "off"}')
@@ -66,14 +66,6 @@ def burnmaxpower(value: int) -> tuple:
 
 def heater_writes(calls: list[tuple]) -> list[tuple]:
     return [call for call in calls if '"heatingoff"' in call[1]]
-
-
-def timeline_info(caplog) -> list[str]:
-    return [r.getMessage() for r in caplog.get_records("call") if r.name == TIMELINE and r.levelno == logging.INFO]
-
-
-def last_cycle_line(caplog) -> str:
-    return [r.getMessage() for r in caplog.get_records("call") if r.name == TIMELINE and r.levelno == logging.DEBUG][-1]
 
 
 def burnmaxpower_writes(calls: list[tuple]) -> list[tuple]:
@@ -120,7 +112,7 @@ class TestDecideAtTheEmsBoundary:
 
         assert await run_loop(climate, mqtt_mock, published) == [selflowtemp(minimum), burnmaxpower(floor), HEATER_ON]
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
-        assert "(pwm on minimum)" in last_cycle_line(caplog)
+        assert last_cycle(caplog)["setpoint_rule"] == "pwm on minimum"
 
     # (b) ON with UNRESTRICTED: the calculated setpoint and the configured maximum
 
@@ -131,7 +123,7 @@ class TestDecideAtTheEmsBoundary:
         assert await run_loop(climate, mqtt_mock, published) == [selflowtemp(35), burnmaxpower(80), HEATER_ON]
         assert climate.setpoint == climate.calculated_setpoint == 35.0
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
-        assert "(pwm on unrestricted)" in last_cycle_line(caplog)
+        assert last_cycle(caplog)["setpoint_rule"] == "pwm on unrestricted"
 
     # (c) OFF: heater OFF at the 10 °C minimum (sent as 0 on EMS-ESP), released once heater OFF is confirmed
 
@@ -148,14 +140,14 @@ class TestDecideAtTheEmsBoundary:
                 break
         assert climate.pwm.status == PWMStatus.OFF
         assert calls == [selflowtemp(0), HEATER_OFF]
-        assert "(pwm off)" in last_cycle_line(caplog)
+        assert last_cycle(caplog)["setpoint_rule"] == "pwm off"
 
         off = {"heatingoff": "on", "selflowtemp": 5, "burngas": "off", "heatingactive": "off"}
         calls = await one_cycle(hass, climate, mqtt_mock, published, freezer, caplog, boiler_data(**off))
         assert [call for call in calls if '"selflowtemp"' in call[1]] == []
         assert heater_writes(calls) == []
         assert climate.setpoint == 10
-        assert RELEASED in timeline_info(caplog)
+        assert released(caplog)
 
     # (c) Without a flow temperature PWM keeps running: a running pulse continues and the heater stays on
 
@@ -173,7 +165,7 @@ class TestDecideAtTheEmsBoundary:
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
         assert heater_writes(calls) == []
         assert climate.setpoint == 35.0
-        assert "(pwm on unrestricted)" in last_cycle_line(caplog)
+        assert last_cycle(caplog)["setpoint_rule"] == "pwm on unrestricted"
 
     # (d) MINIMUM -> UNRESTRICTED during a burn: the setpoint and modulation change in place, the heater stays on
 

@@ -311,27 +311,23 @@ async def test_a_flame_off_signal_does_not_make_the_boiler_produce_hot_water(hw,
 HW_ENTRY = with_data({CONF_MINIMUM_SETPOINT: 30}, OPTIONS | {CONF_ALLOW_UNRESTRICTED_MODULATION: False})
 
 
-def cycle_line(new: list[str]) -> str:
-    return next(m for m in reversed(new) if m.startswith("cycle "))
-
-
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*HW_ENTRY)
-async def test_the_cycle_lines_show_the_last_reliable_reading_through_the_log_scenario(hass, entry, climate, boiler_data, freezer, caplog):
+async def test_the_cycle_records_show_the_last_reliable_reading_through_the_log_scenario(hass, entry, climate, boiler_data, freezer, caplog):
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
 
-    async def cycle(seconds: float, **data: Any) -> str:
+    async def cycle(seconds: float, **data: Any) -> dict[str, Any]:
         mark = len(caplog.records)
         freezer.tick(seconds)
         await boiler_data(**data)
-        return cycle_line(await run_one_loop(hass, climate, caplog, mark))
+        return await run_one_loop(hass, climate, caplog, mark)
 
     await boiler_data(**QUIET | {"curflowtemp": 46.4, "heatingoff": "on"})
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await cycle(10, **QUIET | {"curflowtemp": 46.4})
 
-    lines = [
+    records = [
         await cycle(10, **QUIET | PUMP_OFF | {"curflowtemp": 57.5}),
         await cycle(10, **QUIET | PRE_PHASE | {"curflowtemp": 57.5}),
         await cycle(10, **QUIET | PRE_PHASE | DRAW | {"curflowtemp": 60.0}),
@@ -340,11 +336,10 @@ async def test_the_cycle_lines_show_the_last_reliable_reading_through_the_log_sc
         await cycle(10, **QUIET | PUMP_OFF | {"curflowtemp": 57.0}),
     ]
 
-    assert all("reliable=46.4" in line for line in lines)
+    assert [record["boiler"].reliable_flow_temperature for record in records] == [46.4] * 6
 
-    line = await cycle(10, **QUIET | {"curflowtemp": 50.0})
-    assert "reliable=" not in line
-    assert "flow=50.0" in line
+    fields = await cycle(10, **QUIET | {"curflowtemp": 50.0})
+    assert fields["boiler"].flow_temperature == fields["boiler"].reliable_flow_temperature == 50.0
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -358,9 +353,9 @@ async def test_a_flame_off_signal_does_not_hold_pwm(hass, entry, climate, boiler
     mark = len(caplog.records)
     freezer.tick(10)
     await boiler_data(**QUIET | {"selburnpow": 134, "curflowtemp": 40.0, "heatingoff": "on"})
-    line = cycle_line(await run_one_loop(hass, climate, caplog, mark))
+    fields = await run_one_loop(hass, climate, caplog, mark)
 
-    assert "hw=off" in line
-    assert "hold=" not in line
+    assert fields["boiler"].hot_water_active is False
+    assert fields["pwm"].hold is None
     assert climate.pwm.status == PWMStatus.ON
 

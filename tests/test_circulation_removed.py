@@ -9,14 +9,17 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.config_entries import ConfigEntryState
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.sat.channels import RELEASE
 from custom_components.sat.config_flow import SatOptionsFlowHandler
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HOT_WATER_DELAY,
     CONF_MINIMUM_SETPOINT,
     DOMAIN,
+    PWMStatus,
 )
-from tests.conftest import TIMELINE, run_one_loop, timeline_since
+from custom_components.sat.coordinator import DeviceState
+from tests.conftest import TIMELINE, run_one_loop
 from tests.const import IDLE, with_data
 
 STALE = {"circulate_after_hot_water": True, "circulation_setpoint": 20, "circulation_duration": 60}
@@ -47,10 +50,10 @@ async def test_stale_circulation_options_load_cleanly(hass, entry, climate, boil
     await boiler_data(**PUMP)
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
-    new = await run_one_loop(hass, climate, caplog, len(caplog.records))
+    fields = await run_one_loop(hass, climate, caplog, len(caplog.records))
 
-    assert "(circulation)" not in new[-1]
-    assert not [m for m in new if m.lower().startswith("circulation")]
+    assert "circulation" not in fields["setpoint_rule"]
+    assert not [key for key in fields if "circulation" in key]
 
     # The advanced step opens, without those fields
     flow = SatOptionsFlowHandler(MockConfigEntry(domain=DOMAIN, data=dict(entry.data), options=dict(entry.options)))
@@ -71,19 +74,18 @@ async def test_after_a_hot_water_burn_the_heater_stays_off_and_is_released(hass,
     readback: dict[str, Any] = {"heatingoff": "on", "selflowtemp": 5}
     all_writes: list[dict[str, Any]] = []
 
-    async def cycle(seconds: float, **data: Any) -> str:
+    async def cycle(seconds: float, **data: Any) -> dict[str, Any]:
         mark = len(caplog.records)
         mqtt_mock.async_publish.reset_mock()
         freezer.tick(seconds)
         await boiler_data(**IDLE | data | readback)
-        new = await run_one_loop(hass, climate, caplog, mark)
+        fields = await run_one_loop(hass, climate, caplog, mark)
         await hass.async_block_till_done()
         for write in writes(mqtt_mock):
             readback[write["cmd"]] = write["value"]
             all_writes.append(write)
-        assert timeline_since(caplog, mark)
 
-        return next(m for m in reversed(new) if m.startswith("cycle "))
+        return fields
 
     await boiler_data(**PUMP | readback)
     await boiler_data(**DRAW | readback)
@@ -93,13 +95,13 @@ async def test_after_a_hot_water_burn_the_heater_stays_off_and_is_released(hass,
     # Flame off, the pump off with a hot flow, the room below target, PWM held off
     await cycle(5, **DRAW | {"burngas": "off", "tapwateractive": "off"})
     for _ in range(4):
-        line = await cycle(5, **PUMP | {"heatingpump": "off", "curflowtemp": 55.0})
+        fields = await cycle(5, **PUMP | {"heatingpump": "off", "curflowtemp": 55.0})
 
-    assert "inside=20.9" in line and "target=21.0" in line
-    assert "pwm OFF" in line
-    assert "(circulation)" not in line
-    assert "heater=OFF" in line
+    assert (fields["inputs"].current_temperature, fields["inputs"].target_temperature) == (20.9, 21.0)
+    assert climate.pwm.status == PWMStatus.OFF
+    assert "circulation" not in fields["setpoint_rule"]
+    assert fields["want"].heater_state == DeviceState.OFF
     assert {"cmd": "heatingoff", "value": "off"} not in all_writes
     assert {"cmd": "selflowtemp", "value": 20} not in all_writes
-    assert "want setpoint=RELEASE heater=OFF" in line
+    assert fields["want"].control_setpoint is RELEASE
     assert sat_problems(caplog) == []

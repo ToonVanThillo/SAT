@@ -13,7 +13,13 @@ from custom_components.sat.const import (
     PWMStatus,
 )
 from custom_components.sat.pwm import PWM
-from tests.conftest import TIMELINE, current, flame_transitions
+from tests.conftest import (
+    TIMELINE,
+    current,
+    cycle_records,
+    flame_transitions,
+    last_cycle,
+)
 from tests.const import STORE_KEY, with_data
 from tests.test_burns import DRAW, HEATING, OFF, OPTIONS, burn, started
 from tests.test_pwm_cycles import CURVE, Clock, boiler, config, setpoint_for
@@ -28,14 +34,6 @@ def entry_with(delay: float | None):
         options[CONF_HOT_WATER_DELAY] = delay
 
     return with_data({CONF_MINIMUM_SETPOINT: 30}, options)
-
-
-def timeline_lines(caplog, prefix: str) -> list[str]:
-    return [m for r in caplog.records if r.name == TIMELINE and (m := r.getMessage()).startswith(prefix)]
-
-
-def last_cycle(caplog) -> str:
-    return timeline_lines(caplog, "cycle ")[-1]
 
 
 async def heat(climate) -> None:
@@ -56,31 +54,29 @@ async def test_a_hot_water_burn_with_a_tail_holds_pwm_until_300_s_after_flame_of
     await heat(climate)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.OFF
-    assert "hold=hot water" in last_cycle(caplog) and "hold=hot water delay" not in last_cycle(caplog)
+    assert last_cycle(caplog)["pwm"].hold == "hot water"
 
     # The tap closes, the flame is still on: still producing hot water
     freezer.tick(20)
     await boiler_data(**TAIL)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.OFF
-    assert "hold=hot water" in last_cycle(caplog) and "hold=hot water delay" not in last_cycle(caplog)
+    assert last_cycle(caplog)["pwm"].hold == "hot water"
 
     freezer.tick(10)
     await boiler_data(**OFF)
     await climate.async_control_heating_loop()
-    assert "hold=hot water delay" in last_cycle(caplog)
+    assert last_cycle(caplog)["pwm"].hold == "hot water delay"
 
     freezer.tick(299)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.OFF
-    assert "hold=hot water delay" in last_cycle(caplog)
+    assert last_cycle(caplog)["pwm"].hold == "hot water delay"
 
     freezer.tick(1)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.ON
-    assert "hold=" not in last_cycle(caplog)
-    # The held updates started nothing: this is the first pulse
-    assert timeline_lines(caplog, "pwm ON") == ["pwm ON (2 cycles/h)"]
+    assert last_cycle(caplog)["pwm"].hold is None
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -100,7 +96,6 @@ async def test_without_a_delay_a_pulse_starts_right_after_flame_off_but_not_in_t
     await climate.async_control_heating_loop()
 
     assert climate.pwm.status == PWMStatus.ON
-    assert timeline_lines(caplog, "pwm ON") == ["pwm ON (2 cycles/h)"]
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -115,15 +110,12 @@ async def test_hot_water_during_a_pulse_does_not_end_or_hold_it(hass, entry, cli
     await boiler_data(**DRAW)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.ON
-    assert "hold=" not in last_cycle(caplog)
+    assert last_cycle(caplog)["pwm"].hold is None
 
     freezer.tick(60)
     await boiler_data(**OFF)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.ON
-    # The only OFF line is the reset of the switch to HEAT: no reset and no pulse end since
-    assert timeline_lines(caplog, "pwm OFF") == ["pwm OFF (hvac mode change)"]
-    assert len(timeline_lines(caplog, "pwm ON")) == 1
 
 
 @pytest.mark.usefixtures("loop_entry")
@@ -146,7 +138,7 @@ async def test_the_delay_counts_from_the_last_of_two_hot_water_burns(hass, entry
     freezer.tick(299)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.OFF
-    assert "hold=hot water delay" in last_cycle(caplog)
+    assert last_cycle(caplog)["pwm"].hold == "hot water delay"
 
     freezer.tick(1)
     await climate.async_control_heating_loop()
@@ -224,10 +216,7 @@ async def test_a_stored_flame_on_does_not_seed_the_ems_flame(hass, mqtt_mock, no
 
 # PWM unit level: the hold below the minimum duty
 
-async def test_a_hold_with_a_duty_below_the_minimum_never_starts_a_pulse(caplog):
-
-
-    caplog.set_level(logging.INFO, logger=TIMELINE)
+async def test_a_hold_with_a_duty_below_the_minimum_never_starts_a_pulse():
     clock = Clock()
     with patch("custom_components.sat.pwm.monotonic", clock):
         CURVE.value = 30.0
@@ -241,7 +230,6 @@ async def test_a_hold_with_a_duty_below_the_minimum_never_starts_a_pulse(caplog)
         await pwm.update(boiler(), flame(since=400), setpoint_for(0.01), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
 
     assert pwm.status != PWMStatus.ON
-    assert not [r for r in caplog.records if r.getMessage().startswith("pwm ON")]
 
 
 # Options flow
@@ -283,13 +271,9 @@ async def test_the_hot_water_delay_round_trips_through_the_options_flow_and_take
     assert climate.pwm.status == PWMStatus.ON
 
 
-def info_lines(caplog) -> list[str]:
-    return [r.getMessage() for r in caplog.records if r.name == TIMELINE and r.levelno == logging.INFO and r.getMessage().startswith(("pwm", "flame"))]
-
-
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*entry_with(300))
-async def test_the_timeline_shows_the_hold_sequence_of_the_field_scenario(hass, entry, climate, boiler_data, freezer, caplog):
+async def test_the_cycle_records_show_the_hold_sequence_of_the_field_scenario(hass, entry, climate, boiler_data, freezer, caplog):
     await boiler_data(**OFF)
     await boiler_data(**DRAW)
     await heat(climate)
@@ -306,28 +290,8 @@ async def test_the_timeline_shows_the_hold_sequence_of_the_field_scenario(hass, 
     freezer.tick(1)
     await climate.async_control_heating_loop()
 
-    assert info_lines(caplog) == [
-        "flame on",
-        "pwm OFF (hvac mode change)",
-        "pwm hold (hot water)",
-        "flame off after 30.0s, hot water (flag), not counted",
-        "pwm hold (hot water delay)",
-        "pwm hold ended",
-        "pwm ON (2 cycles/h)",
-    ]
-
-
-@pytest.mark.usefixtures("loop_entry")
-@pytest.mark.parametrize(*entry_with(300))
-async def test_no_hold_lines_while_hot_water_runs_during_a_pulse(hass, entry, climate, boiler_data, freezer, caplog):
-    await boiler_data(**OFF)
-    await heat(climate)
-    await climate.async_control_heating_loop()
-    freezer.tick(5)
-    await boiler_data(**DRAW)
-    await climate.async_control_heating_loop()
-    freezer.tick(60)
-    await boiler_data(**OFF)
-    await climate.async_control_heating_loop()
-
-    assert not [line for line in info_lines(caplog) if line.startswith("pwm hold")]
+    holds = [record.fields["pwm"].hold for record in cycle_records(caplog)]  # type: ignore[attr-defined]
+    sequence = [hold for index, hold in enumerate(holds) if index == 0 or hold != holds[index - 1]]
+    assert sequence == ["hot water", "hot water delay", None]
+    assert climate.pwm.status == PWMStatus.ON
+    assert flame_transitions(caplog) == ["flame on", "flame off after 30.0s, hot water (flag), not counted"]
