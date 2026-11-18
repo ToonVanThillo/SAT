@@ -45,7 +45,7 @@ from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
 from .entity import SatEntity
 from .errors import Error
 from .held_input import HeldInput
-from .helpers import convert_time_str_to_seconds, float_value, is_state_stale, state_age_seconds
+from .helpers import convert_time_str_to_seconds, ema, float_value, is_state_stale, state_age_seconds
 from .logctx import annotate_event, logged_event
 from .manufacturers.geminox import Geminox
 from .pwm import PWMState
@@ -146,7 +146,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Create a dictionary mapping preset keys to temperature values
         self._presets = {key: config_options[value] for key, value in conf_presets.items() if key in conf_presets}
 
-        self._alpha = 0.2
         self._sensors = []
         self._rooms: dict[str, float] | None = None
         self._setpoint = None
@@ -1000,12 +999,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             return
 
         requested_setpoint = self._calculate_control_setpoint()
-        if self._calculated_setpoint is None:
-            # Default to the calculated setpoint
-            self._calculated_setpoint = requested_setpoint
-        else:
-            # Apply low filter on the requested setpoint
-            self._calculated_setpoint = round(self._alpha * requested_setpoint + (1 - self._alpha) * self._calculated_setpoint, 1)
+        # Apply low filter on the requested setpoint
+        self._calculated_setpoint = round(ema(self._calculated_setpoint, requested_setpoint), 1)
 
         # Pulse Width Modulation runs whenever a valve is open; unrestricted modulation needs setpoint management and the option allowing it
         if not inputs.valves_open:

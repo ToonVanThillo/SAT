@@ -16,6 +16,7 @@ from .const import (
     PWMStatus,
 )
 from .heating_curve import HeatingCurve
+from .helpers import ema
 from .setpoint_adjuster import SetpointAdjuster
 
 if TYPE_CHECKING:
@@ -107,7 +108,6 @@ class PWM:
 
     def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, hot_water_delay: float = 0):
         """Initialize the PWM control; no pulse starts within `hot_water_delay` seconds after a hot water burn ends."""
-        self._alpha: float = 0.2
         self._hot_water_delay: float = hot_water_delay
         self._last_boiler_temperature: float | None = None
 
@@ -231,7 +231,7 @@ class PWM:
             # Update boiler temperature if the period has just started
             if self._status == PWMStatus.ON:
                 if period_elapsed <= BOILER_TEMPERATURE_SMOOTHING_TIME:
-                    self._last_boiler_temperature = (self._alpha * flow_temperature + (1 - self._alpha) * self._last_boiler_temperature)
+                    self._last_boiler_temperature = ema(self._last_boiler_temperature, flow_temperature)
                 else:
                     self._last_boiler_temperature = flow_temperature
 

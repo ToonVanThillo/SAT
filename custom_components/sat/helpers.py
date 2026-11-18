@@ -107,3 +107,11 @@ def clamp(value: float, low: float, high: Optional[float] = None) -> float:
         return max(low, value)
 
     return max(low, min(value, high))
+
+
+def ema(previous: float | None, value: float, alpha: float = 0.2) -> float:
+    """Exponential moving average (low-pass filter); alpha weights the new value. Returns value unchanged when there is no previous value."""
+    if previous is None:
+        return value
+
+    return alpha * value + (1 - alpha) * previous

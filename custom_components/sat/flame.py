@@ -10,6 +10,7 @@ from typing import Deque, Optional, Tuple, Iterable, TYPE_CHECKING
 
 from .logctx import logger as timeline_logger
 from .const import BoilerStatus, FlameStatus, PWMStatus
+from .helpers import ema
 
 if TYPE_CHECKING:
     from .pwm import PWMState
@@ -225,11 +226,7 @@ class Flame:
                 self._latest_on_time_seconds = now - burn.started
 
                 if self._has_completed_first_cycle and not burn.hot_water:
-                    self._average_on_time_seconds = (
-                        self._latest_on_time_seconds
-                        if self._average_on_time_seconds is None
-                        else (1.0 - self._smoothing_alpha) * self._average_on_time_seconds + self._smoothing_alpha * self._latest_on_time_seconds
-                    )
+                    self._average_on_time_seconds = ema(self._average_on_time_seconds, self._latest_on_time_seconds, self._smoothing_alpha)
 
         self._recompute_health(now)
 

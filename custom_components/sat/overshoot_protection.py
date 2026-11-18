@@ -5,6 +5,7 @@ import time
 from .const import OVERSHOOT_PROTECTION_SETPOINT, MINIMUM_SETPOINT, DEADBAND, MAXIMUM_RELATIVE_MODULATION
 from .channels import DesiredState
 from .coordinator import DeviceState, SatDataUpdateCoordinator
+from .helpers import ema
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class OvershootProtection:
 
     def _calculate_exponential_moving_average(self, previous_average: float, current_value: float) -> tuple[float, float]:
         """Calculate the exponential moving average and error."""
-        average_value = self._alpha * current_value + (1 - self._alpha) * previous_average
+        average_value = ema(previous_average, current_value, self._alpha)
         error_value = abs(current_value - previous_average)
         return average_value, error_value
 
