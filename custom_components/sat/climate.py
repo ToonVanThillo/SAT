@@ -960,9 +960,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Let the sub know we have run
         self._control_heating_loop_unsub = None
 
+        # Snapshot external inputs. Update boiler inputs and capture BoilerSnapshot
         inputs = self._capture_inputs()
-
-        # Control the heating through the coordinator
         await self._coordinator.async_control_heating_loop(climate=self, pwm_state=self.pwm.state)
         snapshot = self._coordinator.snapshot()
         annotate_event(cycle=snapshot.cycle, hvac=self.hvac_mode, inputs=inputs, boiler=snapshot.boiler, verify=self._coordinator.verify(snapshot))
