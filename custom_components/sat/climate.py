@@ -967,7 +967,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         annotate_event(cycle=snapshot.cycle, hvac=self.hvac_mode, inputs=inputs, boiler=snapshot.boiler, verify=self._coordinator.verify(snapshot))
 
         # HVAC mode OFF, or a missing current, target or outside temperature -> reset PWM, request heater OFF and release setpoint;
-        # as with no open valve, PWM is reset, so a pulse doesn't resume when heating or the temperature returns
+        # No heating curve / pid / setpoint updates
         if self.hvac_mode != HVACMode.HEAT or inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
             self.pwm.reset()
 
@@ -975,19 +975,18 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             return
 
         requested_setpoint = self._calculate_control_setpoint()
-        # Apply low filter on the requested setpoint
         self._calculated_setpoint = round(ema(self._calculated_setpoint, requested_setpoint), 1)
 
         # Pulse Width Modulation runs whenever a valve is open; unrestricted modulation needs setpoint management and the option allowing it
-        if not inputs.valves_open:
-            self.pwm.reset()
-        else:
+        if inputs.valves_open:
             await self.pwm.update(
                 flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint,
                 minimum_setpoint=self.minimum_setpoint_value,
                 allow_unrestricted=self._coordinator.supports_setpoint_management and self._allow_unrestricted_modulation,
                 outside_temperature=inputs.outside_temperature,
-            )
+                )
+        else:
+            self.pwm.reset()
 
         # Control setpoint to request, unless released below with heater off
         control_setpoint: float | Release
