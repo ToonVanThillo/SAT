@@ -1,13 +1,12 @@
-"""Tests for HEAT with no open valve: the boiler is requested off (minimum setpoint, heater OFF), end-to-end from the climate to the MQTT messages."""
+"""Tests for HEAT with no open valve: the boiler is requested off (releases the control setpoint, heater OFF), end-to-end from the climate to the MQTT messages."""
 import logging
 from unittest.mock import patch
 
 import pytest
 from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 
-from custom_components.sat.channels import RELEASE, ChannelStatus, Quantity
+from custom_components.sat.channels import RELEASE, ChannelStatus
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
@@ -15,12 +14,11 @@ from custom_components.sat.const import (
     CONF_RADIATORS,
     CONF_ROOMS,
     MINIMUM_OFF_TIME,
-    MINIMUM_SETPOINT,
     PWMStatus,
 )
 from custom_components.sat.coordinator import DeviceState
 from tests.conftest import TIMELINE, advance, cycle_records, last_cycle
-from tests.const import IDLE, otgw_entry, with_data
+from tests.const import IDLE, with_data
 from tests.test_climate_loop import message, run_loop
 from tests.test_climate_loop_ems import INSIDE, RADIATOR
 from tests.test_heater_off_release import (
@@ -102,15 +100,15 @@ async def test_without_radiators_pwm_is_updated_normally(entry, climate, boiler_
     ("off", {"hvac_modes": ["heat", "off"]}),
     ("unavailable", {"hvac_modes": ["heat", "off"]}),
 ])
-async def test_closed_valves_request_minimum_setpoint_and_heater_off(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, state, attributes):
+async def test_closed_valves_release_the_setpoint_and_request_heater_off(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, state, attributes):
     await prepare(hass, climate, boiler_data, heatingoff="off")
     hass.states.async_set(RADIATOR, state, attributes)
     with patch.object(climate, "_calculate_control_setpoint", return_value=50.0), patch.object(coordinator, "async_submit", wraps=coordinator.async_submit) as submit:
         calls = await run_loop(climate, mqtt_mock, published)
 
     desired = submit.await_args_list[-1].args[0]
-    assert (desired.control_setpoint, desired.heater_state) == (MINIMUM_SETPOINT, DeviceState.OFF)
-    assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
+    assert (desired.control_setpoint, desired.heater_state) == (RELEASE, DeviceState.OFF)
+    assert selflowtemp(calls) == []
     assert HEATER_OFF in calls
 
 
@@ -136,9 +134,8 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
         await run_loop(climate, mqtt_mock, published)
 
     desired = submit.await_args_list[-1].args[0]
-    assert desired.control_setpoint == MINIMUM_SETPOINT
+    assert desired.control_setpoint == RELEASE
     assert desired.heater_state == DeviceState.OFF
-    assert climate.setpoint == 10
     assert climate.pwm.status == PWMStatus.OFF
     assert climate.calculated_setpoint == calculated
     assert hass.states.get("sensor.calculated_setpoint_test").state == str(calculated)
@@ -210,52 +207,7 @@ async def test_cycle_record_shows_closed_valves(hass, entry, climate, boiler_dat
     fields = last_cycle(caplog)
     assert fields["inputs"].valves_open is False
     assert (fields["setpoint"], fields["setpoint_rule"]) == (50.0, "valves closed")
-    assert (fields["want"].control_setpoint, fields["want"].heater_state) == (10, DeviceState.OFF)
-
-
-# EMS-ESP release timing
-
-@pytest.mark.parametrize(*WITH_RADIATOR)
-async def test_closed_valves_release_the_setpoint_once_heater_off_is_confirmed(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    await boiler_data(**IDLE | {"heatingoff": "off"})
-    close_valves(hass)
-
-    # Cycle 1: heating still enabled, so both are requested
-    calls = await run_loop(climate, mqtt_mock, published)
-    assert selflowtemp(calls) == [message('{"cmd": "selflowtemp", "value": 0}')]
-    assert HEATER_OFF in calls
-    assert setpoint_status(coordinator) == ChannelStatus.PENDING
-    assert requested_setpoints(caplog) == [10]
-    assert not released(caplog)
-
-    # Cycle 2: verify has confirmed heatingoff on
-    caplog.clear()
-    calls = await step(climate, boiler_data, mqtt_mock, published, freezer, heatingoff="on", selflowtemp=0)
-    assert coordinator.channel_states[Quantity.HEATER_STATE].status == ChannelStatus.IN_SYNC
-    assert selflowtemp(calls) == []
-    assert setpoint_status(coordinator) == ChannelStatus.IDLE
-    assert requested_setpoints(caplog) == [RELEASE]
-    assert last_cycle(caplog)["want"].heater_state == DeviceState.OFF
-    assert last_cycle(caplog)["inputs"].valves_open is False
-
-
-# A backend that does not release
-
-_, [(OT_DOMAINS, OT_DATA, OT_OPTIONS, OT_CONFIG)] = otgw_entry()
-
-
-@pytest.mark.parametrize("domains, data, options, config", [(OT_DOMAINS, OT_DATA | {CONF_RADIATORS: [RADIATOR]}, OT_OPTIONS, OT_CONFIG)])
-async def test_opentherm_keeps_requesting_the_minimum_setpoint_with_closed_valves(hass, entry, climate, mqtt_mock, published, caplog):
-    async_fire_mqtt_message(hass, "otgw/value/gw1/centralheating", "ON")
-    await hass.async_block_till_done()
-    close_valves(hass)
-
-    for _ in range(4):
-        calls = await run_loop(climate, mqtt_mock, published)
-        assert "CS=10" in [c[1] for c in calls]
-
-    assert requested_setpoints(caplog) == [10] * 4
-    assert all(r.fields["want"].heater_state == DeviceState.OFF for r in cycle_records(caplog))  # type: ignore[attr-defined]
+    assert (fields["want"].control_setpoint, fields["want"].heater_state) == (RELEASE, DeviceState.OFF)
 
 
 # Valves reopen
@@ -318,7 +270,7 @@ def after_update_step(coordinator, change) -> None:
 @pytest.mark.parametrize(*WITH_RADIATOR)
 @pytest.mark.parametrize(("before", "during", "setpoint", "heater"), [
     ("heating", "idle", 35, DeviceState.ON),
-    ("idle", "heating", 10, DeviceState.OFF),
+    ("idle", "heating", RELEASE, DeviceState.OFF),
 ])
 async def test_setpoint_and_heater_follow_the_captured_valves(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, before, during, setpoint, heater):
     await prepare(hass, climate, boiler_data, heatingoff="on")
@@ -341,7 +293,7 @@ async def test_setpoint_and_heater_follow_the_captured_valves(hass, entry, clima
 @pytest.mark.parametrize(*UNRESTRICTED_DISALLOWED)
 @pytest.mark.parametrize(("before", "during", "status", "setpoint"), [
     ("heating", "idle", PWMStatus.ON, 30),
-    ("idle", "heating", PWMStatus.OFF, 10),
+    ("idle", "heating", PWMStatus.OFF, RELEASE),
 ])
 async def test_pwm_follows_the_captured_valves(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, before, during, status, setpoint):
     await prepare(hass, climate, boiler_data, heatingoff="on")
@@ -392,6 +344,6 @@ async def test_missing_temperature_submits_heater_off_whatever_the_valves(hass, 
 
     submit.assert_awaited_once()
     desired = submit.await_args.args[0]
-    assert (desired.control_setpoint, desired.heater_state) == (MINIMUM_SETPOINT, DeviceState.OFF)
+    assert (desired.control_setpoint, desired.heater_state) == (RELEASE, DeviceState.OFF)
 
 

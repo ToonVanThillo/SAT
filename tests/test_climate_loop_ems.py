@@ -102,8 +102,8 @@ async def test_loop_turns_the_heater_off_without_a_temperature(hass, entry, clim
     await boiler_data(**IDLE)
     hass.states.async_set(sensor, "unavailable")
 
-    # Heater OFF at the minimum setpoint (sent as 0), released once heater OFF is confirmed
-    assert await run_loop(climate, mqtt_mock, published) == [message('{"cmd": "selflowtemp", "value": 0}'), message('{"cmd": "heatingoff", "value": "on"}')]
+    # Heater OFF with the control setpoint released: no selflowtemp
+    assert await run_loop(climate, mqtt_mock, published) == [message('{"cmd": "heatingoff", "value": "on"}')]
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -120,7 +120,7 @@ async def test_loop_turns_the_heater_off_with_a_non_numeric_temperature(hass, en
 
     await climate.async_control_heating_loop()
 
-    assert published() == [message('{"cmd": "selflowtemp", "value": 0}'), message('{"cmd": "heatingoff", "value": "on"}')]
+    assert published() == [message('{"cmd": "heatingoff", "value": "on"}')]
 
 
 # Heater state

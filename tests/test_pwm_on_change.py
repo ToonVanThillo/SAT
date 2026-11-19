@@ -255,7 +255,7 @@ async def test_n_is_frozen_with_a_missing_temperature_and_follows_when_it_return
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry())
-async def test_the_cycles_sensor_shows_the_n_in_effect_at_the_last_update_after_pwm_stops_running(hass, entry, climate, boiler_data, freezer):
+async def test_the_cycles_sensor_shows_the_n_in_effect_in_off_and_does_not_follow_the_outside_temperature(hass, entry, climate, boiler_data, freezer):
     # A pulse latches the cold N=4
     hass.states.async_set(OUTSIDE, "-5")
     await heat(hass, climate, boiler_data)
@@ -268,12 +268,17 @@ async def test_the_cycles_sensor_shows_the_n_in_effect_at_the_last_update_after_
     await loop(hass, climate)
     assert hass.states.get(CYCLES).state == "4"
 
-    # In OFF the latch expires (after 2 * 3600 / 4 s), but N is not refreshed from the outside temperature
+    # In OFF the latch expires (after 2 * 3600 / 4 s); each OFF cycle resets PWM, so the sensor shows the N in effect then (the last calculated, N=2)
     await climate.async_set_hvac_mode(HVACMode.OFF)
     await advance(hass, freezer, 3601)
     await loop(hass, climate)
+    assert hass.states.get(CYCLES).state == "2"
 
-    # Had PWM updated in OFF, the sensor would show the mild N=2 by now
-    assert hass.states.get(CYCLES).state == "4"
+    # N is not recalculated from the outside temperature in OFF: a cold one (N=4) is not followed
+    hass.states.async_set(OUTSIDE, "-5")
+    await advance(hass, freezer, 11)
+    await loop(hass, climate)
+    assert climate.pwm.cycles_per_hour == 2
+    assert hass.states.get(CYCLES).state == "2"
 
 

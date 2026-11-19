@@ -13,7 +13,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant, State
 
-from custom_components.sat.channels import DesiredState
+from custom_components.sat.channels import RELEASE, DesiredState
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_HUMIDITY_SENSOR_ENTITY_ID,
@@ -33,7 +33,7 @@ INSIDE = "sensor.test_inside_sensor"
 OUTSIDE = "sensor.test_outside_sensor"
 HUMIDITY = "sensor.test_humidity"
 
-OFF_WRITES = ['{"cmd": "selflowtemp", "value": 0}', '{"cmd": "heatingoff", "value": "on"}']
+OFF_WRITES = ['{"cmd": "heatingoff", "value": "on"}']
 
 
 # The grace constant
@@ -434,7 +434,7 @@ async def test_the_hold_running_out_takes_the_full_missing_path_and_a_recovery_r
     result = await run(150)
 
     assert missing(result["fields"]) == ["inside"]
-    assert result["fields"]["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
+    assert result["fields"]["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
     assert result["writes"] == OFF_WRITES
 
     await run(10)
@@ -508,7 +508,7 @@ async def test_the_missing_path_lists_every_input_that_returned_nothing(hass, st
     result = await run()
 
     assert missing(result["fields"]) == ["inside", "outside"]
-    assert result["fields"]["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
+    assert result["fields"]["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
 
 
 @pytest.mark.usefixtures("loop_entry")

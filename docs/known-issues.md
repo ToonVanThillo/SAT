@@ -14,13 +14,15 @@ known bug".
   temperature, the PWM off phase, or a requested setpoint at or below the cold
   threshold), OFF is resent every cycle while the boiler is heating, but never
   sent while it is enabled but idle. EMS-ESP compares with the `heatingoff`
-  setting. Plan step 7 addresses this.
+  setting. Since heater OFF releases the control setpoint, such a boiler then
+  keeps its last setpoint with heating enabled, and can fire at it until a
+  later cycle sees it heating and sends OFF. Plan step 7 addresses this.
 - The heating loop doesn't re-check the HVAC mode after its awaits, so a cycle
   that is running when the HVAC mode changes can still submit the previous
   mode's desired state afterwards; the next cycle corrects it.
-- On backends without channels (e.g. OpenTherm over MQTT), in HVAC OFF the
-  boiler keeps reporting the last setpoint written in HEAT: the release does
-  not clear the gateway's override (`CS=0`). While the boiler temperature is
+- On backends without channels (e.g. OpenTherm over MQTT), while heater OFF is
+  requested the boiler keeps reporting the last setpoint written: the release
+  does not clear the gateway's override (`CS=0`). While the boiler temperature is
   within `BOILER_DEADBAND` (2 °C) of it, the status is AT_SETPOINT, which flame
   health (`_HEATING_STATUSES` in `flame.py`) counts as heat demand. With the
   flame off for longer than `STUCK_OFF_SECONDS` (300 s), flame health reports
@@ -28,8 +30,7 @@ known bug".
   `heatingoff` (status IDLE).
 - A minimum setpoint ≤ `COLD_SETPOINT` (28.2 °C) makes a MINIMUM pulse request
   heater OFF. An UNRESTRICTED pulse whose calculated setpoint is ≤ 28.2 does
-  the same, and on backends without a release it then requests that calculated
-  setpoint, not 10 °C. On EMS-ESP the control setpoint is released. The config
+  the same; the control setpoint is released. The config
   flow no longer accepts such a minimum; older entries can still have one (a
   manual value, or 10 °C from an old migration or a missing minimum) and log an
   error at setup. Reconfigure them to set a minimum.
@@ -226,11 +227,6 @@ known bug".
   boiler's own `burnmaxpower` maximum is never confirmed: the boiler reads
   back its own value, so the configured value is resent after every new
   read-back and the channel stays `OUT_OF_SYNC`.
-- On EMS-ESP, whenever heater OFF follows heater ON (each PWM ON→OFF, the
-  first cycle of a missing temperature), the control setpoint is sent as 0
-  until heater OFF is confirmed, while the boiler reads back 5 under
-  `heatingoff`. The control setpoint channel is briefly `OUT_OF_SYNC` (sent 0,
-  read back 5) until it is released.
 
 ## Startup and stored data
 - When HA is already running (reload or new entry), the first control loop runs

@@ -218,17 +218,18 @@ async def test_an_hvac_mode_change_resets_pwm_and_the_setpoint_adjuster(hass, en
     await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
 
-    # The control loop that HVAC mode OFF runs at once leaves PWM alone; only the reset signals
+    # The reset signals the PWM sensors, and the last signal says OFF
     assert climate.pwm.status == PWMStatus.OFF
     assert climate.pwm.setpoint == MINIMUM_SETPOINT
-    assert received == [PWMStatus.OFF]
+    assert received
+    assert received[-1] == PWMStatus.OFF
     assert hass.states.get(STATUS).state == PWMStatus.OFF.value
     assert hass.states.get(MODE).state == ModulationMode.MINIMUM.value
     assert hass.states.get(DUTY_CYCLE).state in ("unknown", "unavailable")
     # The reset keeps N; the 9.9 °C outside temperature of the fixtures gives N=2
     assert hass.states.get(CYCLES_PER_HOUR).state == "2"
 
-    # The loop the change scheduled runs in HVAC mode OFF and leaves PWM alone
+    # The loop the change scheduled runs in HVAC mode OFF and keeps PWM reset
     await advance(hass, freezer, 11)
     assert climate.pwm.status == PWMStatus.OFF
     assert hass.states.get(STATUS).state == PWMStatus.OFF.value

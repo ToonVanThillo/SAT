@@ -275,7 +275,7 @@ async def test_a_missing_temperature_shows_in_the_inputs_and_has_no_setpoint_fie
     fields = last_cycle(caplog)
     assert fields["inputs"].current_temperature is None
     assert fields["pwm"].status == PWMStatus.OFF
-    assert fields["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
+    assert fields["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
     assert [key for key in fields if key != "event"] == COMMON
 
 
@@ -309,7 +309,7 @@ async def test_the_boiler_state_has_an_unknown_flow_as_none(heating, climate, ca
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_sent_shows_encoded_values_and_the_want_shows_the_request(heating, climate, caplog, boiler_data):
+async def test_a_released_setpoint_shows_in_the_want_and_is_not_sent(heating, climate, caplog, boiler_data):
     await boiler_data(**IDLE)
     await climate.async_set_target_temperature(15.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
@@ -318,10 +318,9 @@ async def test_sent_shows_encoded_values_and_the_want_shows_the_request(heating,
     await climate.async_control_heating_loop()
 
     fields = last_cycle(caplog)
-    assert fields["want"].control_setpoint == 10
+    assert fields["want"].control_setpoint == RELEASE
     sent = {record.quantity: record for record in fields["sent"]}
-    assert sent[Quantity.CONTROL_SETPOINT].value == 0
-    assert sent[Quantity.CONTROL_SETPOINT].kind == WriteKind.SEND
+    assert Quantity.CONTROL_SETPOINT not in sent
     assert sent[Quantity.HEATER_STATE].value == DeviceState.OFF
 
 

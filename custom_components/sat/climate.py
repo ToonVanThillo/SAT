@@ -38,7 +38,7 @@ from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.start import async_at_started
 
 from .area import Areas, SENSOR_TEMPERATURE_ID
-from .channels import RELEASE, DesiredState, Quantity, Release
+from .channels import RELEASE, DesiredState, Release
 from .const import *
 from .const import ModulationMode, PWMStatus
 from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
@@ -966,19 +966,12 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         snapshot = self._coordinator.snapshot()
         annotate_event(cycle=snapshot.cycle, hvac=self.hvac_mode, inputs=inputs, boiler=snapshot.boiler, verify=self._coordinator.verify(snapshot))
 
-        # HVAC mode OFF -> heater OFF and release setpoint
-        if self.hvac_mode != HVACMode.HEAT:
-            await self._async_submit(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))
-            return
-
-        # Without the current, target or outside temperature, request heater OFF; as with no open valve, PWM is reset, so a pulse
-        # doesn't resume when the temperature returns
-        if inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
+        # HVAC mode OFF, or a missing current, target or outside temperature -> reset PWM, request heater OFF and release setpoint;
+        # as with no open valve, PWM is reset, so a pulse doesn't resume when heating or the temperature returns
+        if self.hvac_mode != HVACMode.HEAT or inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
             self.pwm.reset()
 
-            await self._async_submit(
-                DesiredState(control_setpoint=RELEASE if self._heater_off_releases_setpoint() else MINIMUM_SETPOINT, heater_state=DeviceState.OFF)
-            )
+            await self._async_submit(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))
             return
 
         requested_setpoint = self._calculate_control_setpoint()
@@ -996,7 +989,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 outside_temperature=inputs.outside_temperature,
             )
 
-        # Control setpoint to request, unless released below once heater off is confirmed
+        # Control setpoint to request, unless released below with heater off
         control_setpoint: float | Release
         control_setpoint, setpoint_reason = self._control_setpoint(self.pwm.state, inputs.valves_open)
         heater_state = self._heater_state(self._setpoint)
@@ -1021,7 +1014,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             # Calculate the dynamic minimum setpoint
             self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.mode)
 
-        if heater_state == DeviceState.OFF and self._heater_off_releases_setpoint():
+        if heater_state == DeviceState.OFF:
             control_setpoint = RELEASE
 
         # The curve and PID terms as held now; they need not add up to the requested setpoint
@@ -1032,11 +1025,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         await self._async_submit(DesiredState(control_setpoint=control_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state))
 
         self.async_write_ha_state()
-
-    def _heater_off_releases_setpoint(self) -> bool:
-        """Whether a heater OFF request releases the control setpoint: only on backends that switch heating off with a separate command,
-        once the heater channel has confirmed heating off."""
-        return self._coordinator.releases_control_setpoint_when_heater_off and self._coordinator.confirmed_value(Quantity.HEATER_STATE) == DeviceState.OFF
 
     def _held_inputs(self) -> list[HeldInput]:
         """The held inputs this configuration reads, in capture order."""

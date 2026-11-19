@@ -153,7 +153,7 @@ async def test_heat_with_unreadable_humidity_does_not_raise(hass, entry, climate
 
     # Thermal comfort needs the humidity, so the current temperature is unreadable and the heater is turned off
     assert await run_loop(climate, mqtt_mock, published, mode=HVACMode.HEAT) == [
-        message('{"cmd": "selflowtemp", "value": 0}'), message('{"cmd": "heatingoff", "value": "on"}'),
+        message('{"cmd": "heatingoff", "value": "on"}'),
     ]
 
     assert climate.current_humidity is None

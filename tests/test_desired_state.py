@@ -186,7 +186,7 @@ async def test_missing_temperature_submits_heater_off(hass, entry, climate, coor
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
-    # Decide and reconcile run, with heater OFF at the minimum setpoint
+    # Decide and reconcile run, with heater OFF and the control setpoint released
     with patch.object(coordinator, "async_control_heating_loop", wraps=coordinator.async_control_heating_loop) as update, \
             patch.object(coordinator, "verify", wraps=coordinator.verify) as verify, \
             patch.object(coordinator, "async_submit", wraps=coordinator.async_submit) as submit:
@@ -194,7 +194,7 @@ async def test_missing_temperature_submits_heater_off(hass, entry, climate, coor
 
     update.assert_awaited_once()
     verify.assert_called_once_with(coordinator._snapshot)
-    submit.assert_awaited_once_with(DesiredState(control_setpoint=MINIMUM_SETPOINT, heater_state=DeviceState.OFF))
+    submit.assert_awaited_once_with(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))
 
 
 @pytest.mark.usefixtures("loop_entry")

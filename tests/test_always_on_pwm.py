@@ -1,6 +1,6 @@
 """Always-on PWM: in HEAT with a valve open the climate always runs PWM and decides from its status and mode.
 
-PWM OFF requests heater OFF at the minimum setpoint of 10 °C, released once heater OFF is confirmed; ON
+PWM OFF requests heater OFF and releases the control setpoint; ON
 with MINIMUM requests the effective minimum setpoint and the minimum max relative modulation; ON with UNRESTRICTED requests the calculated
 setpoint and the configured maximum. Unrestricted modulation needs setpoint management and the option allowing it. With the default inputs the
 calculated setpoint is 35.
@@ -125,10 +125,10 @@ class TestDecideAtTheEmsBoundary:
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
         assert last_cycle(caplog)["setpoint_rule"] == "pwm on unrestricted"
 
-    # (c) OFF: heater OFF at the 10 °C minimum (sent as 0 on EMS-ESP), released once heater OFF is confirmed
+    # (c) OFF: heater OFF with the control setpoint released from the first cycle
 
     @pytest.mark.parametrize(*entries(("unrestricted-disallowed", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False})))
-    async def test_the_off_phase_turns_the_heater_off_then_releases(self, hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
+    async def test_the_off_phase_turns_the_heater_off_and_releases_the_setpoint(self, hass, entry, climate, boiler_data, mqtt_mock, published, freezer, caplog):
         await boiler_data(**IDLE | {"heatingoff": "on"})
         await run_loop(climate, mqtt_mock, published)
         assert climate.pwm.status == PWMStatus.ON
@@ -139,14 +139,14 @@ class TestDecideAtTheEmsBoundary:
             if climate.pwm.status != PWMStatus.ON:
                 break
         assert climate.pwm.status == PWMStatus.OFF
-        assert calls == [selflowtemp(0), HEATER_OFF]
+        assert calls == [HEATER_OFF]
+        assert released(caplog)
         assert last_cycle(caplog)["setpoint_rule"] == "pwm off"
 
         off = {"heatingoff": "on", "selflowtemp": 5, "burngas": "off", "heatingactive": "off"}
         calls = await one_cycle(hass, climate, mqtt_mock, published, freezer, caplog, boiler_data(**off))
         assert [call for call in calls if '"selflowtemp"' in call[1]] == []
         assert heater_writes(calls) == []
-        assert climate.setpoint == 10
         assert released(caplog)
 
     # (c) Without a flow temperature PWM keeps running: a running pulse continues and the heater stays on
@@ -273,7 +273,7 @@ class TestDecideAtTheEmsBoundary:
         await boiler_data(**IDLE | {"heatingoff": "on", "burngas": "on", "tapwateractive": "on"})
         calls = await run_loop(climate, mqtt_mock, published)
         assert climate.pwm.status == PWMStatus.OFF
-        assert HEATER_ON not in calls and [c for c in calls if '"selflowtemp"' in c[1]] == [selflowtemp(0)]
+        assert HEATER_ON not in calls and [c for c in calls if '"selflowtemp"' in c[1]] == []
 
         # The tap closes and the flame goes out: the delay of 300 s counts from then
         freezer.tick(10)
@@ -348,7 +348,7 @@ class TestDecideAtTheEmsBoundary:
             if climate.pwm.status != PWMStatus.ON:
                 break
         assert climate.pwm.status == PWMStatus.OFF
-        assert calls == [selflowtemp(0), HEATER_OFF]
+        assert calls == [HEATER_OFF]
 
         # OFF: the boiler reads back heating off with a device setpoint of 5 until the next pulse starts
         off = {"heatingoff": "on", "selflowtemp": 5, "burngas": "off", "heatingactive": "off"}
@@ -422,7 +422,7 @@ async def test_opentherm_requests_the_maximum_while_off_and_the_minimum_with_the
         assert climate.relative_modulation_state.name == "MINIMUM"
     assert climate.pwm.status == PWMStatus.OFF
     assert climate.relative_modulation_state.name == "HEATER_OFF_REQUESTED"
-    assert commands == ["CS=10", "PM=25", "MM=100", "CH=0"]
+    assert commands == ["MM=100", "CH=0"]
 
     # OFF, reading back the off request, until the next pulse starts
     for _ in range(80):

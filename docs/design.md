@@ -14,30 +14,22 @@ Each cycle has three phases, in this order:
    the previous cycle's writes against it.
 2. **Decide**: the control logic (climate, PWM, PID, relative modulation) reads
    only the snapshot, the inputs, the coordinator's capabilities and configured
-   limits, and which sent values the channels have confirmed (as of this
-   cycle's verify), and produces a `DesiredState`. No device writes happen
-   here.
+   limits, and produces a `DesiredState`. No device writes happen here.
 3. **Reconcile**: the coordinator hands the `DesiredState` to its channels,
    which write what is needed.
 
-In HVAC mode OFF the decide phase requests heater OFF and releases the control
-setpoint. In HEAT, when no valve is open, it resets PWM and requests the
-minimum setpoint (10 °C), whatever the calculated setpoint; without radiators
-configured, the valves count as open. When the target, inside or outside
-temperature is missing (see the climate inputs under Snapshot), it resets PWM
-and requests heater OFF with the minimum setpoint, without a max relative
+In HVAC mode OFF the decide phase resets PWM and requests heater OFF. In
+HEAT, when no valve is open, it resets PWM and requests heater OFF, whatever the calculated
+setpoint; without radiators configured, the valves count as open. When the
+target, inside or outside temperature is missing (see the climate inputs under
+Snapshot), it resets PWM and requests heater OFF, without a max relative
 modulation or max setpoint; the climate's setpoint is not updated. Otherwise
-it decides from PWM (see PWM). When it requests heater OFF in HEAT (a missing
-temperature, no valve open, the PWM off phase, or a requested setpoint at or
-below the cold threshold), it releases the control setpoint only on backends
-that switch heating off with a separate command, and only once the heater
-channel has confirmed heating off; until then, and on a backend whose boiler
-is kept off by a low setpoint, it requests the computed setpoint (10 °C, or
-the requested setpoint). On EMS-ESP that command is `heatingoff`, under which EMS-ESP itself
-keeps sending the boiler a flow temperature of 0, so writing it as well is
-redundant. For now only EMS-ESP releases: on backends without channels a
-release leaves the last setpoint on the device, so they keep requesting the
-minimum until they migrate.
+it decides from PWM (see PWM). Every heater OFF request releases the control
+setpoint, on every backend and without waiting for the heater OFF to be
+confirmed: the heater OFF command keeps the boiler off, and how the device
+combines it with the last setpoint is up to the backend. On EMS-ESP that
+command is `heatingoff`, under which EMS-ESP itself sends the boiler a flow
+temperature of 0.
 
 Every write goes through this path, including HVAC mode OFF and pushing the
 setpoint to the thermostat. Hot water control is out of scope; where a backend
@@ -161,9 +153,6 @@ setting reads back as sent). Whether the boiler acts on it is out of scope.
 - `verify(snapshot)` runs right after the cycle's snapshot; backends with
   channels verify the previous cycle's writes and return the status changes,
   others do nothing.
-- `confirmed_value(quantity)` gives a channel's sent value while the device has
-  confirmed it (`IN_SYNC`), else None; the decide phase uses it to act only on
-  confirmed device state.
 - Backends supply channel definitions. Backends not yet migrated keep their
   current `async_set_*` path.
 - On unload the platforms are unloaded first; then the coordinator releases its
@@ -351,7 +340,7 @@ In HEAT, with all temperatures present and a valve open:
 
 | PWM              | Control setpoint           | Max relative modulation | Heater |
 |------------------|----------------------------|-------------------------|--------|
-| OFF              | minimum (10 °C) or release | by mode¹                | OFF    |
+| OFF              | release                    | by mode¹                | OFF    |
 | ON, MINIMUM      | effective minimum setpoint | minimum¹                | ON     |
 | ON, UNRESTRICTED | calculated setpoint        | configured maximum      | ON     |
 
@@ -367,12 +356,12 @@ maximum; this includes every OFF cycle.
 - Overshoot handling is a boiler status; it does not change PWM.
 
 **Resets**
-- No open valve, a missing temperature and an HVAC mode change reset PWM. A
-  reset ends a running pulse like a normal pulse end; a reset while OFF leaves
-  a running off phase as it is. The cycle record shows the cause of a reset in
-  a control cycle: `valves_open` false, or a missing temperature as `?` in
-  `inputs`; with thermal comfort, a missing humidity shows as a missing inside
-  temperature.
+- No open valve, a missing temperature, HVAC mode OFF and an HVAC mode change
+  reset PWM. A reset ends a running pulse like a normal pulse end; a reset
+  while OFF leaves a running off phase as it is. The cycle record shows the
+  cause of a reset in a control cycle: `valves_open` false, a missing
+  temperature as `?` in `inputs`, or `hvac` OFF; with thermal comfort, a
+  missing humidity shows as a missing inside temperature.
 - A target change, also of an area, does not reset PWM: it only changes the
   calculated setpoint. Selecting the HVAC mode that is already active changes
   nothing.
@@ -521,9 +510,7 @@ too high until the pump runs again.
 5. Update the PID and heating curve inside the control cycle from the captured
    inputs, instead of on sensor events.
 6. A Calculated Setpoint sensor.
-7. Migrate the other backends to channels; those that switch heating off with a
-   separate command then also release the control setpoint on heater OFF in
-   HEAT.
+7. Migrate the other backends to channels.
 8. EMS-ESP: in HEAT, heater OFF releases the control setpoint instead of
    requesting the minimum.
 9. PWM cycles per hour from the outside temperature, and a minimum pulse of
@@ -557,6 +544,8 @@ too high until the pump runs again.
 22. Timeline: one structured cycle record per control cycle, at debug,
     replaces the cycle line and the control loop's info lines; the remaining
     info lines are plain log calls and `timeline.py` is removed.
+23. Heater OFF releases the control setpoint on every backend, without waiting
+    for confirmation.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
@@ -597,7 +586,6 @@ too high until the pump runs again.
   each flip during a pulse starts a new period. A candidate: UNRESTRICTED only
   when the calculated setpoint exceeds the effective minimum by more than
   2 °C, back to MINIMUM only at or below it.
-- Whether an HVAC mode change should reset PWM.
 - Device updates as structured events: one event per incoming device message
   with the changed traced values and the flame change, replacing the single
   info lines.

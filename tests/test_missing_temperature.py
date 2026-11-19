@@ -1,5 +1,5 @@
 """The missing-temperature path of the HEAT loop: without the current, target or outside temperature the heater is turned off, PWM is reset
-and, once heater OFF is confirmed, the control setpoint is released. Applies to every user."""
+and the control setpoint is released. Applies to every user."""
 import json
 import logging
 from typing import Any
@@ -30,7 +30,7 @@ INSIDE = "sensor.test_inside_sensor"
 OUTSIDE = "sensor.test_outside_sensor"
 HUMIDITY = "sensor.test_humidity"
 
-OFF_WRITES = ['{"cmd": "selflowtemp", "value": 0}', '{"cmd": "heatingoff", "value": "on"}']
+OFF_WRITES = ['{"cmd": "heatingoff", "value": "on"}']
 
 
 @pytest.fixture(autouse=True)
@@ -89,14 +89,14 @@ async def assert_off_then_released(hass, climate, boiler_data, freezer, mqtt_moc
     if not scheduled:
         await missing_cycle(hass, climate, mqtt_mock)
 
-    # Heater ON to OFF: the setpoint is sent as 0 (the minimum), then the heater off; no modulation
+    # Heater ON to OFF: only the heater off is sent, with the setpoint released; no modulation
     assert sent(published) == OFF_WRITES
     fields = last_cycle(caplog)
     assert getattr(fields["inputs"], INPUT[which]) is None
-    assert fields["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
+    assert fields["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
     assert climate.setpoint == setpoint
 
-    # Heater OFF is read back: the setpoint is released and nothing more is sent
+    # Heater OFF is read back: nothing more is sent
     freezer.tick(1)
     await boiler_data(**IDLE | readback | echo(published))
     mqtt_mock.async_publish.reset_mock()
@@ -196,7 +196,7 @@ async def test_thermal_comfort_without_a_humidity_sensor_turns_the_heater_off(ha
 
     assert sent(published) == OFF_WRITES
     assert last_cycle(caplog)["inputs"].current_temperature is None
-    assert last_cycle(caplog)["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
+    assert last_cycle(caplog)["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
 
 
 @pytest.mark.parametrize(*with_data({CONF_HUMIDITY_SENSOR_ENTITY_ID: HUMIDITY}))
@@ -299,7 +299,7 @@ async def test_hvac_off_wins_over_a_missing_temperature(hass, entry, climate, bo
 # A backend without a control setpoint channel
 
 @pytest.mark.parametrize(*otgw_entry())
-async def test_opentherm_receives_the_minimum_setpoint_on_the_missing_temperature_path(hass, entry, climate, mqtt_mock, published, caplog):
+async def test_opentherm_receives_no_setpoint_on_the_missing_temperature_path(hass, entry, climate, mqtt_mock, published, caplog):
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await climate.async_control_heating_loop()
@@ -308,6 +308,6 @@ async def test_opentherm_receives_the_minimum_setpoint_on_the_missing_temperatur
     hass.states.async_set(INSIDE, "unavailable")
     await missing_cycle(hass, climate, mqtt_mock)
 
-    assert "CS=10" in sent(published)
+    assert not any(command.startswith("CS=") for command in sent(published))
     assert last_cycle(caplog)["inputs"].current_temperature is None
-    assert last_cycle(caplog)["want"] == DesiredState(control_setpoint=10, heater_state=DeviceState.OFF)
+    assert last_cycle(caplog)["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)

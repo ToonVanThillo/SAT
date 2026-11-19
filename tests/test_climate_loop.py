@@ -57,16 +57,14 @@ async def test_heater_already_enabled_is_not_started_again(entry, climate, boile
 
 
 @pytest.mark.parametrize(*ems_entry())
-async def test_cold_setpoint_sends_zero_and_stops_heater(entry, climate, boiler_data, mqtt_mock, published):
+async def test_cold_setpoint_stops_heater_without_a_setpoint(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)
 
-    # EMS quirk: the absolute minimum setpoint of 10 is sent as 0
+    # The control setpoint is released with the heater OFF, so no selflowtemp is published
     assert await run_loop(climate, mqtt_mock, published, target=15.0) == [
-        message('{"cmd": "selflowtemp", "value": 0}'),
         message('{"cmd": "burnmaxpower", "value": 0}'),
         message('{"cmd": "heatingoff", "value": "on"}'),
     ]
-    assert climate.setpoint == 10
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -114,7 +112,6 @@ async def test_pwm_on_with_cold_minimum_setpoint_stops_heater(entry, climate, bo
 
     # current behaviour, known bug: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF
     assert await run_loop(climate, mqtt_mock, published) == [
-        message('{"cmd": "selflowtemp", "value": 20}'),
         message('{"cmd": "burnmaxpower", "value": 0}'),
         message('{"cmd": "heatingoff", "value": "on"}'),
     ]
@@ -127,7 +124,6 @@ async def test_hot_water_does_not_raise_pwm_modulation(entry, climate, boiler_da
     # burnmaxpower does not limit hot water power on EMS-ESP, so hot water does not raise it to the maximum.
     # No pulse starts while the boiler produces hot water, so PWM holds in its off phase and switches heating off.
     assert await run_loop(climate, mqtt_mock, published) == [
-        message('{"cmd": "selflowtemp", "value": 0}'),
         message('{"cmd": "burnmaxpower", "value": 0}'),
         message('{"cmd": "heatingoff", "value": "on"}'),
     ]

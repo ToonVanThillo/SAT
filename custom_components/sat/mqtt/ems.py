@@ -132,11 +132,6 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         return True
 
     @property
-    def releases_control_setpoint_when_heater_off(self) -> bool:
-        # `heatingoff` keeps the boiler off, so the setpoint isn't needed.
-        return True
-
-    @property
     def relative_modulation_limits_hot_water(self) -> bool:
         # EMS-ESP limits hot water power with `dhw.maxpower`, not `burnmaxpower`.
         return False
