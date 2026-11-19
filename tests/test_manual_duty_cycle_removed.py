@@ -4,7 +4,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from homeassistant.helpers.dispatcher import async_dispatcher_send
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.diagnostics import (
     get_diagnostics_for_config_entry,
@@ -18,7 +17,6 @@ from custom_components.sat.const import (
     DOMAIN,
     MODE_MQTT_EMS,
     OPTIONS_DEFAULTS,
-    SIGNAL_PWM_UPDATED,
     BoilerStatus,
 )
 from tests.const import with_data
@@ -69,13 +67,11 @@ def test_translations_are_valid_json_without_the_removed_options(path):
 async def test_stored_manual_duty_cycle_options_are_ignored(hass, entry, climate):
     # The cold point's N=4 gives a normal period of 900 s at a mid duty (the stored 00:10:00 would have given 600 s)
     pwm = climate.pwm
-    pwm.update_cycles_per_hour(-5)
     boiler = SimpleNamespace(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water_active=False, flow_temperature=50.0, reliable_flow_temperature=50.0)
     flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     base = climate.heating_curve.base_offset
 
-    await pwm.update(boiler, flame, base + 0.5 * (50.0 - base), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
-    async_dispatcher_send(hass, SIGNAL_PWM_UPDATED.format(entry.entry_id), pwm.status)
+    await pwm.update(boiler, flame, base + 0.5 * (50.0 - base), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=-5)  # type: ignore[arg-type]
     await hass.async_block_till_done()
 
     assert pwm.cycles_per_hour == 4

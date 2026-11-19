@@ -1,5 +1,6 @@
 import logging
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Optional, Tuple, TYPE_CHECKING
@@ -106,8 +107,9 @@ class PWMState:
 class PWM:
     """Implements Pulse Width Modulation (PWM) control for managing boiler operations."""
 
-    def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, hot_water_delay: float = 0):
-        """Initialize the PWM control; no pulse starts within `hot_water_delay` seconds after a hot water burn ends."""
+    def __init__(self, cycles: CycleConfig, heating_curve: HeatingCurve, on_change: Callable[[], None], hot_water_delay: float = 0):
+        """Initialize the PWM control; `on_change` is called at the end of every update and reset; no pulse starts within `hot_water_delay` seconds after a hot water burn ends."""
+        self._on_change: Callable[[], None] = on_change
         self._hot_water_delay: float = hot_water_delay
         self._last_boiler_temperature: float | None = None
 
@@ -151,10 +153,10 @@ class PWM:
         self._hold: str | None = None
 
     def reset(self) -> None:
-        """Reset the PWM control.
+        """Reset the PWM control, then call the change callback.
 
         A running pulse ends at once, like a normal pulse end, also before the minimum pulse; a running off phase is left as it is. The duty
-        is cleared, so no pulse starts until an update computes one; a hot water hold ends and the mode is MINIMUM.
+        is cleared, so no pulse starts until an update computes one; a hot water hold ends and the mode is MINIMUM. The cycles per hour are kept.
         """
         if self._status == PWMStatus.ON:
             self._end_pulse()
@@ -171,24 +173,33 @@ class PWM:
         self._duty_cycle_branch = None
         self._hold = None
 
+        self._on_change()
+
     def reset_setpoint_adjuster(self) -> None:
         """Reset the setpoint adjuster and drop the setpoint it gave, so `setpoint` is the default minimum again; PWM itself is not reset."""
         self._setpoint_adjuster.reset()
         self._setpoint = None
 
-    def update_cycles_per_hour(self, outside_temperature: float | None) -> None:
-        """Set the current cycles per hour from the outside temperature; a missing temperature keeps the last value."""
-        if outside_temperature is None:
-            return
-
+    def _update_cycles_per_hour(self, outside_temperature: float) -> None:
+        """Set the current cycles per hour from the outside temperature."""
         cycles_per_hour = self._cycles.cycles_per_hour(outside_temperature)
         if cycles_per_hour != self._cycles_per_hour:
             _LOGGER.info("Cycles per hour changed from %d to %d at an outside temperature of %.1f°C.", self._cycles_per_hour, cycles_per_hour, outside_temperature)
             self._cycles_per_hour = cycles_per_hour
 
-    async def update(self, boiler: "BoilerState", flame: "FlameState", requested_setpoint: float, minimum_setpoint: float, allow_unrestricted: bool) -> None:
+    async def update(self, boiler: "BoilerState", flame: "FlameState", requested_setpoint: float, minimum_setpoint: float, allow_unrestricted: bool, outside_temperature: float) -> None:
         """
-        Update the PWM state based on the output of a PID controller; the duty cycle and the setpoint adjuster read the reliable flow temperature.
+        Update the PWM state based on the output of a PID controller, then call the change callback.
+
+        The cycles per hour are updated from `outside_temperature` first, before the pulse decision.
+        """
+        self._update_cycles_per_hour(outside_temperature)
+        self._update_pulse(boiler, flame, requested_setpoint, minimum_setpoint, allow_unrestricted)
+        self._on_change()
+
+    def _update_pulse(self, boiler: "BoilerState", flame: "FlameState", requested_setpoint: float, minimum_setpoint: float, allow_unrestricted: bool) -> None:
+        """
+        Update the mode, the duty and the pulse status; the duty cycle and the setpoint adjuster read the reliable flow temperature.
 
         The modulation mode is UNRESTRICTED when `allow_unrestricted` is set and `requested_setpoint` is above the effective `minimum_setpoint`,
         otherwise MINIMUM; UNRESTRICTED gives a 100% duty. A mode change while ON starts a new period, as a rollover does.

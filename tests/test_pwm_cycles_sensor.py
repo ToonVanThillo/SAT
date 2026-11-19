@@ -31,6 +31,7 @@ from custom_components.sat.const import (
 from custom_components.sat.util import create_pwm_controller
 from tests.conftest import advance
 from tests.const import IDLE, ems_entry
+from tests.test_pwm_cycles import COLD
 
 ENTITY_ID = "sensor.pwm_cycles_per_hour"
 
@@ -103,26 +104,6 @@ async def test_created_alongside_the_pwm_status_sensor(hass: HomeAssistant, entr
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
-@pytest.mark.parametrize(*ems_entry())
-async def test_sensor_reflects_n_in_use_with_hvac_off(hass: HomeAssistant, entry, climate: SatClimate, boiler_data) -> None:
-    """Outside 9.9 degrees gives N=2; the sensor follows every control cycle, including HVAC OFF."""
-    await boiler_data(**IDLE | {"heatingoff": "on"})
-    await climate.async_set_hvac_mode(HVACMode.OFF)
-    await climate.async_control_heating_loop()
-    await hass.async_block_till_done()
-
-    assert climate.pwm.cycles_per_hour == 2
-    assert hass.states.get(ENTITY_ID).state == "2"
-
-    hass.states.async_set("sensor.test_outside_sensor", "-5")
-    await climate.async_control_heating_loop()
-    await hass.async_block_till_done()
-
-    assert climate.pwm.cycles_per_hour == 4
-    assert hass.states.get(ENTITY_ID).state == "4"
-
-
-@pytest.mark.usefixtures("entity_registry_enabled_by_default", "loop_entry")
 @pytest.mark.parametrize(*ems_entry({CONF_CYCLES_PER_HOUR_COLD: 3, CONF_CYCLES_PER_HOUR_MILD: 3}))
 async def test_options_set_the_cycles(hass: HomeAssistant, entry, climate: SatClimate, boiler_data) -> None:
     await boiler_data(**IDLE | {"heatingoff": "on"})
@@ -185,24 +166,24 @@ INVALID = [
 
 
 @pytest.mark.parametrize("overrides", INVALID)
-def test_create_pwm_controller_falls_back_to_defaults(overrides, caplog):
+async def test_create_pwm_controller_falls_back_to_defaults(overrides, caplog):
     options = MappingProxyType(OPTIONS_DEFAULTS | overrides)
 
     with caplog.at_level(logging.ERROR, logger="custom_components.sat.util"):
-        pwm = create_pwm_controller(CURVE, options)  # type: ignore[arg-type]
+        pwm = create_pwm_controller(CURVE, options, lambda: None)  # type: ignore[arg-type]
 
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1
     assert "Invalid cycles per hour options" in errors[0].getMessage()
     assert pwm is not None
     for temperature, expected in [(-5, 4), (0, 4), (6, 3), (12, 2), (20, 2)]:
-        pwm.update_cycles_per_hour(temperature)
+        await first_update(pwm, duty=0.0, outside_temperature=temperature)  # a duty of 0 starts no pulse, so nothing is latched
         assert pwm.cycles_per_hour == expected
 
 
 def test_valid_options_log_no_error(caplog):
     with caplog.at_level(logging.ERROR, logger="custom_components.sat.util"):
-        create_pwm_controller(CURVE, MappingProxyType(dict(OPTIONS_DEFAULTS)))  # type: ignore[arg-type]
+        create_pwm_controller(CURVE, MappingProxyType(dict(OPTIONS_DEFAULTS)), lambda: None)  # type: ignore[arg-type]
     assert not [r for r in caplog.records if r.levelno == logging.ERROR]
 
 
@@ -262,24 +243,22 @@ def factory_options(**overrides) -> MappingProxyType:
     return MappingProxyType(OPTIONS_DEFAULTS | overrides)
 
 
-async def first_update(pwm, duty, since=None):
+async def first_update(pwm, duty, since=None, outside_temperature=COLD):
     boiler = SimpleNamespace(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water_active=False, flow_temperature=50.0, reliable_flow_temperature=50.0)
     flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=since)
-    await pwm.update(boiler, flame, 20.0 + duty * 30.0, minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler, flame, 20.0 + duty * 30.0, minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=outside_temperature)  # type: ignore[arg-type]
 
 
-async def test_create_pwm_controller_period_follows_the_cold_cycles_per_hour_before_an_outside_temperature():
-    # No outside temperature yet: N is the cold point's 4, so a mid duty gives a 3600 / 4 s period
-    pwm = create_pwm_controller(CURVE, factory_options())  # type: ignore[arg-type]
-    await first_update(pwm, duty=0.5)
+def test_create_pwm_controller_uses_the_cold_cycles_per_hour_before_an_outside_temperature():
+    # No update yet: N is the cold point's 4
+    pwm = create_pwm_controller(CURVE, factory_options(), lambda: None)  # type: ignore[arg-type]
 
-    on_time, off_time = pwm.state.duty_cycle  # type: ignore[misc]
-    assert abs(on_time + off_time - 900) <= 1
+    assert pwm.cycles_per_hour == 4
 
 
 @pytest.mark.parametrize("delay, since, held", [(300, 100, True), (300, 300, False), (0, 100, False)])
 async def test_create_pwm_controller_applies_the_hot_water_delay(delay, since, held):
-    pwm = create_pwm_controller(CURVE, factory_options(**{CONF_HOT_WATER_DELAY: delay}))  # type: ignore[arg-type]
+    pwm = create_pwm_controller(CURVE, factory_options(**{CONF_HOT_WATER_DELAY: delay}), lambda: None)  # type: ignore[arg-type]
     await first_update(pwm, since=since, duty=0.5)
 
     assert pwm.status == (PWMStatus.OFF if held else PWMStatus.ON)

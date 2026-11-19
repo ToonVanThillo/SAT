@@ -8,7 +8,6 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN, EntityCategory
 from homeassistant.core import Event, callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
@@ -17,7 +16,6 @@ from custom_components.sat.const import (
     CONF_MODE,
     CONF_RADIATORS,
     MODE_FAKE,
-    SIGNAL_PWM_UPDATED,
     BoilerStatus,
 )
 from custom_components.sat.fake import SatFakeCoordinator
@@ -403,8 +401,7 @@ async def test_pwm_duty_cycle_at_the_low_duty_and_max_branches(hass, entry, clim
     flame = SimpleNamespace(is_active=False, is_inactive=True, latest_on_time_seconds=None, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     base = climate.heating_curve.base_offset
 
-    await pwm.update(boiler, flame, base + fraction * (50.0 - base), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
-    async_dispatcher_send(hass, SIGNAL_PWM_UPDATED.format(entry.entry_id), pwm.status)
+    await pwm.update(boiler, flame, base + fraction * (50.0 - base), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=9.9)  # type: ignore[arg-type]
     await hass.async_block_till_done()
 
     assert pwm.duty_cycle_branch == branch

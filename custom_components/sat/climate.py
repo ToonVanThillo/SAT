@@ -208,7 +208,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.minimum_setpoint = create_minimum_setpoint_controller(coordinator.minimum_setpoint, config_options)
 
         # Create a PWM controller with given configuration options
-        self.pwm = create_pwm_controller(self.heating_curve, config_options)
+        self.pwm = create_pwm_controller(self.heating_curve, config_options, self.async_send_pwm_updated)
 
         # The inputs of the cycle, each held through a short gap; the humidity only counts with thermal comfort
         self._held_target = HeldInput("target")
@@ -966,20 +966,15 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         snapshot = self._coordinator.snapshot()
         annotate_event(cycle=snapshot.cycle, hvac=self.hvac_mode, inputs=inputs, boiler=snapshot.boiler, verify=self._coordinator.verify(snapshot))
 
-        # The PWM cycles per hour follow the captured outside temperature
-        self.pwm.update_cycles_per_hour(inputs.outside_temperature)
-
-        # In HVAC mode OFF the decide phase requests heater OFF and releases the control setpoint
+        # HVAC mode OFF -> heater OFF and release setpoint
         if self.hvac_mode != HVACMode.HEAT:
             await self._async_submit(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))
-            self.async_send_pwm_updated()
             return
 
         # Without the current, target or outside temperature, request heater OFF; as with no open valve, PWM is reset, so a pulse
         # doesn't resume when the temperature returns
         if inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
             self.pwm.reset()
-            self.async_send_pwm_updated()
 
             await self._async_submit(
                 DesiredState(control_setpoint=RELEASE if self._heater_off_releases_setpoint() else MINIMUM_SETPOINT, heater_state=DeviceState.OFF)
@@ -998,9 +993,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint,
                 minimum_setpoint=self.minimum_setpoint_value,
                 allow_unrestricted=self._coordinator.supports_setpoint_management and self._allow_unrestricted_modulation,
+                outside_temperature=inputs.outside_temperature,
             )
-
-        self.async_send_pwm_updated()
 
         # Control setpoint to request, unless released below once heater off is confirmed
         control_setpoint: float | Release
@@ -1118,7 +1112,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         # Reset the climate and PWM
         self.reset_control_state()
         self.pwm.reset()
-        self.async_send_pwm_updated()
 
         # Collect which climates to control
         climates = self._radiators[:]

@@ -15,7 +15,7 @@ from custom_components.sat.const import (
     PWMStatus,
 )
 from tests.const import IDLE, with_data
-from tests.test_pwm_cycles import Clock, make_pwm, setpoint_for, start_pulse, step
+from tests.test_pwm_cycles import MILD, Clock, make_pwm, setpoint_for, start_pulse, step
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
 from tests.test_pwm_hot_water import update as hot_water_update
 
@@ -58,8 +58,7 @@ async def test_the_mode_is_computed_every_update(clock):
 @pytest.mark.parametrize(("outside_temperature", "duty_cycle"), [(-5, (1800, 0)), (20, (3600, 0))], ids=["N=4", "N=2"])
 async def test_unrestricted_gives_a_100_percent_period(clock, outside_temperature, duty_cycle):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(outside_temperature)
-    await step(pwm, clock, 0.5, allow_unrestricted=True)  # the duty formula would give 50%
+    await step(pwm, clock, 0.5, allow_unrestricted=True, outside_temperature=outside_temperature)  # the duty formula would give 50%
 
     assert pwm.duty_cycle == duty_cycle
     assert pwm.duty_cycle_branch == "unrestricted"
@@ -73,8 +72,7 @@ async def test_unrestricted_gives_a_100_percent_period(clock, outside_temperatur
 
 async def test_unrestricted_rolls_over_without_an_off_phase(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: 1800 s on, 0 s off
-    await step(pwm, clock, 0.5, allow_unrestricted=True)
+    await step(pwm, clock, 0.5, allow_unrestricted=True)  # N=4: 1800 s on, 0 s off
 
     # Four period ends, at 1800, 3600, 5400 and 7200 s
     for _ in range(24):
@@ -138,21 +136,19 @@ async def test_a_hot_water_hold_holds_an_unrestricted_start_before_the_first_pul
 
 async def test_a_change_to_unrestricted_while_on_starts_a_new_period(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: a duty of 0.5 gives 450 s on; unrestricted gives 1800 s on
-    await start_pulse(pwm, clock, 0.5)
+    await start_pulse(pwm, clock, 0.5)  # N=4: a duty of 0.5 gives 450 s on; unrestricted gives 1800 s on
     await step(pwm, clock, 0.5, 400, allow_unrestricted=True)  # 400 s: the new period starts
     assert pwm.status == PWMStatus.ON
     assert pwm.duty_cycle == (1800, 0)
 
     # A rollover latches N again: N=2 from now on shows when the period ends
-    pwm.update_cycles_per_hour(20)
-    await step(pwm, clock, 0.5, 1400, allow_unrestricted=True)  # 1800 s: the end of a period from the pulse start
+    await step(pwm, clock, 0.5, 1400, allow_unrestricted=True, outside_temperature=MILD)  # 1800 s: the end of a period from the pulse start
     assert pwm.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 4
-    await step(pwm, clock, 0.5, 399, allow_unrestricted=True)  # 2199 s: 1799 s into the new period
+    await step(pwm, clock, 0.5, 399, allow_unrestricted=True, outside_temperature=MILD)  # 2199 s: 1799 s into the new period
     assert pwm.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 4
-    await step(pwm, clock, 0.5, 1, allow_unrestricted=True)  # 2200 s: the new period ends and rolls over
+    await step(pwm, clock, 0.5, 1, allow_unrestricted=True, outside_temperature=MILD)  # 2200 s: the new period ends and rolls over
     assert pwm.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 2
 
@@ -162,8 +158,7 @@ async def test_a_change_to_unrestricted_while_on_starts_a_new_period(clock):
 
 async def test_a_change_to_minimum_late_in_an_unrestricted_period_runs_the_new_on_time_from_the_change(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: unrestricted gives 1800 s on; a duty of 0.5 gives 450 s on
-    await step(pwm, clock, 0.5, allow_unrestricted=True)
+    await step(pwm, clock, 0.5, allow_unrestricted=True)  # N=4: unrestricted gives 1800 s on; a duty of 0.5 gives 450 s on
     await step(pwm, clock, 0.5, 1000, allow_unrestricted=True)
     assert pwm.status == PWMStatus.ON
 
@@ -193,21 +188,18 @@ async def test_after_a_mode_change_the_minimum_pulse_still_runs_from_the_pulse_s
 
 async def test_a_mode_change_while_on_latches_the_current_n(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: a duty of 0.5 gives 450 s on
-    await start_pulse(pwm, clock, 0.5)
+    await start_pulse(pwm, clock, 0.5)  # N=4: a duty of 0.5 gives 450 s on
 
-    pwm.update_cycles_per_hour(20)  # N=2 from now, but N=4 is latched for this period
-    await step(pwm, clock, 0.5, 10)
+    await step(pwm, clock, 0.5, 10, outside_temperature=MILD)  # N=2 from now, but N=4 is latched for this period
     assert pwm.cycles_per_hour == 4
 
-    await step(pwm, clock, 0.5, 10, allow_unrestricted=True)
+    await step(pwm, clock, 0.5, 10, allow_unrestricted=True, outside_temperature=MILD)
     assert pwm.cycles_per_hour == 2
     assert pwm.duty_cycle == (3600, 0)
 
 
 async def test_a_mode_change_while_on_restarts_the_boiler_temperature_smoothing(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4
     await step(pwm, clock, 1.0, allow_unrestricted=True)  # requested setpoint 50 at a flow of 50
     await step(pwm, clock, 1.0, 1000, allow_unrestricted=True)  # long past the smoothing of the pulse start
     await step(pwm, clock, 1.0, 0)  # the mode changes to MINIMUM: a new period starts at 1000 s

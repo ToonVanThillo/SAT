@@ -395,18 +395,20 @@ The number of PWM cycles per hour, N, follows the outside temperature captured
 at the start of each cycle.
 - N is linear between two configured points (default 4 at 0 °C, 2 at 12 °C),
   clamped to their range and rounded to the nearest integer, halves up.
-  Without an outside temperature PWM keeps the last N; before the first
-  reading it uses the N of the colder point. If the configured points are
-  invalid, the defaults apply and an error is logged.
+  Before the first PWM update it uses the N of the colder point. If the
+  configured points are invalid, the defaults apply and an error is logged.
 - N sets the cycle timing: the normal period 3600/N, the duty ranges in which
   the on-time is held at 180 s or the off-time at 180 s, and the duty below
   which no pulse starts.
 - N is latched when a pulse starts and holds for that pulse and the off phase
   after it, until the next pulse starts or the off phase exceeds twice the
   latched normal period.
-- N is updated every cycle, also in HVAC mode OFF and when a temperature is
-  missing. A diagnostic "PWM Cycles Per Hour" sensor (measurement, unit
-  cycles/h, no attributes) shows the N in effect.
+- N is updated only while PWM runs (in HEAT, with all temperatures present
+  and a valve open), at the start of every PWM update, before the pulse
+  decision. Otherwise (HVAC mode OFF, no open valve or a missing temperature)
+  N is not updated. A diagnostic "PWM Cycles Per Hour" sensor (measurement,
+  unit cycles/h, no attributes) shows the N in effect at the last PWM update
+  or reset.
 
 ## Burns
 A burn lasts from flame on to flame off. It is hot water if a hot-water signal

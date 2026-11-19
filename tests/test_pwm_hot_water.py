@@ -19,7 +19,16 @@ from custom_components.sat.const import (
 from custom_components.sat.pwm import PWM
 from tests.conftest import TIMELINE, last_cycle
 from tests.const import IDLE, with_data
-from tests.test_pwm_cycles import CURVE, FLOW, Clock, boiler, config, setpoint_for
+from tests.test_pwm_cycles import (
+    COLD,
+    CURVE,
+    FLOW,
+    MILD,
+    Clock,
+    boiler,
+    config,
+    setpoint_for,
+)
 
 
 @pytest.fixture
@@ -31,10 +40,7 @@ def clock() -> Iterator[Clock]:
 
 def make_pwm(hot_water_delay: float = 0) -> PWM:
     CURVE.value = 30.0
-    pwm = PWM(config(), CURVE, hot_water_delay=hot_water_delay)  # type: ignore[arg-type]
-    # 2 cycles per hour: a duty of 0.5 gives 900 s on, 900 s off
-    pwm.update_cycles_per_hour(20)
-    return pwm
+    return PWM(config(), CURVE, lambda: None, hot_water_delay=hot_water_delay)  # type: ignore[arg-type]
 
 
 def flame(active: bool = False, latest: float | None = None, since: float | None = None) -> SimpleNamespace:
@@ -44,10 +50,11 @@ def flame(active: bool = False, latest: float | None = None, since: float | None
 
 async def update(
         pwm: PWM, clock: Clock, seconds: float = 0, duty: float = 0.5, hot_water: bool = False, since: float | None = None, allow_unrestricted: bool = False,
-        flow: float | None = FLOW,
+        flow: float | None = FLOW, outside_temperature: float = MILD,
 ) -> None:
+    """Update PWM; the default outside temperature gives 2 cycles per hour: a duty of 0.5 gives 900 s on, 900 s off."""
     clock.tick(seconds)
-    await pwm.update(boiler(hot_water=hot_water, flow=flow), flame(since=since), setpoint_for(duty), minimum_setpoint=10.0, allow_unrestricted=allow_unrestricted)  # type: ignore[arg-type]
+    await pwm.update(boiler(hot_water=hot_water, flow=flow), flame(since=since), setpoint_for(duty), minimum_setpoint=10.0, allow_unrestricted=allow_unrestricted, outside_temperature=outside_temperature)  # type: ignore[arg-type]
 
 
 # The hold
@@ -133,22 +140,20 @@ async def test_a_held_start_latches_no_cycles_per_hour(clock):
     pwm = make_pwm()
     await update(pwm, clock, hot_water=True)
 
-    pwm.update_cycles_per_hour(-5)
+    await update(pwm, clock, hot_water=True, outside_temperature=COLD)
 
     assert pwm.cycles_per_hour == 4
 
 
 async def test_a_held_start_after_the_latch_ran_out_does_not_revive_it(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
-    await update(pwm, clock)  # N=4: (450, 450)
+    await update(pwm, clock, outside_temperature=COLD)  # N=4: (450, 450)
     assert pwm.cycles_per_hour == 4
-    await update(pwm, clock, 450)
+    await update(pwm, clock, 450, outside_temperature=COLD)
     assert pwm.status == PWMStatus.OFF
 
     # N changes in the off phase; the latch runs out 2 * 3600 / 4 s after the pulse end, and the due start is held
-    pwm.update_cycles_per_hour(20)
-    await update(pwm, clock, 1801, hot_water=True)
+    await update(pwm, clock, 1801, hot_water=True, outside_temperature=MILD)
 
     assert pwm.status == PWMStatus.OFF
     assert pwm.hold == "hot water"
@@ -326,10 +331,10 @@ async def test_the_setpoint_adjuster_does_not_adjust_during_a_hot_water_burn(clo
     pwm = make_pwm()
     burning = flame(active=True, latest=30)
 
-    await pwm.update(boiler(flame_active=True, hot_water=True, flow=60.0), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(flame_active=True, hot_water=True, flow=60.0), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
     assert pwm.setpoint == MINIMUM_SETPOINT
 
-    await pwm.update(boiler(flame_active=True, flow=60.0), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(flame_active=True, flow=60.0), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
     assert pwm.setpoint == 57.0
 
 
@@ -338,10 +343,10 @@ async def test_the_setpoint_adjuster_does_not_force_with_the_hot_water_flag_on(c
     short_burns = SimpleNamespace(**vars(flame()) | {"average_on_time_seconds": 30})
 
     # Flame off with a short average on time: the force step, paused while producing hot water
-    await pwm.update(boiler(hot_water=True, flow=60.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(hot_water=True, flow=60.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
     assert pwm.setpoint == MINIMUM_SETPOINT
 
-    await pwm.update(boiler(flow=60.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(flow=60.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
     assert pwm.setpoint == 70.0
 
 

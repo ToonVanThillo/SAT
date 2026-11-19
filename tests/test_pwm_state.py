@@ -8,6 +8,7 @@ import pytest
 
 from custom_components.sat.const import BoilerStatus, ModulationMode, PWMStatus
 from tests.test_pwm_cycles import (
+    COLD,
     Clock,
     boiler,
     make_pwm,
@@ -88,11 +89,11 @@ async def test_a_higher_request_while_cooling_down_keeps_the_pulse_on(clock):
     # A burning flame lets the setpoint adjuster follow the boiler; a cooling down boiler with a higher requested setpoint no longer disables
     burning = SimpleNamespace(is_active=True, is_inactive=False, latest_on_time_seconds=30, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     clock.tick(5)
-    await pwm.update(boiler(flame_active=True), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(flame_active=True), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=COLD)  # type: ignore[arg-type]
     assert pwm.status == PWMStatus.ON
 
     clock.tick(5)
-    await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), burning, setpoint_for(1.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), burning, setpoint_for(1.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=COLD)  # type: ignore[arg-type]
 
     assert pwm.status == PWMStatus.ON
 

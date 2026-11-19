@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from typing import TYPE_CHECKING
 
@@ -81,8 +81,8 @@ def _create_cycle_config(options: Mapping[str, Any]) -> CycleConfig:
     )
 
 
-def create_pwm_controller(heating_curve: HeatingCurve, config_options: Mapping[str, Any]) -> PWM:
-    """Create and return a PWM controller instance with the given configuration options."""
+def create_pwm_controller(heating_curve: HeatingCurve, config_options: Mapping[str, Any], on_change: Callable[[], None]) -> PWM:
+    """Create and return a PWM controller instance with the given configuration options; PWM calls `on_change` after every update and reset."""
     # Extract the configuration options
     hot_water_delay = float(config_options.get(CONF_HOT_WATER_DELAY, OPTIONS_DEFAULTS[CONF_HOT_WATER_DELAY]))
 
@@ -95,7 +95,7 @@ def create_pwm_controller(heating_curve: HeatingCurve, config_options: Mapping[s
         cycles = _create_cycle_config(OPTIONS_DEFAULTS)
 
     # Return a new PWM controller instance with the given configuration options
-    return PWM(heating_curve=heating_curve, cycles=cycles, hot_water_delay=hot_water_delay)
+    return PWM(heating_curve=heating_curve, cycles=cycles, on_change=on_change, hot_water_delay=hot_water_delay)
 
 
 def get_climate_entities(hass: "HomeAssistant", entity_ids: list[str]) -> list["SatClimate"]:

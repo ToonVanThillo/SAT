@@ -38,6 +38,9 @@ from tests.test_pid_guard import (
 pytestmark = pytest.mark.usefixtures("loop_entry")
 
 STATUS = "sensor.pwm_status"
+MODE = "sensor.pwm_mode"
+DUTY_CYCLE = "sensor.pwm_duty_cycle_test"
+CYCLES_PER_HOUR = "sensor.pwm_cycles_per_hour"
 V2 = {CONF_DYNAMIC_MINIMUM_SETPOINT: True, CONF_DYNAMIC_MINIMUM_SETPOINT_VERSION: 2}
 
 
@@ -98,7 +101,7 @@ async def test_a_target_change_in_the_off_phase_keeps_the_off_phase(hass, entry,
             break
         freezer.tick(60)
         snapshot = climate._coordinator.snapshot()
-        await climate.pwm.update(snapshot.boiler, snapshot.flame, 10.0, minimum_setpoint=30.0, allow_unrestricted=False)
+        await climate.pwm.update(snapshot.boiler, snapshot.flame, 10.0, minimum_setpoint=30.0, allow_unrestricted=False, outside_temperature=9.9)
     assert climate.pwm.status == PWMStatus.OFF
     off_state = climate.pwm.state
 
@@ -215,11 +218,15 @@ async def test_an_hvac_mode_change_resets_pwm_and_the_setpoint_adjuster(hass, en
     await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
 
-    # HVAC mode OFF runs a control loop at once, which still signals the running pulse, before the reset ends it
+    # The control loop that HVAC mode OFF runs at once leaves PWM alone; only the reset signals
     assert climate.pwm.status == PWMStatus.OFF
     assert climate.pwm.setpoint == MINIMUM_SETPOINT
-    assert received == [PWMStatus.ON, PWMStatus.OFF]
+    assert received == [PWMStatus.OFF]
     assert hass.states.get(STATUS).state == PWMStatus.OFF.value
+    assert hass.states.get(MODE).state == ModulationMode.MINIMUM.value
+    assert hass.states.get(DUTY_CYCLE).state in ("unknown", "unavailable")
+    # The reset keeps N; the 9.9 °C outside temperature of the fixtures gives N=2
+    assert hass.states.get(CYCLES_PER_HOUR).state == "2"
 
     # The loop the change scheduled runs in HVAC mode OFF and leaves PWM alone
     await advance(hass, freezer, 11)

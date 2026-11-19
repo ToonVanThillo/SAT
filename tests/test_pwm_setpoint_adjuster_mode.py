@@ -11,7 +11,7 @@ import pytest
 
 from custom_components.sat.const import MINIMUM_SETPOINT, ModulationMode, PWMStatus
 from custom_components.sat.pwm import PWM
-from tests.test_pwm_cycles import Clock, boiler, setpoint_for
+from tests.test_pwm_cycles import MILD, Clock, boiler, setpoint_for
 from tests.test_pwm_hot_water import flame
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
 
@@ -33,7 +33,7 @@ def cold(average: float | None) -> SimpleNamespace:
 
 async def update(pwm: PWM, flame_state: SimpleNamespace, unrestricted: bool, minimum_setpoint: float = 10.0, **boiler_args: Any) -> None:
     """One update at a requested setpoint of 35 (setpoint_for(0.5)), with the boiler's flame following `flame_state`."""
-    await pwm.update(boiler(flame_active=flame_state.is_active, **boiler_args), flame_state, setpoint_for(0.5), minimum_setpoint=minimum_setpoint, allow_unrestricted=unrestricted)  # type: ignore[arg-type]
+    await pwm.update(boiler(flame_active=flame_state.is_active, **boiler_args), flame_state, setpoint_for(0.5), minimum_setpoint=minimum_setpoint, allow_unrestricted=unrestricted, outside_temperature=MILD)  # type: ignore[arg-type]
 
 
 async def test_switching_to_minimum_mid_burn_adjusts_in_that_update(clock):
@@ -153,7 +153,7 @@ async def test_the_force_branch_runs_before_the_first_pulse_in_minimum_mode(cloc
     pwm = make_hot_water_pwm()
 
     # A duty of 0 starts no pulse: PWM stays OFF, and the force branch runs in the first update
-    await pwm.update(boiler(flow=60.0), cold(None), setpoint_for(0.0), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(flow=60.0), cold(None), setpoint_for(0.0), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
 
     assert (pwm.status, pwm.mode) == (PWMStatus.OFF, ModulationMode.MINIMUM)
     assert pwm.setpoint == 70.0

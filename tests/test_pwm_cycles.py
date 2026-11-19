@@ -12,6 +12,9 @@ DEFAULTS = {"cold_temperature": 0, "cold_cycles_per_hour": 4, "mild_temperature"
 
 BASE = 20.0
 FLOW = 50.0
+# Outside temperatures that give N=4 and N=2 on the default mapping
+COLD = -5.0
+MILD = 20.0
 
 
 def config(**overrides) -> CycleConfig:
@@ -125,7 +128,7 @@ CURVE = SimpleNamespace(value=30.0, base_offset=BASE)
 
 def make_pwm(**overrides) -> PWM:
     CURVE.value = 30.0
-    return PWM(config(**overrides), CURVE)  # type: ignore[arg-type]
+    return PWM(config(**overrides), CURVE, lambda: None)  # type: ignore[arg-type]
 
 
 def boiler(status=BoilerStatus.AT_SETPOINT, flame_active=False, hot_water=False, flow=FLOW):
@@ -141,58 +144,48 @@ def setpoint_for(duty: float) -> float:
     return BASE + duty * (FLOW - BASE)
 
 
-async def step(pwm: PWM, clock: Clock, duty: float, seconds: float = 0, minimum_setpoint: float = 10.0, allow_unrestricted: bool = False, **boiler_args):
+async def step(
+        pwm: PWM, clock: Clock, duty: float, seconds: float = 0, minimum_setpoint: float = 10.0, allow_unrestricted: bool = False, outside_temperature: float = COLD,
+        **boiler_args,
+):
     flame_active = boiler_args.get("flame_active", False)
     flame_state = flame(flame_active)
     boiler_state = boiler(**boiler_args)
     clock.tick(seconds)
-    await pwm.update(boiler_state, flame_state, setpoint_for(duty), minimum_setpoint=minimum_setpoint, allow_unrestricted=allow_unrestricted)  # type: ignore[arg-type]
+    await pwm.update(boiler_state, flame_state, setpoint_for(duty), minimum_setpoint=minimum_setpoint, allow_unrestricted=allow_unrestricted, outside_temperature=outside_temperature)  # type: ignore[arg-type]
 
 
-async def start_pulse(pwm: PWM, clock: Clock, duty: float = 0.5) -> None:
-    await step(pwm, clock, duty)
+async def start_pulse(pwm: PWM, clock: Clock, duty: float = 0.5, outside_temperature: float = COLD) -> None:
+    await step(pwm, clock, duty, outside_temperature=outside_temperature)
     assert pwm.state.status == PWMStatus.ON
 
 
-# None handling and start-up N
+# Start-up N
 
 def test_startup_n_is_cold(clock):
     assert make_pwm().cycles_per_hour == 4
     assert make_pwm(cold_cycles_per_hour=3).cycles_per_hour == 3
 
 
-def test_none_before_any_reading_keeps_cold(clock):
-    pwm = make_pwm()
-    pwm.update_cycles_per_hour(None)
-    assert pwm.cycles_per_hour == 4
-
-
-def test_none_keeps_last_n(clock):
-    pwm = make_pwm()
-    pwm.update_cycles_per_hour(20)
-    assert pwm.cycles_per_hour == 2
-    pwm.update_cycles_per_hour(None)
-    assert pwm.cycles_per_hour == 2
-
-
-def test_without_a_latch_the_current_n_applies(clock):
+async def test_without_a_latch_the_current_n_applies(clock):
+    # A duty of 0 starts no pulse, so nothing is latched
     pwm = make_pwm()
     for temperature, expected in [(20, 2), (6, 3), (-5, 4)]:
-        pwm.update_cycles_per_hour(temperature)
+        await step(pwm, clock, 0.0, outside_temperature=temperature)
         assert pwm.cycles_per_hour == expected
 
 
-def test_n_change_is_logged_at_info(clock, caplog):
+async def test_n_change_is_logged_at_info(clock, caplog):
     pwm = make_pwm()
     with caplog.at_level(logging.INFO, logger="custom_components.sat.pwm"):
-        pwm.update_cycles_per_hour(20)
+        await step(pwm, clock, 0.0, outside_temperature=MILD)
     assert [r for r in caplog.records if r.levelno == logging.INFO and "ycles per hour" in r.getMessage()]
 
 
-def test_unchanged_n_is_not_logged(clock, caplog):
+async def test_unchanged_n_is_not_logged(clock, caplog):
     pwm = make_pwm()
     with caplog.at_level(logging.INFO, logger="custom_components.sat.pwm"):
-        pwm.update_cycles_per_hour(-5)
+        await step(pwm, clock, 0.0, outside_temperature=COLD)
     assert not [r for r in caplog.records if r.levelno == logging.INFO]
 
 
@@ -200,34 +193,29 @@ def test_unchanged_n_is_not_logged(clock, caplog):
 
 async def test_pulse_start_latches_the_current_n(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(20)
-    await start_pulse(pwm, clock)
+    await start_pulse(pwm, clock, outside_temperature=MILD)
     assert pwm.cycles_per_hour == 2
 
 
 async def test_n_change_mid_on_is_latched(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 0.5)
     on_off = pwm.state.duty_cycle
     assert on_off == (450, 450)
 
-    pwm.update_cycles_per_hour(20)
+    await step(pwm, clock, 0.5, 100, outside_temperature=MILD)
     assert pwm.cycles_per_hour == 4
-    await step(pwm, clock, 0.5, 100)
     assert pwm.state.duty_cycle == on_off
     assert pwm.state.status == PWMStatus.ON
 
 
 async def test_n_change_mid_off_is_latched(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 0.5)
     await step(pwm, clock, 0.5, 450)
     assert pwm.state.status == PWMStatus.OFF
 
-    pwm.update_cycles_per_hour(20)
-    await step(pwm, clock, 0.5, 100)
+    await step(pwm, clock, 0.5, 100, outside_temperature=MILD)
     assert pwm.cycles_per_hour == 4
     assert pwm.state.duty_cycle == (450, 450)
     assert pwm.state.status == PWMStatus.OFF
@@ -235,12 +223,12 @@ async def test_n_change_mid_off_is_latched(clock):
 
 async def test_off_phase_beyond_twice_the_cycle_releases_latch(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 0.5)
     await step(pwm, clock, 0.5, 900)
     assert pwm.state.status == PWMStatus.OFF
 
-    pwm.update_cycles_per_hour(20)
+    # A duty of 0 sets the current N without starting a pulse
+    await step(pwm, clock, 0.0, outside_temperature=MILD)
     clock.tick(1800)
     assert pwm.cycles_per_hour == 4
     clock.tick(1)
@@ -249,22 +237,19 @@ async def test_off_phase_beyond_twice_the_cycle_releases_latch(clock):
 
 async def test_next_pulse_start_latches_the_new_n(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 0.5)
     await step(pwm, clock, 0.5, 900)
-    pwm.update_cycles_per_hour(20)
-    await step(pwm, clock, 0.5, 900)
+    await step(pwm, clock, 0.5, 900, outside_temperature=MILD)
     assert pwm.state.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 2
-    pwm.update_cycles_per_hour(-5)
+    await step(pwm, clock, 0.5, outside_temperature=COLD)
     assert pwm.cycles_per_hour == 2
 
 
 async def test_a_reset_keeps_the_latch_through_the_off_phase_like_a_pulse_end(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock)
-    pwm.update_cycles_per_hour(20)
+    await step(pwm, clock, 0.5, outside_temperature=MILD)
     assert pwm.cycles_per_hour == 4
 
     # The reset ends the pulse like a normal pulse end: N stays latched up to the cycle's maximum length (2 * 3600 / 4) into the off phase
@@ -305,7 +290,6 @@ async def test_normal_end_applies_after_180s(clock):
 
 async def test_a_missing_flow_temperature_keeps_the_last_duty_and_its_pulse_timing(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 0.5)  # N=4: (450, 450)
 
     # The request drops, but without a flow temperature the duty formula skips: the pulse runs on the last duty
@@ -327,7 +311,6 @@ async def test_a_missing_flow_temperature_keeps_the_last_duty_and_its_pulse_timi
 
 async def test_a_missing_flow_at_a_period_start_is_seeded_by_the_next_flow_temperature(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 1.0)  # N=4, at a flow of 50: the max branch, (1800, 0)
 
     # The 100% period rolls over while the flow is missing: the new period has no boiler temperature yet
@@ -341,7 +324,6 @@ async def test_a_missing_flow_at_a_period_start_is_seeded_by_the_next_flow_tempe
 
 async def test_a_reset_ends_a_pulse_at_once_and_the_next_start_waits_for_the_minimum_off_phase(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 1.0)  # N=4: (1800, 0)
     clock.tick(10)
 
@@ -363,9 +345,9 @@ async def test_a_higher_request_while_cooling_down_keeps_the_pulse(clock):
     # Active flame sets an adjusted setpoint (flow - 3); a higher request while cooling down no longer disables PWM
     active = flame(True)
     active.latest_on_time_seconds = 60
-    await pwm.update(boiler(), active, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(), active, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=COLD)  # type: ignore[arg-type]
     clock.tick(5)
-    await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), active, 60.0, minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+    await pwm.update(boiler(status=BoilerStatus.COOLING_DOWN, flame_active=True), active, 60.0, minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=COLD)  # type: ignore[arg-type]
     assert pwm.status == PWMStatus.ON
 
 
@@ -375,8 +357,7 @@ async def test_a_higher_request_while_cooling_down_keeps_the_pulse(clock):
 @pytest.mark.parametrize("back_after", [60, 200])
 async def test_a_reset_mid_pulse_then_demand_returns_after_the_off_phase_from_the_reset(clock, duty, off_time, back_after):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4
-    await start_pulse(pwm, clock, duty)
+    await start_pulse(pwm, clock, duty)  # N=4
     clock.tick(5)
     pwm.reset()
     assert pwm.status == PWMStatus.OFF
@@ -398,7 +379,6 @@ async def test_a_reset_mid_pulse_then_demand_returns_after_the_off_phase_from_th
 
 async def test_a_reset_during_the_off_phase_of_a_long_duty_does_not_shorten_it(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 0.5)  # (450, 450)
     await step(pwm, clock, 0.5, 450)  # the pulse ends
     assert pwm.status == PWMStatus.OFF
@@ -428,9 +408,8 @@ async def test_branches(clock, n, temperature):
     }
     for duty, (on, off) in cases.items():
         pwm = make_pwm()
-        pwm.update_cycles_per_hour(temperature)
+        await step(pwm, clock, duty, outside_temperature=temperature)
         assert pwm.cycles_per_hour == n
-        await step(pwm, clock, duty)
         got = pwm.state.duty_cycle
         assert got is not None
         # Branch results are truncated to whole seconds; allow for float noise at the boundaries
@@ -441,13 +420,11 @@ async def test_branches(clock, n, temperature):
 async def test_no_heat_floor_in_pwm(clock, n, floor):
     temperature = {2: 20, 3: 6, 4: -5}[n]
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(temperature)
-    await step(pwm, clock, floor * 0.9)
+    await step(pwm, clock, floor * 0.9, outside_temperature=temperature)
     assert pwm.state.duty_cycle == (0, int(7200 / n))
 
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(temperature)
-    await step(pwm, clock, floor * 1.1)
+    await step(pwm, clock, floor * 1.1, outside_temperature=temperature)
     assert pwm.state.duty_cycle[0] == 180  # type: ignore[index]
 
 
@@ -457,9 +434,8 @@ async def test_no_heat_floor_in_pwm(clock, n, floor):
 @pytest.mark.parametrize("hot_water", [False, True])
 async def test_below_minimum_duty_never_starts_a_pulse(clock, flame_active, hot_water):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(20)  # N=2, minimum duty 0.05
     for _ in range(3):
-        await step(pwm, clock, 0.04, 4000, flame_active=flame_active, hot_water=hot_water)
+        await step(pwm, clock, 0.04, 4000, outside_temperature=MILD, flame_active=flame_active, hot_water=hot_water)  # N=2, minimum duty 0.05
         assert pwm.status == PWMStatus.OFF
         assert pwm.state.duty_cycle == (0, 3600)
         assert pwm.duty_cycle_branch == "low-duty"
@@ -468,8 +444,7 @@ async def test_below_minimum_duty_never_starts_a_pulse(clock, flame_active, hot_
 @pytest.mark.parametrize("flame_active", [False, True])
 async def test_just_above_minimum_duty_starts_a_pulse(clock, flame_active):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(20)
-    await step(pwm, clock, 0.06, flame_active=flame_active)
+    await step(pwm, clock, 0.06, outside_temperature=MILD, flame_active=flame_active)
     assert pwm.status == PWMStatus.ON
     assert pwm.duty_cycle_branch == "low"
 
@@ -487,7 +462,7 @@ async def test_tap_closed_flame_on_zero_duty_starts_no_pulse(clock):
 @pytest.mark.parametrize("flame_active", [False, True])
 async def test_running_pulse_held_to_180s_when_duty_falls_below_minimum(clock, flame_active):
     pwm = make_pwm()
-    await start_pulse(pwm, clock, 0.5)
+    await start_pulse(pwm, clock, 0.5)  # N=4: (450, 450) per cycle
 
     await step(pwm, clock, 0.0, 10, flame_active=flame_active)
     assert pwm.status == PWMStatus.ON
@@ -505,14 +480,13 @@ async def test_running_pulse_held_to_180s_when_duty_falls_below_minimum(clock, f
 
 # No limit on the pulses per hour
 
-async def run_pulses(pwm: PWM, clock: Clock, duty: float, half_cycle: float, steps: int) -> None:
+async def run_pulses(pwm: PWM, clock: Clock, duty: float, half_cycle: float, steps: int, outside_temperature: float = COLD) -> None:
     for _ in range(steps):
-        await step(pwm, clock, duty, half_cycle)
+        await step(pwm, clock, duty, half_cycle, outside_temperature=outside_temperature)
 
 
 async def test_a_fifth_pulse_within_the_hour_starts_at_n4(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: (450, 450) per cycle
     await start_pulse(pwm, clock, 0.5)
     await run_pulses(pwm, clock, 0.5, 450, 7)  # t=3150, four pulses started at 0, 900, 1800, 2700
     assert pwm.status == PWMStatus.OFF
@@ -523,12 +497,11 @@ async def test_a_fifth_pulse_within_the_hour_starts_at_n4(clock):
 
 async def test_a_third_pulse_within_the_hour_starts_at_n2(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(20)  # N=2: (900, 900) per cycle
-    await start_pulse(pwm, clock, 0.5)
-    await run_pulses(pwm, clock, 0.5, 900, 3)  # OFF, second pulse at t=1800, OFF at t=2700
+    await start_pulse(pwm, clock, 0.5, outside_temperature=MILD)  # N=2: (900, 900) per cycle
+    await run_pulses(pwm, clock, 0.5, 900, 3, outside_temperature=MILD)  # OFF, second pulse at t=1800, OFF at t=2700
     assert pwm.status == PWMStatus.OFF
 
-    await step(pwm, clock, 0.5, 900)  # t=3600
+    await step(pwm, clock, 0.5, 900, outside_temperature=MILD)  # t=3600
     assert pwm.status == PWMStatus.ON
 
 
@@ -542,8 +515,7 @@ async def test_a_third_pulse_within_the_hour_starts_at_n2(clock):
 async def test_a_mid_duty_cycle_fills_the_period_exactly(clock, temperature, duty, on_time):
     # The raw times are fractional: the on time is truncated and the off time is the rest of the period
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(temperature)
-    await step(pwm, clock, duty)
+    await step(pwm, clock, duty, outside_temperature=temperature)
     assert pwm.duty_cycle_branch == "mid"
     on, off = pwm.state.duty_cycle  # type: ignore[misc]
     assert on == on_time
@@ -554,7 +526,6 @@ async def test_a_mid_duty_cycle_fills_the_period_exactly(clock, temperature, dut
 
 async def max_pulse_ended_late_in_its_period(pwm: PWM, clock: Clock) -> None:
     """At N=4: a pulse at 100% (1800 s on, 0 s off) from 0 s, ended at 1500 s by a dip to a duty of 0.85 (1020 s on)."""
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock, 1.0)
     await step(pwm, clock, 1.0, 1490)
     assert pwm.status == PWMStatus.ON
@@ -580,8 +551,7 @@ async def test_a_pulse_end_at_a_duty_jitter_near_100_percent_is_followed_by_the_
 @pytest.mark.parametrize(("duty", "branch"), [(0.15, "low"), (0.5, "mid"), (0.8, "mid"), (0.85, "high")])
 async def test_the_off_time_of_a_low_mid_or_high_duty_is_unchanged(clock, duty, branch):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: (180, 1020), (450, 450), (720, 180), (1020, 180)
-    await start_pulse(pwm, clock, duty)
+    await start_pulse(pwm, clock, duty)  # N=4: (180, 1020), (450, 450), (720, 180), (1020, 180)
     assert pwm.duty_cycle_branch == branch
     on, off = pwm.state.duty_cycle  # type: ignore[misc]
     assert off >= 180
@@ -596,8 +566,7 @@ async def test_the_off_time_of_a_low_mid_or_high_duty_is_unchanged(clock, duty, 
 
 async def test_a_rollover_after_an_earlier_pulse_end_has_no_off_phase(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4
-    await start_pulse(pwm, clock, 0.5)
+    await start_pulse(pwm, clock, 0.5)  # N=4
     await step(pwm, clock, 0.5, 450)
     assert pwm.status == PWMStatus.OFF
     await step(pwm, clock, 1.0, 450)  # 900 s: a 100% pulse, 1800 s on, 0 s off
@@ -643,7 +612,6 @@ async def test_a_reset_in_an_off_phase_keeps_the_original_off_phase(clock):
 
 async def test_before_the_first_pulse_a_start_is_due_at_once(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4
     # Below the minimum duty no pulse starts; there is no off phase, as no pulse has ended
     await step(pwm, clock, 0.05)
     assert pwm.status == PWMStatus.OFF
@@ -687,8 +655,7 @@ def test_thresholds_hard_coded(n, expected):
 ])
 async def test_branches_hard_coded(clock, temperature, duty, flame_active, expected):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(temperature)
-    await step(pwm, clock, duty, flame_active=flame_active)
+    await step(pwm, clock, duty, outside_temperature=temperature, flame_active=flame_active)
     got = pwm.state.duty_cycle
     assert got is not None
     assert abs(got[0] - expected[0]) <= 1 and abs(got[1] - expected[1]) <= 1, got
@@ -698,18 +665,15 @@ async def test_branches_hard_coded(clock, temperature, duty, flame_active, expec
 
 async def test_a_pulse_through_missing_values_keeps_its_latch_and_the_next_pulse_latches_the_current_n(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)
     await start_pulse(pwm, clock)  # N=4: (450, 450)
-    pwm.update_cycles_per_hour(20)
-    assert pwm.cycles_per_hour == 4
 
-    await step(pwm, clock, 0.5, 5, flow=None)
+    await step(pwm, clock, 0.5, 5, outside_temperature=MILD, flow=None)
     assert pwm.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 4
-    await step(pwm, clock, 0.5, 445, flow=None)  # 450 s
+    await step(pwm, clock, 0.5, 445, outside_temperature=MILD, flow=None)  # 450 s
     assert pwm.status == PWMStatus.OFF
 
     # The off phase still uses the latched N; the next pulse latches the current one
-    await step(pwm, clock, 0.5, 450)
+    await step(pwm, clock, 0.5, 450, outside_temperature=MILD)
     assert pwm.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 2

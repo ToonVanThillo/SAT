@@ -22,7 +22,7 @@ from tests.conftest import (
 )
 from tests.const import STORE_KEY, with_data
 from tests.test_burns import DRAW, HEATING, OFF, OPTIONS, burn, started
-from tests.test_pwm_cycles import CURVE, Clock, boiler, config, setpoint_for
+from tests.test_pwm_cycles import CURVE, MILD, Clock, boiler, config, setpoint_for
 from tests.test_pwm_hot_water import flame
 
 TAIL = DRAW | {"tapwateractive": "off"}
@@ -220,14 +220,13 @@ async def test_a_hold_with_a_duty_below_the_minimum_never_starts_a_pulse():
     clock = Clock()
     with patch("custom_components.sat.pwm.monotonic", clock):
         CURVE.value = 30.0
-        pwm = PWM(config(), CURVE, hot_water_delay=300)  # type: ignore[arg-type]
-        pwm.update_cycles_per_hour(20)
+        pwm = PWM(config(), CURVE, lambda: None, hot_water_delay=300)  # type: ignore[arg-type]
         for duty in (0.01, 0.01):
-            await pwm.update(boiler(hot_water=True), flame(), setpoint_for(duty), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+            await pwm.update(boiler(hot_water=True), flame(), setpoint_for(duty), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
             clock.tick(1000)
 
         # Hold ends, the duty is still too low: nothing starts
-        await pwm.update(boiler(), flame(since=400), setpoint_for(0.01), minimum_setpoint=10.0, allow_unrestricted=False)  # type: ignore[arg-type]
+        await pwm.update(boiler(), flame(since=400), setpoint_for(0.01), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
 
     assert pwm.status != PWMStatus.ON
 

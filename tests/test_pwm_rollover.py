@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from custom_components.sat.const import PWMStatus
-from tests.test_pwm_cycles import Clock, make_pwm, start_pulse, step
+from tests.test_pwm_cycles import COLD, MILD, Clock, make_pwm, start_pulse, step
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
 from tests.test_pwm_hot_water import update as hot_water_update
 
@@ -21,8 +21,7 @@ def clock() -> Iterator[Clock]:
 
 async def test_a_100_percent_burn_stays_on_across_period_ends(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: a duty of 1.0 gives 1800 s on, 0 s off
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4: a duty of 1.0 gives 1800 s on, 0 s off
     assert pwm.state.duty_cycle == (1800, 0)
 
     # Four period ends, at 1800, 3600, 5400 and 7200 s
@@ -37,8 +36,7 @@ async def test_a_100_percent_burn_stays_on_across_period_ends(clock):
 
 async def test_after_a_rollover_the_off_phase_runs_from_the_pulse_end(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4
     await step(pwm, clock, 1.0, 1800)  # rollover at 1800 s
     assert pwm.status == PWMStatus.ON
 
@@ -77,8 +75,7 @@ async def test_a_hot_water_hold_does_not_stop_a_rollover(clock, hot_water, since
 
 async def test_a_duty_drop_in_a_later_period_ends_the_pulse_at_the_new_on_time_from_the_period_start(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: a duty of 1.0 gives 1800 s on, 0 s off; 0.5 gives 450 s on
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4: a duty of 1.0 gives 1800 s on, 0 s off; 0.5 gives 450 s on
     await step(pwm, clock, 1.0, 1800)  # rollover: the second period starts at 1800 s
     assert pwm.status == PWMStatus.ON
 
@@ -94,8 +91,7 @@ async def test_a_duty_drop_in_a_later_period_ends_the_pulse_at_the_new_on_time_f
 
 async def test_a_duty_drop_shortly_after_the_pulse_start_holds_the_minimum_pulse(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: below a duty of 0.1 there is no on-time
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4: below a duty of 0.1 there is no on-time
 
     await step(pwm, clock, 0.05, 10)
     assert pwm.state.duty_cycle == (0, 1800)
@@ -112,8 +108,7 @@ async def test_a_duty_drop_shortly_after_the_pulse_start_holds_the_minimum_pulse
 
 async def test_no_rollover_when_the_duty_is_below_100_percent_at_the_period_end(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4
     for _ in range(5):
         await step(pwm, clock, 1.0, 300)  # 1500 s
     assert pwm.status == PWMStatus.ON
@@ -133,24 +128,21 @@ async def test_no_rollover_when_the_duty_is_below_100_percent_at_the_period_end(
 
 async def test_a_rollover_latches_the_current_n(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: a duty of 1.0 gives 1800 s on
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4: a duty of 1.0 gives 1800 s on
 
-    pwm.update_cycles_per_hour(20)  # N=2 from now, but N=4 is latched for this period
-    await step(pwm, clock, 1.0, 1799)
+    await step(pwm, clock, 1.0, 1799, outside_temperature=MILD)  # N=2 from now, but N=4 is latched for this period
     assert pwm.cycles_per_hour == 4
     assert pwm.state.duty_cycle == (1800, 0)
 
-    await step(pwm, clock, 1.0, 1)  # rollover at 1800 s
+    await step(pwm, clock, 1.0, 1, outside_temperature=MILD)  # rollover at 1800 s
     assert pwm.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 2
 
-    await step(pwm, clock, 1.0, 10)
+    await step(pwm, clock, 1.0, 10, outside_temperature=MILD)
     assert pwm.state.duty_cycle == (3600, 0)
 
     # The new N is latched for the new period
-    pwm.update_cycles_per_hour(-5)
-    await step(pwm, clock, 1.0, 1800)  # 3610 s: no period end with N=2
+    await step(pwm, clock, 1.0, 1800, outside_temperature=COLD)  # 3610 s: no period end with N=2
     assert pwm.cycles_per_hour == 2
     assert pwm.state.duty_cycle == (3600, 0)
     assert pwm.status == PWMStatus.ON
@@ -160,7 +152,6 @@ async def test_a_rollover_latches_the_current_n(clock):
 
 async def test_a_rollover_resamples_the_boiler_temperature(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4
     await start_pulse(pwm, clock, 1.0)  # requested setpoint 50 at a flow of 50
     await step(pwm, clock, 1.0, 1800)  # rollover at 1800 s
     assert pwm.status == PWMStatus.ON
@@ -177,8 +168,7 @@ async def test_a_rollover_resamples_the_boiler_temperature(clock):
 
 async def test_the_boiler_temperature_is_not_smoothed_after_180_s_into_a_rolled_over_period(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4
     await step(pwm, clock, 1.0, 1800)  # rollover at 1800 s
 
     # Past 180 s into the new period the duty formula sees the flow itself, from the next update: (50 - 20) / (80 - 20)
@@ -189,8 +179,7 @@ async def test_the_boiler_temperature_is_not_smoothed_after_180_s_into_a_rolled_
 
 async def test_a_rollover_does_not_restart_the_minimum_pulse(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: below a duty of 0.1 there is no on-time
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4: below a duty of 0.1 there is no on-time
     await step(pwm, clock, 1.0, 1800)  # rollover at 1800 s
     assert pwm.status == PWMStatus.ON
 
@@ -201,8 +190,7 @@ async def test_a_rollover_does_not_restart_the_minimum_pulse(clock):
 
 async def test_the_rollover_boundary_is_the_on_time_since_the_period_start(clock):
     pwm = make_pwm()
-    pwm.update_cycles_per_hour(-5)  # N=4: 1800 s on, 0 s off
-    await start_pulse(pwm, clock, 1.0)
+    await start_pulse(pwm, clock, 1.0)  # N=4: 1800 s on, 0 s off
     await step(pwm, clock, 1.0, 1799)
     await step(pwm, clock, 1.0, 1)  # period end, first rollover at 1800 s
     await step(pwm, clock, 1.0, 1799)  # 3599 s: 1799 s into the second period
