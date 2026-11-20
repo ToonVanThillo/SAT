@@ -145,22 +145,22 @@ async def test_with_dynamic_minimum_v2_a_target_change_drops_the_learned_minimum
     await run_one_loop(hass, climate, caplog, len(caplog.records))
     assert climate.minimum_setpoint_value == 45.0
 
-    # The room cools: a MINIMUM pulse starts at a calculated setpoint below the learned minimum, which is the control setpoint
+    # The room cools: a MINIMUM pulse starts at a smoothed setpoint below the learned minimum, which is the control setpoint
     for inside in ("20.6", "20.5", "20.4"):
         freezer.tick(600)
         hass.states.async_set(INSIDE, inside)
         await hass.async_block_till_done()
         await run_one_loop(hass, climate, caplog, len(caplog.records))
-    # The filtered calculated setpoint catches up with the request
+    # The smoothed setpoint catches up with the calculated setpoint
     for _ in range(3):
         freezer.tick(60)
         await run_one_loop(hass, climate, caplog, len(caplog.records))
     assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
-    assert 30.0 < climate.calculated_setpoint < 45.0
+    assert 30.0 < climate.smoothed_setpoint < 45.0
     assert climate.setpoint == 45.0
     period_start = climate.pwm._period_start
 
-    # The next loop, which the change may run at once: the minimum is the configured one again and the calculated setpoint is above it,
+    # The next loop, which the change may run at once: the minimum is the configured one again and the smoothed setpoint is above it,
     # so the pulse turns UNRESTRICTED in a new period at 100% duty
     freezer.tick(60)
     mark = len(caplog.records)
@@ -169,7 +169,7 @@ async def test_with_dynamic_minimum_v2_a_target_change_drops_the_learned_minimum
     assert climate.minimum_setpoint_value == 30.0
     assert (climate.pwm.status, climate.pwm.mode, climate.pwm.duty_cycle) == (PWMStatus.ON, ModulationMode.UNRESTRICTED, (3600, 0))
     assert climate.pwm._period_start > period_start
-    assert climate.setpoint == climate.calculated_setpoint > 30.0
+    assert climate.setpoint == climate.smoothed_setpoint > 30.0
 
     # The adjuster doesn't learn while UNRESTRICTED, although the flame is still off
     for _ in range(3):

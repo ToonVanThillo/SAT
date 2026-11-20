@@ -99,7 +99,7 @@ class OvershootProtection:
 
     def _calculate_exponential_moving_average(self, previous_average: float, current_value: float) -> tuple[float, float]:
         """Calculate the exponential moving average and error."""
-        average_value = ema(previous_average, current_value, self._alpha)
+        average_value = ema(current_value, previous_average, self._alpha)
         error_value = abs(current_value - previous_average)
         return average_value, error_value
 

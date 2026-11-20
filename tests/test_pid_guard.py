@@ -1,5 +1,5 @@
 """The event-driven PID guard: while the inside or target temperature is missing, sensor, area, target and HVAC-mode events leave the PID,
-the heating curve, the requested setpoint and the PWM alone, so the state before a sensor gap is what the PID continues from. An HVAC mode
+the heating curve, the calculated setpoint and the PWM alone, so the state before a sensor gap is what the PID continues from. An HVAC mode
 change still resets PWM, outside the guard."""
 import logging
 from typing import Any
@@ -56,13 +56,13 @@ def resets(caplog) -> int:
 
 
 def kept(climate) -> dict[str, Any]:
-    """What the guard must keep through a gap: the PID's terms, error and timestamp, the requested setpoint and the PWM state."""
+    """What the guard must keep through a gap: the PID's terms, error and timestamp, the calculated setpoint and the PWM state."""
     pid = climate.pid
 
     return {
         "proportional": pid.proportional, "integral": pid.integral, "derivative": pid.derivative, "raw_derivative": pid.raw_derivative,
         "last_error": pid.last_error, "previous_error": pid.previous_error, "last_updated": pid.last_updated,
-        "requested_setpoint": climate.requested_setpoint, "pwm": climate.pwm.state,
+        "calculated_setpoint": climate.calculated_setpoint, "pwm": climate.pwm.state,
     }
 
 
@@ -173,7 +173,7 @@ async def test_a_target_change_during_an_inside_gap_skips_the_pid_reset_but_not_
     await climate.async_set_temperature(temperature=22.0)
     await hass.async_block_till_done()
 
-    pid_before = {key: value for key, value in before.items() if key not in ("pwm", "requested_setpoint")}
+    pid_before = {key: value for key, value in before.items() if key not in ("pwm", "calculated_setpoint")}
     assert {key: value for key, value in kept(climate).items() if key in pid_before} == pid_before
     assert skips(caplog) == skipped + 1
     # reset_control_state is outside the guard: it resets the setpoint adjuster, not PWM
@@ -191,7 +191,7 @@ async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not
     await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
 
-    pid_before = {key: value for key, value in before.items() if key not in ("pwm", "requested_setpoint")}
+    pid_before = {key: value for key, value in before.items() if key not in ("pwm", "calculated_setpoint")}
     assert {key: value for key, value in kept(climate).items() if key in pid_before} == pid_before
     assert skips(caplog) == skipped + 1
     # The control state reset and the PWM reset are outside the guard

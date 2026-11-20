@@ -1,9 +1,9 @@
 """Always-on PWM: in HEAT with a valve open the climate always runs PWM and decides from its status and mode.
 
 PWM OFF requests heater OFF and releases the control setpoint; ON
-with MINIMUM requests the effective minimum setpoint and the minimum max relative modulation; ON with UNRESTRICTED requests the calculated
+with MINIMUM requests the effective minimum setpoint and the minimum max relative modulation; ON with UNRESTRICTED requests the smoothed
 setpoint and the configured maximum. Unrestricted modulation needs setpoint management and the option allowing it. With the default inputs the
-calculated setpoint is 35.
+smoothed setpoint is 35.
 """
 import json
 import logging
@@ -114,14 +114,14 @@ class TestDecideAtTheEmsBoundary:
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
         assert last_cycle(caplog)["setpoint_rule"] == "pwm on minimum"
 
-    # (b) ON with UNRESTRICTED: the calculated setpoint and the configured maximum
+    # (b) ON with UNRESTRICTED: the smoothed setpoint and the configured maximum
 
     @pytest.mark.parametrize(*entries(("unrestricted", {CONF_MINIMUM_SETPOINT: 30}, {CONF_MAXIMUM_RELATIVE_MODULATION: 80})))
-    async def test_on_unrestricted_requests_the_calculated_setpoint_and_the_maximum(self, entry, climate, boiler_data, mqtt_mock, published, caplog):
+    async def test_on_unrestricted_requests_the_smoothed_setpoint_and_the_maximum(self, entry, climate, boiler_data, mqtt_mock, published, caplog):
         await boiler_data(**IDLE | {"heatingoff": "on"})
 
         assert await run_loop(climate, mqtt_mock, published) == [selflowtemp(35), burnmaxpower(80), HEATER_ON]
-        assert climate.setpoint == climate.calculated_setpoint == 35.0
+        assert climate.setpoint == climate.smoothed_setpoint == 35.0
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
         assert last_cycle(caplog)["setpoint_rule"] == "pwm on unrestricted"
 
@@ -176,33 +176,33 @@ class TestDecideAtTheEmsBoundary:
         assert climate.pwm.mode == ModulationMode.MINIMUM
         assert heater_writes(await burn(hass, climate, boiler_data, mqtt_mock, published, freezer)) == []
 
-        # A colder outside raises the calculated setpoint from 35 to 37.2, above the minimum of 36
+        # A colder outside raises the smoothed setpoint from 35 to 37.2, above the minimum of 36
         hass.states.async_set(OUTSIDE, "-5.0")
         calls = await burn(hass, climate, boiler_data, mqtt_mock, published, freezer)
 
-        assert climate.calculated_setpoint is not None and climate.calculated_setpoint > 36
+        assert climate.smoothed_setpoint is not None and climate.smoothed_setpoint > 36
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
-        assert calls == [selflowtemp(climate.calculated_setpoint), burnmaxpower(100)]
+        assert calls == [selflowtemp(climate.smoothed_setpoint), burnmaxpower(100)]
 
-        # Afterwards the burn runs on: only the setpoint follows the low-pass filtered calculated setpoint, when its sent value changes
+        # Afterwards the burn runs on: only the setpoint follows the smoothed setpoint, when its sent value changes
         for _ in range(4):
-            sent = round(climate.calculated_setpoint)
+            sent = round(climate.smoothed_setpoint)
             calls = await burn(hass, climate, boiler_data, mqtt_mock, published, freezer)
             assert climate.pwm.mode == ModulationMode.UNRESTRICTED
-            assert calls == ([] if round(climate.calculated_setpoint) == sent else [selflowtemp(climate.calculated_setpoint)])
+            assert calls == ([] if round(climate.smoothed_setpoint) == sent else [selflowtemp(climate.smoothed_setpoint)])
 
     # (e) UNRESTRICTED -> MINIMUM during a burn: the heater stays on
 
     @pytest.mark.parametrize(*entries(("minimum-44", {CONF_MINIMUM_SETPOINT: 44}, {})))
     async def test_unrestricted_to_minimum_during_a_burn_changes_in_place(self, hass, entry, climate, boiler_data, mqtt_mock, published, freezer):
-        # At -5 °C outside the first calculated setpoint is about 46, above the minimum of 44
+        # At -5 °C outside the first smoothed setpoint is about 46, above the minimum of 44
         hass.states.async_set(OUTSIDE, "-5.0")
         await boiler_data(**IDLE | {"heatingoff": "on"})
         await run_loop(climate, mqtt_mock, published)
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
-        assert climate.calculated_setpoint is not None and climate.calculated_setpoint > 44
+        assert climate.smoothed_setpoint is not None and climate.smoothed_setpoint > 44
 
-        # A milder outside lowers the low-pass filtered calculated setpoint below the minimum within a few cycles, the pulse running on
+        # A milder outside lowers the smoothed setpoint below the minimum within a few cycles, the pulse running on
         hass.states.async_set(OUTSIDE, "9.9")
         for _ in range(5):
             calls = await burn(hass, climate, boiler_data, mqtt_mock, published, freezer)
@@ -211,7 +211,7 @@ class TestDecideAtTheEmsBoundary:
                 break
             assert heater_writes(calls) == []
 
-        assert climate.calculated_setpoint < 44
+        assert climate.smoothed_setpoint < 44
         assert climate.pwm.mode == ModulationMode.MINIMUM
         assert calls == [selflowtemp(44), burnmaxpower(0)]
 
@@ -224,7 +224,7 @@ class TestDecideAtTheEmsBoundary:
 
         assert climate.pwm.mode == ModulationMode.MINIMUM
 
-        # The outside temperature drives each flip: the low-pass filtered calculated setpoint crosses the minimum of 36 within some cycles
+        # The outside temperature drives each flip: the smoothed setpoint crosses the minimum of 36 within some cycles
         for outside, mode in [("-5.0", ModulationMode.UNRESTRICTED), ("9.9", ModulationMode.MINIMUM)] * 3:
             hass.states.async_set(OUTSIDE, outside)
             for _ in range(20):

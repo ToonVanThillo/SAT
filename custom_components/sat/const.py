@@ -245,6 +245,6 @@ class PWMStatus(str, Enum):
 
 
 class ModulationMode(str, Enum):
-    """How the boiler modulates during a pulse: at the minimum setpoint and modulation, or unrestricted at the calculated setpoint"""
+    """How the boiler modulates during a pulse: at the minimum setpoint and modulation, or unrestricted at the smoothed setpoint"""
     MINIMUM = "minimum"
     UNRESTRICTED = "unrestricted"

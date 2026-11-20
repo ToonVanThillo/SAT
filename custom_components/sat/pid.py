@@ -187,10 +187,10 @@ class PID:
         derivative = (error.value - self._last_error) / time_diff
 
         # First low-pass filter
-        filtered_derivative = ema(self._raw_derivative, derivative, alpha1)
+        filtered_derivative = ema(derivative, self._raw_derivative, alpha1)
 
         # Second low-pass filter
-        self._raw_derivative = ema(self._raw_derivative, filtered_derivative, alpha2)
+        self._raw_derivative = ema(filtered_derivative, self._raw_derivative, alpha2)
 
         # Update derivative timestamp
         self._last_derivative_time = now

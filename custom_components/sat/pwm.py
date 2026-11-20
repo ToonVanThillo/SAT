@@ -242,11 +242,11 @@ class PWM:
             # Update boiler temperature if the period has just started
             if self._status == PWMStatus.ON:
                 if period_elapsed <= BOILER_TEMPERATURE_SMOOTHING_TIME:
-                    self._last_boiler_temperature = ema(self._last_boiler_temperature, flow_temperature)
+                    self._last_boiler_temperature = ema(flow_temperature, self._last_boiler_temperature)
                 else:
                     self._last_boiler_temperature = flow_temperature
 
-            # Control the adjusted setpoint, only in MINIMUM mode: in an UNRESTRICTED burn the flow follows the calculated setpoint, which the
+            # Control the adjusted setpoint, only in MINIMUM mode: in an UNRESTRICTED burn the flow follows the smoothed setpoint, which the
             # adjuster would raise the minimum towards. Hot water says nothing about heating, so it doesn't adjust
             minimum_mode = mode == ModulationMode.MINIMUM
             if minimum_mode and flame.is_active and not boiler.hot_water_active and boiler.status not in (BoilerStatus.PUMP_STARTING, BoilerStatus.OVERSHOOT_HANDLING) and flame.latest_on_time_seconds is not None and flame.latest_on_time_seconds > 6:

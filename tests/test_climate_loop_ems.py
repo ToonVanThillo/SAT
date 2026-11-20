@@ -218,7 +218,7 @@ async def test_overshoot_handling_leaves_pwm_alone(hass, entry, climate, boiler_
     caplog.set_level(logging.DEBUG, logger=TIMELINE)
     await boiler_data(**OVERSHOOT)
 
-    # The calculated setpoint (35) is above the minimum (20): an unrestricted pulse at the calculated setpoint, as without overshoot
+    # The smoothed setpoint (35) is above the minimum (20): an unrestricted pulse at the smoothed setpoint, as without overshoot
     assert (await run_loop(climate, mqtt_mock, published))[0] == message('{"cmd": "selflowtemp", "value": 35}')
     assert last_cycle(caplog)["boiler"].status == BoilerStatus.OVERSHOOT_HANDLING
     assert climate.pwm.status == PWMStatus.ON

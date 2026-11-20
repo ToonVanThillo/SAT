@@ -677,3 +677,16 @@ async def test_a_pulse_through_missing_values_keeps_its_latch_and_the_next_pulse
     await step(pwm, clock, 0.5, 450, outside_temperature=MILD)
     assert pwm.status == PWMStatus.ON
     assert pwm.cycles_per_hour == 2
+
+
+async def test_pwm_smooths_the_flow_temperature_towards_the_new_reading(clock):
+    pwm = make_pwm()
+    await start_pulse(pwm, clock)
+    # A new flow reading early in the pulse moves the remembered boiler temperature a fifth of the way
+    await step(pwm, clock, 0.5, seconds=10, flow=70.0)
+    remembered = FLOW + 0.2 * (70.0 - FLOW)
+
+    # The next duty is computed against the remembered boiler temperature
+    await step(pwm, clock, 0.5, seconds=10, flow=70.0)
+    requested = BASE + 0.5 * (FLOW - BASE)
+    assert pwm.state.last_duty_cycle_percentage == pytest.approx(100 * (requested - BASE) / (remembered - BASE), abs=0.01)

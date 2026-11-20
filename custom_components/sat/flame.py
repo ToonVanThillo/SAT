@@ -226,7 +226,7 @@ class Flame:
                 self._latest_on_time_seconds = now - burn.started
 
                 if self._has_completed_first_cycle and not burn.hot_water:
-                    self._average_on_time_seconds = ema(self._average_on_time_seconds, self._latest_on_time_seconds, self._smoothing_alpha)
+                    self._average_on_time_seconds = ema(self._latest_on_time_seconds, self._average_on_time_seconds, self._smoothing_alpha)
 
         self._recompute_health(now)
 

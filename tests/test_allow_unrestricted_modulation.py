@@ -32,6 +32,6 @@ async def test_the_option_decides_the_mode_above_the_minimum(climate: SatClimate
     await climate.async_control_heating_loop()
 
     assert climate.pwm.status == PWMStatus.ON
-    assert (calculated := climate.calculated_setpoint) is not None
+    assert (calculated := climate.smoothed_setpoint) is not None
     assert calculated > climate.minimum_setpoint_value
     assert climate.pwm.mode == expected

@@ -44,7 +44,7 @@ def ems_entry(options: dict | None = None) -> tuple[str, list[tuple]]:
     """Return the parametrization of an entry using the EMS MQTT coordinator, with the given entry options.
 
     The minimum setpoint of 20 °C is at or below the cold threshold, so the setup logs an error for it, and with the default inputs the
-    calculated setpoint is above it, so PWM runs UNRESTRICTED unless the options disallow unrestricted modulation.
+    smoothed setpoint is above it, so PWM runs UNRESTRICTED unless the options disallow unrestricted modulation.
     """
     return (
         "domains, data, options, config",

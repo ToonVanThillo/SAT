@@ -111,8 +111,8 @@ async def test_the_pwm_mode_sensor_stays_minimum_when_unrestricted_modulation_is
     await climate.async_control_heating_loop()
     await hass.async_block_till_done()
 
-    # Allowed, the calculated setpoint above the minimum would give UNRESTRICTED
-    assert climate.calculated_setpoint > climate.minimum_setpoint_value
+    # Allowed, the smoothed setpoint above the minimum would give UNRESTRICTED
+    assert climate.smoothed_setpoint > climate.minimum_setpoint_value
     assert value(hass, "sensor.pwm_mode") == "minimum"
 
 
@@ -227,7 +227,7 @@ async def test_values_follow_sources_after_a_cycle(hass, entry, climate, coordin
     assert float(value(hass, "sensor.minimum_setpoint_test")) == pytest.approx(climate.minimum_setpoint_value, abs=0.1)
     assert float(value(hass, HEATING_CURVE)) == pytest.approx(climate.heating_curve.value, abs=0.1)
     assert float(value(hass, ERROR_VALUE)) == pytest.approx(climate.max_error.value, abs=0.1)
-    assert float(value(hass, "sensor.calculated_setpoint_test")) == pytest.approx(climate.calculated_setpoint, abs=0.1)
+    assert float(value(hass, "sensor.calculated_setpoint_test")) == pytest.approx(climate.smoothed_setpoint, abs=0.1)
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
@@ -248,7 +248,7 @@ async def test_values_track_changes_without_standard_attribute_change(hass, entr
 
     assert dict(hass.states.get(climate.entity_id).attributes) == attributes
     assert (value(hass, HEATING_CURVE), value(hass, "sensor.calculated_setpoint_test")) != first[:2]
-    assert float(value(hass, "sensor.calculated_setpoint_test")) == pytest.approx(climate.calculated_setpoint, abs=0.1)
+    assert float(value(hass, "sensor.calculated_setpoint_test")) == pytest.approx(climate.smoothed_setpoint, abs=0.1)
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")

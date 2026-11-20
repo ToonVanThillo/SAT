@@ -226,23 +226,25 @@ calibration) are not logged.
   cycles per hour, duty, duty cycle and its rule, hold, held start, minimum
   pulse hold, rollover), `want` (the desired state as requested) and `sent`
   (the writes as encoded, each with its kind and the channel's read-back).
-- HEAT with all temperatures: `setpoint` (the calculated setpoint, after the
-  low-pass filter), `setpoint_rule`, `requested` (the setpoint the filter
-  received this cycle), `curve`, `p`, `i`, `d`. The curve and PID terms are
-  as held when the record is built; they need not add up to `requested`.
+- HEAT with all temperatures: `smoothed` (the smoothed setpoint: the
+  calculated setpoint after the low-pass filter), `setpoint_rule`,
+  `calculated` (the calculated setpoint: heating curve plus PID output),
+  `curve`, `p`, `i`, `d`. `calculated`, `curve` and the PID terms are as held
+  when the record is built; `calculated` need not be the value the filter
+  received.
 - A run that fails or is cancelled adds `error` (the exception's type and
   message); without `error` the run completed.
 
 ## Calculated setpoint sensor
-A "Calculated Setpoint" sensor shows the flow temperature the control loop
-aims for: the heating curve plus the PID output, after the low-pass filter. It
+A "Calculated Setpoint" sensor shows the smoothed setpoint: the heating curve
+plus the PID output, after the low-pass filter. It
 is a regular sensor (temperature device class, measurement state class), not a
 diagnostic, so its history can be compared with the boiler's flow temperature.
 - It shows the value before PWM and before the minimum and maximum setpoint
   limits. With PWM active it still shows the calculated value, not the
   setpoint PWM applies.
-- It shows the value the latest cycle calculated, and is unknown when the
-  climate has no calculated setpoint (also after a PID reset). It has no
+- It shows the value the latest cycle smoothed, and is unknown when the
+  climate has no smoothed setpoint (also after a PID reset). It has no
   attributes.
 - It keeps its last value while a temperature is missing.
 
@@ -288,14 +290,14 @@ In HEAT, every control cycle runs PWM; continuous heating is a PWM period at
 **Modulation mode**
 - UNRESTRICTED when the option "Allow unrestricted modulation" (advanced
   options, on by default, for every backend with setpoint management) is on
-  and the calculated setpoint is above the effective minimum setpoint;
+  and the smoothed setpoint is above the effective minimum setpoint;
   otherwise MINIMUM. Backends without setpoint management are always MINIMUM.
   With the option off, the boiler burns at the minimum setpoint and minimum
   modulation even at 100% duty.
-- The mode compares the calculated setpoint with the effective minimum as of
+- The mode compares the smoothed setpoint with the effective minimum as of
   the start of the cycle; with dynamic minimum v2 that is the setpoint
   adjuster's value from the previous cycle. The mode has no hysteresis: the
-  calculated setpoint is already low-pass filtered.
+  smoothed setpoint is already low-pass filtered.
 - A reset sets the mode to MINIMUM.
 
 **Duty**
@@ -342,7 +344,7 @@ In HEAT, with all temperatures present and a valve open:
 |------------------|----------------------------|-------------------------|--------|
 | OFF              | release                    | by mode¹                | OFF    |
 | ON, MINIMUM      | effective minimum setpoint | minimum¹                | ON     |
-| ON, UNRESTRICTED | calculated setpoint        | configured maximum      | ON     |
+| ON, UNRESTRICTED | smoothed setpoint          | configured maximum      | ON     |
 
 ¹ On backends whose max relative modulation limits hot water (not EMS-ESP),
 hot water and a cycle that requests the heater OFF give the configured
@@ -374,7 +376,7 @@ maximum; this includes every OFF cycle.
 - Dynamic minimum setpoint v2: a control state reset (a thermostat target
   change or an HVAC mode change, not an area target change) resets the
   setpoint adjuster and the setpoint it gave. It adjusts only in MINIMUM mode:
-  during an UNRESTRICTED burn the flow follows the calculated setpoint, and
+  during an UNRESTRICTED burn the flow follows the smoothed setpoint, and
   the adjuster would raise the minimum towards it.
 - Sensors: PWM Status shows ON or OFF; PWM Mode (an enum of minimum and
   unrestricted) shows the mode; PWM Duty Cycle shows 100% for 100% periods.

@@ -217,7 +217,7 @@ class SatCalculatedSetpointSensor(SatClimateValueSensor):
 
     @property
     def native_value(self) -> float | None:
-        return self._climate.calculated_setpoint
+        return self._climate.smoothed_setpoint
 
     @property
     def unique_id(self) -> str:

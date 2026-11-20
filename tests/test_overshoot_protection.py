@@ -1,5 +1,6 @@
 """Tests for the boiler temperature wait of `OvershootProtection`."""
 import asyncio
+import itertools
 import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -159,3 +160,21 @@ async def test_calculate_resets_once_and_reraises(coordinator: MagicMock, error:
 
     assert raised.value is error
     coordinator.async_submit.assert_awaited_once_with(RESET)
+
+
+async def test_the_stable_temperature_is_judged_against_the_average_of_earlier_temperatures(coordinator: MagicMock) -> None:
+    # Boiler temperatures per pass: 40 (the start), 50, 42.05, then 99 for good. The default alpha 0.5 is symmetric in its two arguments, so an
+    # uneven one is set (the one private access, which cannot be avoided). The average follows 40, 42: 42.05 is within the deadband of 42 and
+    # ends it. With swapped arguments the average is 48, so 42.05 is not stable and the result is 99.
+    coordinator.flame_active = True
+    coordinator.boiler_temperature = 40.0
+    readings = itertools.chain([50.0, 42.05], itertools.repeat(99.0))
+
+    async def submit(_state: DesiredState) -> None:
+        coordinator.boiler_temperature = next(readings)
+
+    coordinator.async_submit.side_effect = submit
+    overshoot = OvershootProtection(coordinator, "radiators")
+    overshoot._alpha = 0.2
+
+    assert await overshoot.calculate() == 42.05

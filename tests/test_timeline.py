@@ -245,7 +245,7 @@ async def test_the_debounced_run_executes_the_loop_body(heating, hass, climate, 
 # The fields per branch
 
 COMMON = ["cycle", "hvac", "inputs", "boiler", "verify", "pwm", "want", "sent"]
-HEAT_ONLY = ["setpoint", "setpoint_rule", "requested", "curve", "p", "i", "d"]
+HEAT_ONLY = ["smoothed", "setpoint_rule", "calculated", "curve", "p", "i", "d"]
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -294,7 +294,7 @@ async def test_heat_adds_the_setpoint_fields(heating, climate, caplog):
     assert (fields["boiler"].flame_active, fields["boiler"].hot_water_active) == (False, False)
     assert fields["pwm"].status == PWMStatus.ON
     assert (fields["pwm"].duty_cycle, fields["pwm"].duty_cycle_branch, fields["pwm"].last_duty_cycle_percentage) == ((3600, 0), "unrestricted", 100.0)
-    assert fields["setpoint"] == fields["requested"] == 35.0
+    assert fields["smoothed"] == fields["calculated"] == 35.0
     assert fields["want"].control_setpoint == 35.0
 
 

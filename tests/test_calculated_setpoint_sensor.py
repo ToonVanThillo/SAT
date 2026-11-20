@@ -1,4 +1,4 @@
-"""Calculated Setpoint sensor — state tracks the climate's _calculated_setpoint."""
+"""Calculated Setpoint sensor — state tracks the climate's smoothed_setpoint."""
 
 import pytest
 from homeassistant.components.climate import HVACMode
@@ -25,7 +25,7 @@ async def test_sensor_metadata(hass: HomeAssistant, entry) -> None:
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_sensor_unknown_before_first_cycle(hass: HomeAssistant, entry) -> None:
-    """Before any control loop has run the calculated setpoint is None → unknown."""
+    """Before any control loop has run the smoothed setpoint is None → unknown."""
     state = hass.states.get(ENTITY_ID)
     assert state is not None
     assert state.state == STATE_UNKNOWN
@@ -33,13 +33,13 @@ async def test_sensor_unknown_before_first_cycle(hass: HomeAssistant, entry) -> 
 
 @pytest.mark.parametrize(*ems_entry())
 async def test_sensor_updates_after_control_loop(hass: HomeAssistant, entry, climate: SatClimate, boiler_data) -> None:
-    """After a successful control loop the sensor matches climate.calculated_setpoint."""
+    """After a successful control loop the sensor matches climate.smoothed_setpoint."""
     await boiler_data(**IDLE | {"heatingoff": "on"})
     await climate.async_set_target_temperature(21.0)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await climate.async_control_heating_loop()
 
-    calculated = climate.calculated_setpoint
+    calculated = climate.smoothed_setpoint
     assert calculated is not None
 
     state = hass.states.get(ENTITY_ID)
@@ -56,10 +56,10 @@ async def test_sensor_reflects_low_pass_filter_on_second_cycle(hass: HomeAssista
     await climate.async_set_hvac_mode(HVACMode.HEAT)
 
     await climate.async_control_heating_loop()
-    first = climate.calculated_setpoint
+    first = climate.smoothed_setpoint
 
     await climate.async_control_heating_loop()
-    second = climate.calculated_setpoint
+    second = climate.smoothed_setpoint
 
     assert second is not None
     # The low-pass filter smooths toward the raw value, so the second value may differ

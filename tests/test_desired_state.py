@@ -2,7 +2,7 @@
 import asyncio
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
-from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from homeassistant.components.climate import HVACMode
@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.sat.channels import RELEASE, DesiredState
+from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
     COLD_SETPOINT,
     CONF_MQTT_TOPIC,
@@ -369,7 +370,7 @@ async def test_cycle_heater_decision_table(hass, entry, climate, coordinator, bo
     hass.states.async_set(RADIATOR, "heat", {"hvac_action": hvac_action, "hvac_modes": ["heat", "off"]})
     submit = spy(coordinator)
 
-    with patch.object(climate, "_calculate_control_setpoint", return_value=setpoint):
+    with patch.object(SatClimate, "calculated_setpoint", new_callable=PropertyMock, return_value=setpoint):
         await run_loop(climate, mqtt_mock, published)
 
     assert submit.await_args_list[-1].args[0].heater_state == expected

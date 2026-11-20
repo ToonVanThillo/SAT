@@ -51,7 +51,7 @@ async def test_switching_to_unrestricted_stops_the_adjuster_and_keeps_the_value(
     await update(pwm, burning(), False, flow=60.0)
     assert pwm.setpoint == 57.0
 
-    # The flow follows the calculated setpoint now: neither the adjust nor the force branch moves the value
+    # The flow follows the smoothed setpoint now: neither the adjust nor the force branch moves the value
     for flow in (80.0, 90.0):
         clock.tick(30)
         await update(pwm, burning(), True, flow=flow)

@@ -363,7 +363,7 @@ async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across
         freezer.tick(60)
         await boiler_data(**cold_boiler)
         await climate.async_control_heating_loop()
-        assert climate.calculated_setpoint > climate.minimum_setpoint_value
+        assert climate.smoothed_setpoint > climate.minimum_setpoint_value
         assert climate.pwm.mode == ModulationMode.MINIMUM
 
         if started_at is not None:

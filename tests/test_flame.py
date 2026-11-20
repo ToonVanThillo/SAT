@@ -288,3 +288,17 @@ async def test_a_stored_burn_that_ended_during_a_reload_logs_nothing(hass, entry
 
     assert flame_transitions(caplog) == []
     assert current(hass, entry).flame_active is False
+
+
+def test_the_average_on_time_weights_the_latest_burn_by_the_smoothing_alpha(flame, freezer):
+    observe(flame, freezer, 0, False)
+    observe(flame, freezer, 60, True)
+    observe(flame, freezer, 120, False)
+    # A completed cycle starts the average with the next burn
+    observe(flame, freezer, 60, True)
+    observe(flame, freezer, 30, True)
+    assert flame.average_on_time_seconds == pytest.approx(30)
+
+    observe(flame, freezer, 30, True)
+    assert flame.latest_on_time_seconds == pytest.approx(60)
+    assert flame.average_on_time_seconds == pytest.approx(0.2 * 60 + 0.8 * 30)

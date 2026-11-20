@@ -138,7 +138,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self._sensors = []
         self._rooms: dict[str, float] | None = None
         self._setpoint = None
-        self._calculated_setpoint: float | None = None
+        self.smoothed_setpoint: float | None = None
         self._last_boiler_temperature = None
         self._unreadable_entities: set[str] = set()
 
@@ -512,12 +512,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return self._setpoint
 
     @property
-    def calculated_setpoint(self) -> float | None:
-        return self._calculated_setpoint
-
-    @property
-    def requested_setpoint(self) -> float:
-        """Get the requested setpoint based on the heating curve and PID output."""
+    def calculated_setpoint(self) -> float:
+        """The raw setpoint from the heating curve and PID output, before the low-pass filter."""
         if self.heating_curve.value is None:
             return MINIMUM_SETPOINT
 
@@ -589,13 +585,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         # Default to coordinator's minimum setpoint
         return self._coordinator.minimum_setpoint
-
-    def _calculate_control_setpoint(self) -> float:
-        """Calculate the control setpoint based on the heating curve and PID output."""
-        if self.heating_curve.value is None:
-            return MINIMUM_SETPOINT
-
-        return self.requested_setpoint
 
     async def _async_thermostat_changed(self, event: Event[EventStateChangedData]) -> None:
         """Handle changes to the connected thermostat."""
@@ -800,7 +789,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.heating_curve.update(self.target_temperature, self.current_outside_temperature)
 
         # The PID part of a reset skipped during a gap, under the reset branch's condition. The rest was done at the time of the change: a
-        # thermostat target change cleared the calculated setpoint and the setpoint adjuster, an HVAC mode change also reset PWM, and an area
+        # thermostat target change cleared the smoothed setpoint and the setpoint adjuster, an HVAC mode change also reset PWM, and an area
         # change clears nothing. A reset call runs the reset branch below instead.
         if self._pid_reset_pending and not reset and max_error.value != self.pid.last_error:
             _LOGGER.debug("Running the PID reset deferred while the inside or target temperature was missing (error %s).", max_error.value)
@@ -814,7 +803,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             # Calculate an optimal heating curve when we are in the deadband
             if self.target_temperature is not None and -DEADBAND <= max_error.value <= DEADBAND:
                 self.heating_curve.autotune(
-                    setpoint=self.requested_setpoint,
+                    setpoint=self.calculated_setpoint,
                     target_temperature=self.target_temperature,
                     outside_temperature=self.current_outside_temperature
                 )
@@ -830,17 +819,17 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             _LOGGER.info(f"Updating error to {max_error.value} from {max_error.entity_id} (Reset: True)")
 
             self.pid.update_reset(error=max_error, heating_curve_value=self.heating_curve.value)
-            self._calculated_setpoint = None
+            self.smoothed_setpoint = None
 
         self.async_write_ha_state()
 
-    def _control_setpoint(self, pwm_state: PWMState, valves_open: bool) -> tuple[float, str]:
-        """Decide the control setpoint and the rule that applied, from the HVAC mode, the captured valve state and the PWM state."""
+    def _control_setpoint(self, pwm_state: PWMState, valves_open: bool, smoothed_setpoint: float) -> tuple[float, str]:
+        """Decide the control setpoint and the rule that applied, from the HVAC mode, the captured valve state, the PWM state and this cycle's smoothed setpoint."""
 
         # Check if the system is in HEAT mode
         if self.hvac_mode != HVACMode.HEAT:
             # If not in HEAT mode, set to the minimum setpoint
-            self._calculated_setpoint = None
+            self.smoothed_setpoint = None
             self._setpoint = MINIMUM_SETPOINT
             reason = "hvac not heat"
 
@@ -855,8 +844,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             reason = "pwm off"
 
         elif pwm_state.mode == ModulationMode.UNRESTRICTED:
-            # A pulse with unrestricted modulation burns at the calculated setpoint
-            self._setpoint = self._calculated_setpoint
+            # A pulse with unrestricted modulation burns at the smoothed setpoint
+            self._setpoint = smoothed_setpoint
             reason = "pwm on unrestricted"
 
         else:
@@ -910,9 +899,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         async_dispatcher_send(self.hass, SIGNAL_PWM_UPDATED.format(self._config_entry.entry_id), self.pwm.status)
 
     def reset_control_state(self) -> None:
-        """Reset the control state on a target or HVAC mode change: the setpoint adjuster and the calculated setpoint; it doesn't reset PWM."""
+        """Reset the control state on a target or HVAC mode change: the setpoint adjuster and the smoothed setpoint; it doesn't reset PWM."""
         self.pwm.reset_setpoint_adjuster()
-        self._calculated_setpoint = None
+        self.smoothed_setpoint = None
 
     def async_track_sensor_temperature(self, entity_id):
         """
@@ -966,21 +955,17 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         snapshot = self._coordinator.snapshot()
         annotate_event(cycle=snapshot.cycle, hvac=self.hvac_mode, inputs=inputs, boiler=snapshot.boiler, verify=self._coordinator.verify(snapshot))
 
-        # HVAC mode OFF, or a missing current, target or outside temperature -> reset PWM, request heater OFF and release setpoint;
-        # No heating curve / pid / setpoint updates
+        # HVAC mode OFF or missing inputs -> reset PWM, request heater OFF and release setpoint;
         if self.hvac_mode != HVACMode.HEAT or inputs.current_temperature is None or inputs.target_temperature is None or inputs.outside_temperature is None:
             self.pwm.reset()
-
             await self._async_submit(DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF))
             return
 
-        requested_setpoint = self._calculate_control_setpoint()
-        self._calculated_setpoint = round(ema(self._calculated_setpoint, requested_setpoint), 1)
+        self.smoothed_setpoint = round(ema(self.calculated_setpoint, self.smoothed_setpoint), 1)
 
-        # Pulse Width Modulation runs whenever a valve is open; unrestricted modulation needs setpoint management and the option allowing it
         if inputs.valves_open:
             await self.pwm.update(
-                flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self._calculated_setpoint,
+                flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self.smoothed_setpoint,
                 minimum_setpoint=self.minimum_setpoint_value,
                 allow_unrestricted=self._coordinator.supports_setpoint_management and self._allow_unrestricted_modulation,
                 outside_temperature=inputs.outside_temperature,
@@ -990,7 +975,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         # Control setpoint to request, unless released below with heater off
         control_setpoint: float | Release
-        control_setpoint, setpoint_reason = self._control_setpoint(self.pwm.state, inputs.valves_open)
+        control_setpoint, setpoint_reason = self._control_setpoint(self.pwm.state, inputs.valves_open, self.smoothed_setpoint)
         heater_state = self._heater_state(self._setpoint)
 
         # Request the relative modulation value, if supported; it follows this cycle's heater request
@@ -1016,9 +1001,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if heater_state == DeviceState.OFF:
             control_setpoint = RELEASE
 
-        # The curve and PID terms as held now; they need not add up to the requested setpoint
+        # Curve, PID terms and calculated setpoint as held now; calculated may differ from the filter's input
         annotate_event(
-            setpoint=self._calculated_setpoint, setpoint_rule=setpoint_reason, requested=requested_setpoint,
+            smoothed=self.smoothed_setpoint, setpoint_rule=setpoint_reason, calculated=self.calculated_setpoint,
             curve=self.heating_curve.value, p=self.pid.proportional, i=self.pid.integral, d=self.pid.derivative,
         )
         await self._async_submit(DesiredState(control_setpoint=control_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state))

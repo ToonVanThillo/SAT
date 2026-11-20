@@ -1,6 +1,6 @@
 """Tests for HEAT with no open valve: the boiler is requested off (releases the control setpoint, heater OFF), end-to-end from the climate to the MQTT messages."""
 import logging
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
 from homeassistant.components.climate import HVACMode
@@ -103,7 +103,7 @@ async def test_without_radiators_pwm_is_updated_normally(entry, climate, boiler_
 async def test_closed_valves_release_the_setpoint_and_request_heater_off(hass, entry, climate, coordinator, boiler_data, mqtt_mock, published, state, attributes):
     await prepare(hass, climate, boiler_data, heatingoff="off")
     hass.states.async_set(RADIATOR, state, attributes)
-    with patch.object(climate, "_calculate_control_setpoint", return_value=50.0), patch.object(coordinator, "async_submit", wraps=coordinator.async_submit) as submit:
+    with patch.object(SatClimate, "calculated_setpoint", new_callable=PropertyMock, return_value=50.0), patch.object(coordinator, "async_submit", wraps=coordinator.async_submit) as submit:
         calls = await run_loop(climate, mqtt_mock, published)
 
     desired = submit.await_args_list[-1].args[0]
@@ -129,7 +129,7 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
     await prepare(hass, climate, boiler_data)
     close_valves(hass)
 
-    with patch.object(climate, "_calculate_control_setpoint", return_value=calculated), \
+    with patch.object(SatClimate, "calculated_setpoint", new_callable=PropertyMock, return_value=calculated), \
             patch.object(coordinator, "async_submit", wraps=coordinator.async_submit) as submit:
         await run_loop(climate, mqtt_mock, published)
 
@@ -137,9 +137,9 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
     assert desired.control_setpoint == RELEASE
     assert desired.heater_state == DeviceState.OFF
     assert climate.pwm.status == PWMStatus.OFF
-    assert climate.calculated_setpoint == calculated
+    assert climate.smoothed_setpoint == calculated
     assert hass.states.get("sensor.calculated_setpoint_test").state == str(calculated)
-    assert last_cycle(caplog)["setpoint"] == calculated
+    assert last_cycle(caplog)["smoothed"] == calculated
     assert last_cycle(caplog)["setpoint_rule"] == "valves closed"
 
 
@@ -201,12 +201,12 @@ async def test_cycle_record_shows_closed_valves(hass, entry, climate, boiler_dat
     await prepare(hass, climate, boiler_data, heatingoff="off")
     close_valves(hass)
 
-    with patch.object(climate, "_calculate_control_setpoint", return_value=50.0):
+    with patch.object(SatClimate, "calculated_setpoint", new_callable=PropertyMock, return_value=50.0):
         await run_loop(climate, mqtt_mock, published)
 
     fields = last_cycle(caplog)
     assert fields["inputs"].valves_open is False
-    assert (fields["setpoint"], fields["setpoint_rule"]) == (50.0, "valves closed")
+    assert (fields["smoothed"], fields["setpoint_rule"]) == (50.0, "valves closed")
     assert (fields["want"].control_setpoint, fields["want"].heater_state) == (RELEASE, DeviceState.OFF)
 
 

@@ -323,7 +323,7 @@ async def test_relative_modulation_attributes(entry, climate, boiler_data, mqtt_
     assert climate.relative_modulation.enabled is False
     assert climate.get_relative_modulation_value() == 0
 
-    # A heat cycle with the calculated setpoint (35) above the minimum (20) runs unrestricted
+    # A heat cycle with the smoothed setpoint (35) above the minimum (20) runs unrestricted
     await run_loop(climate, mqtt_mock, published)
 
     assert climate.relative_modulation_state.name == "UNRESTRICTED"
