@@ -49,17 +49,15 @@ async def cycle(hass: HomeAssistant, climate: SatClimate, boiler_data, freezer: 
 async def test_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE | {"heatingoff": "on"})
 
-    # The climate keeps the unclamped setpoint, only the written value is clamped
     assert await run_loop(climate, mqtt_mock, published) == [
         message('{"cmd": "selflowtemp", "value": 30}'),
         message('{"cmd": "burnmaxpower", "value": 100}'),
         message('{"cmd": "heatingoff", "value": "off"}'),
         message('{"cmd": "heatingtemp", "value": 30}'),
     ]
-    assert climate.setpoint == 35.0
 
 
-# The minimum setpoint is above COLD_SETPOINT (28.2), so the PWM ON phase requests heater ON and doesn't release the setpoint
+# The minimum setpoint of 30 is clamped to the maximum setpoint of 29
 @pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_MAXIMUM_SETPOINT: 29}))
 async def test_pwm_setpoint_is_clamped_to_the_maximum_setpoint(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE)

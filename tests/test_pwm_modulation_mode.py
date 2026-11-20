@@ -1,19 +1,21 @@
-"""PWM modulation mode: UNRESTRICTED when unrestricted modulation is allowed and the requested setpoint is above
+"""PWM modulation mode: UNRESTRICTED when unrestricted modulation is allowed and the given setpoint is above
 the minimum setpoint, otherwise MINIMUM; UNRESTRICTED gives a 100% period, and a mode change while ON starts a new period."""
 import json
+import logging
 from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
 from homeassistant.components.climate import HVACMode
 
+from custom_components.sat.channels import RELEASE
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
-    MINIMUM_SETPOINT,
     ModulationMode,
     PWMStatus,
 )
+from tests.conftest import TIMELINE, last_cycle
 from tests.const import IDLE, with_data
 from tests.test_pwm_cycles import MILD, Clock, make_pwm, setpoint_for, start_pulse, step
 from tests.test_pwm_hot_water import make_pwm as make_hot_water_pwm
@@ -200,7 +202,7 @@ async def test_a_mode_change_while_on_latches_the_current_n(clock):
 
 async def test_a_mode_change_while_on_restarts_the_boiler_temperature_smoothing(clock):
     pwm = make_pwm()
-    await step(pwm, clock, 1.0, allow_unrestricted=True)  # requested setpoint 50 at a flow of 50
+    await step(pwm, clock, 1.0, allow_unrestricted=True)  # setpoint 50 at a flow of 50
     await step(pwm, clock, 1.0, 1000, allow_unrestricted=True)  # long past the smoothing of the pulse start
     await step(pwm, clock, 1.0, 0)  # the mode changes to MINIMUM: a new period starts at 1000 s
     assert pwm.status == PWMStatus.ON
@@ -350,7 +352,8 @@ async def test_the_duty_rising_to_100_percent_in_an_off_phase_from_a_reset_keeps
 
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
-async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across_period_ends(climate, boiler_data, published, freezer):
+async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across_period_ends(climate, boiler_data, published, freezer, caplog):
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
     cold_boiler = IDLE | {"selflowtemp": 25, "curflowtemp": 25, "rettemp": 25, "burnmaxpower": 0}
     await boiler_data(**cold_boiler)
     await climate.async_set_target_temperature(21.0)
@@ -372,7 +375,7 @@ async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across
             started_at = minute
             cycles_per_hour = climate.pwm.cycles_per_hour
 
-        assert climate.setpoint == (30 if climate.pwm.status == PWMStatus.ON else MINIMUM_SETPOINT)
+        assert last_cycle(caplog)["want"].control_setpoint == (30 if climate.pwm.status == PWMStatus.ON else RELEASE)
 
     # The run lasts beyond the end of the first 100% period (2 * 3600 / N after the start)
     assert started_at is not None
@@ -380,5 +383,4 @@ async def test_the_climate_publishes_the_minimum_setpoint_while_pwm_is_on_across
 
     commands = [json.loads(args[1]) for args in published() if args[0] == "ems-esp/boiler"]
     values = {command["value"] for command in commands if command["cmd"] == "selflowtemp"}
-    assert values <= {30, MINIMUM_SETPOINT}
-    assert 30 in values
+    assert values == {30}

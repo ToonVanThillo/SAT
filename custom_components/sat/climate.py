@@ -40,7 +40,6 @@ from homeassistant.helpers.start import async_at_started
 from .area import Areas, SENSOR_TEMPERATURE_ID
 from .channels import RELEASE, DesiredState, Release
 from .const import *
-from .const import ModulationMode, PWMStatus
 from .coordinator import SatDataUpdateCoordinator, DeviceState, BoilerSnapshot
 from .entity import SatEntity
 from .errors import Error
@@ -48,7 +47,6 @@ from .held_input import HeldInput
 from .helpers import convert_time_str_to_seconds, ema, float_value, is_state_stale, state_age_seconds
 from .logctx import annotate_event, logged_event
 from .manufacturers.geminox import Geminox
-from .pwm import PWMState
 from .relative_modulation import RelativeModulation, RelativeModulationState
 from .summer_simmer import SummerSimmer
 from .util import create_pid_controller, create_heating_curve_controller, create_pwm_controller, create_minimum_setpoint_controller
@@ -137,7 +135,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         self._sensors = []
         self._rooms: dict[str, float] | None = None
-        self._setpoint = None
         self.smoothed_setpoint: float | None = None
         self._last_boiler_temperature = None
         self._unreadable_entities: set[str] = set()
@@ -508,10 +505,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return max(errors, key=lambda e: e.value)
 
     @property
-    def setpoint(self) -> float | None:
-        return self._setpoint
-
-    @property
     def calculated_setpoint(self) -> float:
         """The raw setpoint from the heating curve and PID output, before the low-pass filter."""
         if self.heating_curve.value is None:
@@ -581,7 +574,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
             # Version 2: Use Pulse Width Modulation controller
             if self._minimum_setpoint_version == 2:
-                return max(self.pwm.setpoint, self._coordinator.minimum_setpoint)
+                return max(self.pwm.adjusted_setpoint, self._coordinator.minimum_setpoint)
 
         # Default to coordinator's minimum setpoint
         return self._coordinator.minimum_setpoint
@@ -823,38 +816,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         self.async_write_ha_state()
 
-    def _control_setpoint(self, pwm_state: PWMState, valves_open: bool, smoothed_setpoint: float) -> tuple[float, str]:
-        """Decide the control setpoint and the rule that applied, from the HVAC mode, the captured valve state, the PWM state and this cycle's smoothed setpoint."""
-
-        # Check if the system is in HEAT mode
-        if self.hvac_mode != HVACMode.HEAT:
-            # If not in HEAT mode, set to the minimum setpoint
-            self.smoothed_setpoint = None
-            self._setpoint = MINIMUM_SETPOINT
-            reason = "hvac not heat"
-
-        elif not valves_open:
-            # No valve open, so no heat demand
-            self._setpoint = MINIMUM_SETPOINT
-            reason = "valves closed"
-
-        elif pwm_state.status == PWMStatus.OFF:
-            # The PWM off phase
-            self._setpoint = MINIMUM_SETPOINT
-            reason = "pwm off"
-
-        elif pwm_state.mode == ModulationMode.UNRESTRICTED:
-            # A pulse with unrestricted modulation burns at the smoothed setpoint
-            self._setpoint = smoothed_setpoint
-            reason = "pwm on unrestricted"
-
-        else:
-            # A pulse with minimum modulation burns at the effective minimum setpoint
-            self._setpoint = self.minimum_setpoint_value
-            reason = "pwm on minimum"
-
-        return min(self._setpoint, self._coordinator.maximum_setpoint), reason
-
     def _control_relative_modulation(self, snapshot: BoilerSnapshot, heater_state: DeviceState) -> int | None:
         """Decide the maximum relative modulation from the snapshot, the PWM modulation mode and this cycle's heater request;
         returns None when it is unsupported."""
@@ -963,20 +924,22 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         self.smoothed_setpoint = round(ema(self.calculated_setpoint, self.smoothed_setpoint), 1)
 
-        if inputs.valves_open:
-            await self.pwm.update(
-                flame=snapshot.flame, boiler=snapshot.boiler, requested_setpoint=self.smoothed_setpoint,
+        # No demand without an open valve or with a smoothed setpoint at or below the cold threshold; else PWM gives the pulse setpoint
+        pwm_setpoint: float | None
+        if inputs.valves_open and self.smoothed_setpoint > COLD_SETPOINT:
+            pwm_setpoint = await self.pwm.update(
+                flame=snapshot.flame, boiler=snapshot.boiler, setpoint=self.smoothed_setpoint,
                 minimum_setpoint=self.minimum_setpoint_value,
                 allow_unrestricted=self._coordinator.supports_setpoint_management and self._allow_unrestricted_modulation,
                 outside_temperature=inputs.outside_temperature,
-                )
+            )
         else:
+            pwm_setpoint = None
             self.pwm.reset()
 
-        # Control setpoint to request, unless released below with heater off
-        control_setpoint: float | Release
-        control_setpoint, setpoint_reason = self._control_setpoint(self.pwm.state, inputs.valves_open, self.smoothed_setpoint)
-        heater_state = self._heater_state(self._setpoint)
+        # The heater is OFF exactly when the control setpoint is released
+        requested_setpoint: float | Release = RELEASE if pwm_setpoint is None else min(pwm_setpoint, self._coordinator.maximum_setpoint)
+        heater_state = DeviceState.OFF if requested_setpoint is RELEASE else DeviceState.ON
 
         # Request the relative modulation value, if supported; it follows this cycle's heater request
         relative_modulation = self._control_relative_modulation(snapshot, heater_state)
@@ -998,15 +961,12 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
             # Calculate the dynamic minimum setpoint
             self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.mode)
 
-        if heater_state == DeviceState.OFF:
-            control_setpoint = RELEASE
-
         # Curve, PID terms and calculated setpoint as held now; calculated may differ from the filter's input
         annotate_event(
-            smoothed=self.smoothed_setpoint, setpoint_rule=setpoint_reason, calculated=self.calculated_setpoint,
+            smoothed=self.smoothed_setpoint, calculated=self.calculated_setpoint,
             curve=self.heating_curve.value, p=self.pid.proportional, i=self.pid.integral, d=self.pid.derivative,
         )
-        await self._async_submit(DesiredState(control_setpoint=control_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state))
+        await self._async_submit(DesiredState(control_setpoint=requested_setpoint, maximum_relative_modulation=relative_modulation, heater_state=heater_state))
 
         self.async_write_ha_state()
 
@@ -1035,14 +995,6 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         """Submit `desired` to the coordinator; add the PWM state and `desired`, then the writes, to the cycle record."""
         annotate_event(pwm=self.pwm.state, want=desired)
         annotate_event(sent=await self._coordinator.async_submit(desired))
-
-    @staticmethod
-    def _heater_state(setpoint: float | None) -> DeviceState:
-        """Request OFF if the setpoint is missing or at most COLD_SETPOINT, else ON."""
-        if setpoint is None or setpoint <= COLD_SETPOINT:
-            return DeviceState.OFF
-
-        return DeviceState.ON
 
     async def async_set_temperature(self, **kwargs) -> None:
         """Set the target temperature."""

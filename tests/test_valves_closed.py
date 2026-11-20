@@ -35,7 +35,7 @@ pytestmark = pytest.mark.usefixtures("loop_entry")
 ROOM = "climate.room"
 HEATER_ON = message('{"cmd": "heatingoff", "value": "off"}')
 WITH_RADIATOR = with_data({CONF_RADIATORS: [RADIATOR]})
-# A minimum setpoint of 30 (above COLD_SETPOINT, 28.2, so the PWM ON phase requests heater ON) with unrestricted modulation disallowed: the first open-valve cycle starts a pulse at once
+# A minimum setpoint of 30 with unrestricted modulation disallowed: the first open-valve cycle starts a pulse at once
 UNRESTRICTED_DISALLOWED = with_data({CONF_RADIATORS: [RADIATOR], CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False})
 
 
@@ -77,7 +77,7 @@ async def test_without_radiators_the_valves_count_as_open(hass, entry, climate, 
         message('{"cmd": "burnmaxpower", "value": 100}'),
         HEATER_ON,
     ]
-    assert climate.setpoint == 35.0
+    assert last_cycle(caplog)["want"].control_setpoint == 35.0
     assert climate.valves_open is True
     assert last_cycle(caplog)["inputs"].valves_open is True
 
@@ -89,7 +89,7 @@ async def test_without_radiators_pwm_is_updated_normally(entry, climate, boiler_
     await run_loop(climate, mqtt_mock, published)
 
     assert climate.pwm.status == PWMStatus.ON
-    assert climate.setpoint == 30
+    assert last_cycle(caplog)["want"].control_setpoint == 30
 
 
 # All radiators closed
@@ -140,7 +140,6 @@ async def test_closed_valves_ignore_the_calculated_setpoint_and_pwm_mode(hass, e
     assert climate.smoothed_setpoint == calculated
     assert hass.states.get("sensor.calculated_setpoint_test").state == str(calculated)
     assert last_cycle(caplog)["smoothed"] == calculated
-    assert last_cycle(caplog)["setpoint_rule"] == "valves closed"
 
 
 # PWM when the valves close
@@ -206,7 +205,7 @@ async def test_cycle_record_shows_closed_valves(hass, entry, climate, boiler_dat
 
     fields = last_cycle(caplog)
     assert fields["inputs"].valves_open is False
-    assert (fields["smoothed"], fields["setpoint_rule"]) == (50.0, "valves closed")
+    assert fields["smoothed"] == 50.0
     assert (fields["want"].control_setpoint, fields["want"].heater_state) == (RELEASE, DeviceState.OFF)
 
 

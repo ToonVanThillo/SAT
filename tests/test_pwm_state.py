@@ -7,10 +7,12 @@ from unittest.mock import patch
 import pytest
 
 from custom_components.sat.const import BoilerStatus, ModulationMode, PWMStatus
+from custom_components.sat.pwm import PWM
 from tests.test_pwm_cycles import (
     COLD,
     Clock,
     boiler,
+    flame,
     make_pwm,
     setpoint_for,
     start_pulse,
@@ -86,7 +88,7 @@ async def test_missing_values_keep_the_shown_duty(clock):
 async def test_a_higher_request_while_cooling_down_keeps_the_pulse_on(clock):
     pwm = make_pwm()
     await start_pulse(pwm, clock)
-    # A burning flame lets the setpoint adjuster follow the boiler; a cooling down boiler with a higher requested setpoint no longer disables
+    # A burning flame lets the setpoint adjuster follow the boiler; a cooling down boiler with a higher setpoint no longer disables
     burning = SimpleNamespace(is_active=True, is_inactive=False, latest_on_time_seconds=30, average_on_time_seconds=100, seconds_since_hot_water_burn=None)
     clock.tick(5)
     await pwm.update(boiler(flame_active=True), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=COLD)  # type: ignore[arg-type]
@@ -239,4 +241,56 @@ async def test_rolled_over_is_set_only_by_the_update_that_rolls_a_100_percent_pe
     pwm.reset()
     assert pwm.rolled_over is False
 
+    assert pwm.status == PWMStatus.OFF
+
+
+# The setpoint `update` returns for the pulse
+
+async def update_returning(pwm: PWM, duty: float, minimum_setpoint: float, allow_unrestricted: bool) -> float | None:
+    return await pwm.update(boiler(), flame(), setpoint_for(duty), minimum_setpoint=minimum_setpoint, allow_unrestricted=allow_unrestricted, outside_temperature=COLD)  # type: ignore[arg-type]
+
+
+async def test_update_returns_none_for_a_zero_duty_below_the_start_threshold(clock):
+    pwm = make_pwm()
+
+    assert await update_returning(pwm, 0.0, 10.0, False) is None
+    assert pwm.status == PWMStatus.OFF
+
+
+async def test_update_returns_none_in_an_off_phase(clock):
+    pwm = make_pwm()
+    await start_pulse(pwm, clock)
+    await step(pwm, clock, 0.5, 450)
+    assert pwm.status == PWMStatus.OFF
+
+    assert await update_returning(pwm, 0.5, 10.0, False) is None
+
+
+async def test_update_returns_the_given_setpoint_for_an_unrestricted_pulse(clock):
+    pwm = make_pwm()
+
+    assert await update_returning(pwm, 0.5, 10.0, True) == setpoint_for(0.5)
+    assert (pwm.status, pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
+
+
+async def test_update_returns_the_minimum_setpoint_for_a_minimum_pulse(clock):
+    pwm = make_pwm()
+
+    # Unrestricted modulation disallowed
+    assert await update_returning(pwm, 0.5, 12.5, False) == 12.5
+    assert (pwm.status, pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
+
+    # Allowed, but the given setpoint is not above the minimum
+    pwm = make_pwm()
+    assert await update_returning(pwm, 0.5, setpoint_for(0.5) + 5, True) == setpoint_for(0.5) + 5
+    assert (pwm.status, pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
+
+
+async def test_update_returns_the_setpoint_of_the_status_after_the_update(clock):
+    pwm = make_pwm()
+    await start_pulse(pwm, clock)
+
+    # The pulse ends in this update: no setpoint
+    clock.tick(450)
+    assert await update_returning(pwm, 0.5, 10.0, False) is None
     assert pwm.status == PWMStatus.OFF

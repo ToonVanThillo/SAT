@@ -18,13 +18,14 @@ Each cycle has three phases, in this order:
 3. **Reconcile**: the coordinator hands the `DesiredState` to its channels,
    which write what is needed.
 
-In HVAC mode OFF the decide phase resets PWM and requests heater OFF. In
-HEAT, when no valve is open, it resets PWM and requests heater OFF, whatever the calculated
-setpoint; without radiators configured, the valves count as open. When the
+In HVAC mode OFF the decide phase resets PWM and requests heater OFF. When the
 target, inside or outside temperature is missing (see the climate inputs under
 Snapshot), it resets PWM and requests heater OFF, without a max relative
-modulation or max setpoint; the climate's setpoint is not updated. Otherwise
-it decides from PWM (see PWM). Every heater OFF request releases the control
+modulation or max setpoint; the smoothed setpoint is not updated. In HEAT with
+all temperatures, there is no heat demand when no valve is open or the
+smoothed setpoint is at or below the cold threshold (28.2 °C); it then resets
+PWM and requests heater OFF. Without radiators configured, the valves count as
+open. Otherwise it decides from PWM (see PWM). Every heater OFF request releases the control
 setpoint, on every backend and without waiting for the heater OFF to be
 confirmed: the heater OFF command keeps the boiler off, and how the device
 combines it with the last setpoint is up to the backend. On EMS-ESP that
@@ -227,7 +228,7 @@ calibration) are not logged.
   pulse hold, rollover), `want` (the desired state as requested) and `sent`
   (the writes as encoded, each with its kind and the channel's read-back).
 - HEAT with all temperatures: `smoothed` (the smoothed setpoint: the
-  calculated setpoint after the low-pass filter), `setpoint_rule`,
+  calculated setpoint after the low-pass filter),
   `calculated` (the calculated setpoint: heating curve plus PID output),
   `curve`, `p`, `i`, `d`. `calculated`, `curve` and the PID terms are as held
   when the record is built; `calculated` need not be the value the filter
@@ -260,7 +261,7 @@ separate entities or in the diagnostics download.
   Coefficient, Flame Average On-Time. All diagnostic entities are disabled by
   default.
 - The diagnostics download has the other control values: the PID's error and
-  the error source, the control setpoint, relative modulation state and value,
+  the error source, relative modulation state and value,
   whether a valve is open, the boiler's cold temperature, tracking and
   derivative, and the autotune coefficient derivative.
 - After a restart the climate restores, besides its HVAC mode, target
@@ -272,12 +273,16 @@ separate entities or in the diagnostics download.
   target and logs a warning.
 
 ## PWM
-In HEAT, every control cycle runs PWM; continuous heating is a PWM period at
-100% duty. PWM gives a status (ON or OFF), a duty and a modulation mode.
+In HEAT, every control cycle with heat demand (see Control cycle) runs PWM;
+continuous heating is a PWM period at 100% duty. PWM gives a status (ON or
+OFF), a duty, a modulation mode and the setpoint for the pulse: none when OFF,
+the smoothed setpoint in UNRESTRICTED, and in MINIMUM the effective minimum it
+was given, the one its mode decision used.
 
 **Minimum setpoint**
 - Backends with setpoint management require a minimum setpoint above the cold
-  threshold (28.2 °C), so a pulse at the minimum heats. It is calibrated with
+  threshold (28.2 °C): a MINIMUM pulse requests heater ON at the minimum, and
+  a boiler does not fire at a lower setpoint. It is calibrated with
   the overshoot protection calibration or entered manually; a failed
   calibration, or a result at or below the threshold, shows the manual entry
   with an error. After the minimum the config flow continues to the automatic
@@ -338,7 +343,8 @@ In HEAT, every control cycle runs PWM; continuous heating is a PWM period at
   from OFF is a pulse start in either mode.
 
 **Decide**
-In HEAT, with all temperatures present and a valve open:
+In HEAT, with all temperatures present, a valve open and the smoothed setpoint
+above the cold threshold:
 
 | PWM              | Control setpoint           | Max relative modulation | Heater |
 |------------------|----------------------------|-------------------------|--------|
@@ -353,15 +359,17 @@ maximum; this includes every OFF cycle.
 - Max relative modulation is decided from the cycle's own request, not the
   boiler's read-back. The relative modulation states are
   HEATER_OFF_REQUESTED, HOT_WATER, MINIMUM and UNRESTRICTED.
-- The heater is OFF whenever the requested setpoint is at or below the cold
-  threshold, which only a minimum from before it was required can cause.
+- Heater OFF is requested exactly when the control setpoint is released. The
+  control setpoint is capped at the configured maximum setpoint (at least
+  30 °C).
 - Overshoot handling is a boiler status; it does not change PWM.
 
 **Resets**
-- No open valve, a missing temperature, HVAC mode OFF and an HVAC mode change
-  reset PWM. A reset ends a running pulse like a normal pulse end; a reset
-  while OFF leaves a running off phase as it is. The cycle record shows the
-  cause of a reset in a control cycle: `valves_open` false, a missing
+- No open valve, a smoothed setpoint at or below the cold threshold, a missing
+  temperature, HVAC mode OFF and an HVAC mode change reset PWM. A reset ends a
+  running pulse like a normal pulse end; a reset while OFF leaves a running
+  off phase as it is. The cycle record shows the cause of a reset in a control
+  cycle: `valves_open` false, `smoothed` at or below 28.2, a missing
   temperature as `?` in `inputs`, or `hvac` OFF; with thermal comfort, a
   missing humidity shows as a missing inside temperature.
 - A target change, also of an area, does not reset PWM: it only changes the
@@ -395,8 +403,8 @@ at the start of each cycle.
   after it, until the next pulse starts or the off phase exceeds twice the
   latched normal period.
 - N is updated only while PWM runs (in HEAT, with all temperatures present
-  and a valve open), at the start of every PWM update, before the pulse
-  decision. Otherwise (HVAC mode OFF, no open valve or a missing temperature)
+  and heat demand), at the start of every PWM update, before the pulse
+  decision. Otherwise (HVAC mode OFF, no heat demand or a missing temperature)
   N is not updated. A diagnostic "PWM Cycles Per Hour" sensor (measurement,
   unit cycles/h, no attributes) shows the N in effect at the last PWM update
   or reset.
@@ -539,7 +547,7 @@ too high until the pump runs again.
 19. The climate keeps only standard attributes; control-loop values become
     diagnostic sensors or go to the diagnostics download; all diagnostic
     entities are disabled by default.
-20. Timeline: the cycle line shows the requested setpoint the low-pass filter
+20. Timeline: the cycle line shows the calculated setpoint the low-pass filter
     received, the heating curve value and the PID terms.
 21. Always-on PWM: PWM runs every HEAT cycle with a modulation mode;
     continuous heating is a 100% period (see PWM).
@@ -548,6 +556,9 @@ too high until the pump runs again.
     info lines are plain log calls and `timeline.py` is removed.
 23. Heater OFF releases the control setpoint on every backend, without waiting
     for confirmation.
+24. Heat demand requires a smoothed setpoint above the cold threshold; PWM
+    returns the pulse setpoint, and heater OFF is requested exactly when the
+    setpoint is released. The maximum setpoint option starts at 30 °C.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the

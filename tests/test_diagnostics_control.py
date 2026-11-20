@@ -16,7 +16,7 @@ from tests.const import IDLE, ems_entry
 pytestmark = pytest.mark.usefixtures("loop_entry")
 
 KEYS = {
-    "pid_error", "error_source", "control_setpoint", "relative_modulation_state", "relative_modulation_value", "valves_open",
+    "pid_error", "error_source", "relative_modulation_state", "relative_modulation_value", "valves_open",
     "boiler_temperature_cold", "boiler_temperature_tracking", "boiler_temperature_derivative", "coefficient_derivative",
 }
 
@@ -41,7 +41,6 @@ async def test_control_section_keys_and_types(hass, hass_client, entry, climate,
     assert set(control) == KEYS
     assert number(control["pid_error"])
     assert isinstance(control["error_source"], str)
-    assert control["control_setpoint"] is None or number(control["control_setpoint"])
     assert control["relative_modulation_state"] in RelativeModulationState.__members__
     assert isinstance(control["relative_modulation_value"], int) and not isinstance(control["relative_modulation_value"], bool)
     assert isinstance(control["valves_open"], bool)
@@ -59,7 +58,6 @@ async def test_control_values_match_their_sources(hass, hass_client, entry, clim
 
     assert control["pid_error"] == climate.pid.last_error
     assert control["error_source"] == climate.max_error.entity_id == climate.entity_id
-    assert control["control_setpoint"] == climate.setpoint
     assert control["relative_modulation_state"] == climate.relative_modulation_state.name
     assert control["relative_modulation_value"] == climate.get_relative_modulation_value()
     assert control["valves_open"] == climate.valves_open

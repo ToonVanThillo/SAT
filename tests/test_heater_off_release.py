@@ -131,18 +131,6 @@ async def test_heater_on_publishes_the_setpoint_every_cycle(entry, climate, coor
 
 # Off phase via PWM
 
-@pytest.mark.parametrize(*ems_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
-async def test_pwm_on_with_cold_minimum_setpoint_is_released(entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
-    # With a minimum setpoint at or below COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF, so it is released too
-    await boiler_data(**IDLE)
-    calls = await run_loop(climate, mqtt_mock, published)
-
-    assert HEATER_OFF in calls
-    assert selflowtemp(calls) == []
-    assert setpoint_status(coordinator) == ChannelStatus.IDLE
-    assert released(caplog)
-
-
 @pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_pwm_off_phase_is_released(hass: HomeAssistant, entry, climate, coordinator, boiler_data, mqtt_mock, published, freezer, caplog):
     await boiler_data(**IDLE | {"heatingoff": "on"})

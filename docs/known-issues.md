@@ -11,7 +11,7 @@ known bug".
   is heating (`device_active`), not with its heating-enabled setting. ON is
   resent every cycle while the boiler is enabled but idle and a valve is open.
   Whenever heater OFF is requested (HVAC OFF, no valve open, a missing
-  temperature, the PWM off phase, or a requested setpoint at or below the cold
+  temperature, the PWM off phase, or a smoothed setpoint at or below the cold
   threshold), OFF is resent every cycle while the boiler is heating, but never
   sent while it is enabled but idle. EMS-ESP compares with the `heatingoff`
   setting. Since heater OFF releases the control setpoint, such a boiler then
@@ -28,12 +28,6 @@ known bug".
   flame off for longer than `STUCK_OFF_SECONDS` (300 s), flame health reports
   STUCK_OFF although nothing is wrong. EMS-ESP reports `selflowtemp` 5 under
   `heatingoff` (status IDLE).
-- A minimum setpoint ≤ `COLD_SETPOINT` (28.2 °C) makes a MINIMUM pulse request
-  heater OFF. An UNRESTRICTED pulse whose calculated setpoint is ≤ 28.2 does
-  the same; the control setpoint is released. The config
-  flow no longer accepts such a minimum; older entries can still have one (a
-  manual value, or 10 °C from an old migration or a missing minimum) and log an
-  error at setup. Reconfigure them to set a minimum.
 - Flame health stores no average on-time when a cycle completes: the ON→OFF
   transition doesn't record the duration, and the next ON phase seeds the
   average from its first seconds. In MINIMUM mode, while the flame is off and
@@ -104,8 +98,9 @@ known bug".
   while the status is ON (the low-duty case), and flame health's PWM_SHORT
   check cannot fire then. Follows from the
   minimum-pulse rule.
-- A PWM reset (valves closed, a missing temperature after its 5-minute hold,
-  an HVAC mode change) ends a running pulse at once, also before its 180 s
+- A PWM reset (valves closed, a smoothed setpoint at or below the cold
+  threshold, a missing temperature after its 5-minute hold, an HVAC mode
+  change) ends a running pulse at once, also before its 180 s
   minimum pulse; the off phase that follows still lasts at least 180 s. A held
   input doesn't reset PWM.
 - The PID's age reset (`sensor_max_value_age`) compares the time since the
@@ -167,8 +162,8 @@ known bug".
   age to 0, or enable `force_update`.
 - While an input is held, the climate's `current_temperature` and the Error
   Value sensor read the live sensors: unknown, and an error of 0. Once the hold
-  has run out, the control setpoint (diagnostics download) and the Calculated
-  Setpoint sensor keep their last values while the boiler is off.
+  has run out, the Calculated Setpoint sensor keeps its last value while the
+  boiler is off.
 - Outside the control cycle, room target temperatures are still converted with
   a bare `float()` (the `_async_climate_changed` state listener and
   `_async_update_rooms_from_climates` at startup), so a room with a non-numeric

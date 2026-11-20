@@ -152,7 +152,7 @@ async def test_a_rollover_latches_the_current_n(clock):
 
 async def test_a_rollover_resamples_the_boiler_temperature(clock):
     pwm = make_pwm()
-    await start_pulse(pwm, clock, 1.0)  # requested setpoint 50 at a flow of 50
+    await start_pulse(pwm, clock, 1.0)  # setpoint 50 at a flow of 50
     await step(pwm, clock, 1.0, 1800)  # rollover at 1800 s
     assert pwm.status == PWMStatus.ON
 

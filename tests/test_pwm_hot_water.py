@@ -332,10 +332,10 @@ async def test_the_setpoint_adjuster_does_not_adjust_during_a_hot_water_burn(clo
     burning = flame(active=True, latest=30)
 
     await pwm.update(boiler(flame_active=True, hot_water=True, flow=60.0), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
-    assert pwm.setpoint == MINIMUM_SETPOINT
+    assert pwm.adjusted_setpoint == MINIMUM_SETPOINT
 
     await pwm.update(boiler(flame_active=True, flow=60.0), burning, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
-    assert pwm.setpoint == 57.0
+    assert pwm.adjusted_setpoint == 57.0
 
 
 async def test_the_setpoint_adjuster_does_not_force_with_the_hot_water_flag_on(clock):
@@ -344,10 +344,10 @@ async def test_the_setpoint_adjuster_does_not_force_with_the_hot_water_flag_on(c
 
     # Flame off with a short average on time: the force step, paused while producing hot water
     await pwm.update(boiler(hot_water=True, flow=60.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
-    assert pwm.setpoint == MINIMUM_SETPOINT
+    assert pwm.adjusted_setpoint == MINIMUM_SETPOINT
 
     await pwm.update(boiler(flow=60.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
-    assert pwm.setpoint == 70.0
+    assert pwm.adjusted_setpoint == 70.0
 
 
 # Through the climate loop on EMS-ESP

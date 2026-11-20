@@ -120,7 +120,7 @@ class PWM:
         self._cycles_per_hour: int = cycles.cold_cycles_per_hour
 
         # Initialize some helpers
-        self._setpoint: Optional[float] = None
+        self._adjusted_setpoint: Optional[float] = None
         self._setpoint_adjuster = SetpointAdjuster()
 
         _LOGGER.debug(
@@ -176,9 +176,9 @@ class PWM:
         self._on_change()
 
     def reset_setpoint_adjuster(self) -> None:
-        """Reset the setpoint adjuster and drop the setpoint it gave, so `setpoint` is the default minimum again; PWM itself is not reset."""
+        """Reset the setpoint adjuster and drop the setpoint it gave, so `adjusted_setpoint` is the default minimum again; PWM itself is not reset."""
         self._setpoint_adjuster.reset()
-        self._setpoint = None
+        self._adjusted_setpoint = None
 
     def _update_cycles_per_hour(self, outside_temperature: float) -> None:
         """Set the current cycles per hour from the outside temperature."""
@@ -187,21 +187,28 @@ class PWM:
             _LOGGER.info("Cycles per hour changed from %d to %d at an outside temperature of %.1f°C.", self._cycles_per_hour, cycles_per_hour, outside_temperature)
             self._cycles_per_hour = cycles_per_hour
 
-    async def update(self, boiler: "BoilerState", flame: "FlameState", requested_setpoint: float, minimum_setpoint: float, allow_unrestricted: bool, outside_temperature: float) -> None:
+    async def update(self, boiler: "BoilerState", flame: "FlameState", setpoint: float, minimum_setpoint: float, allow_unrestricted: bool, outside_temperature: float) -> float | None:
         """
         Update the PWM state based on the output of a PID controller, then call the change callback.
 
         The cycles per hour are updated from `outside_temperature` first, before the pulse decision.
+        Returns the setpoint for the pulse: None when the status is OFF after the update, else `setpoint` in UNRESTRICTED mode
+        and `minimum_setpoint` in MINIMUM mode.
         """
         self._update_cycles_per_hour(outside_temperature)
-        self._update_pulse(boiler, flame, requested_setpoint, minimum_setpoint, allow_unrestricted)
+        self._update_pulse(boiler, flame, setpoint, minimum_setpoint, allow_unrestricted)
         self._on_change()
 
-    def _update_pulse(self, boiler: "BoilerState", flame: "FlameState", requested_setpoint: float, minimum_setpoint: float, allow_unrestricted: bool) -> None:
+        if self._status == PWMStatus.OFF:
+            return None
+
+        return setpoint if self._mode == ModulationMode.UNRESTRICTED else minimum_setpoint
+
+    def _update_pulse(self, boiler: "BoilerState", flame: "FlameState", setpoint: float, minimum_setpoint: float, allow_unrestricted: bool) -> None:
         """
         Update the mode, the duty and the pulse status; the duty cycle and the setpoint adjuster read the reliable flow temperature.
 
-        The modulation mode is UNRESTRICTED when `allow_unrestricted` is set and `requested_setpoint` is above the effective `minimum_setpoint`,
+        The modulation mode is UNRESTRICTED when `allow_unrestricted` is set and `setpoint` is above the effective `minimum_setpoint`,
         otherwise MINIMUM; UNRESTRICTED gives a 100% duty. A mode change while ON starts a new period, as a rollover does.
         The setpoint adjuster adjusts (and forces) only when this update's mode is MINIMUM, whatever the PWM status.
 
@@ -214,7 +221,7 @@ class PWM:
         self._minimum_pulse_held = False
 
         # The mode is decided before the duty, which follows it; a mode change while ON starts a new period, so the new duty runs from now
-        mode = ModulationMode.UNRESTRICTED if allow_unrestricted and requested_setpoint > minimum_setpoint else ModulationMode.MINIMUM
+        mode = ModulationMode.UNRESTRICTED if allow_unrestricted and setpoint > minimum_setpoint else ModulationMode.MINIMUM
         if self._set_mode(mode) and self._status == PWMStatus.ON:
             self._start_period(monotonic(), flow_temperature)
 
@@ -229,7 +236,7 @@ class PWM:
 
             # UNRESTRICTED needs no formula; MINIMUM keeps the last duty
             if mode == ModulationMode.UNRESTRICTED:
-                self._duty_cycle = self._calculate_duty_cycle(requested_setpoint, thresholds)
+                self._duty_cycle = self._calculate_duty_cycle(setpoint, thresholds)
         else:
             self._flow_missing = False
 
@@ -237,7 +244,7 @@ class PWM:
                 self._last_boiler_temperature = flow_temperature
                 _LOGGER.debug("Initialized last boiler temperature to %.1f°C", flow_temperature)
 
-            self._duty_cycle = self._calculate_duty_cycle(requested_setpoint, thresholds)
+            self._duty_cycle = self._calculate_duty_cycle(setpoint, thresholds)
 
             # Update boiler temperature if the period has just started
             if self._status == PWMStatus.ON:
@@ -246,17 +253,17 @@ class PWM:
                 else:
                     self._last_boiler_temperature = flow_temperature
 
-            # Control the adjusted setpoint, only in MINIMUM mode: in an UNRESTRICTED burn the flow follows the smoothed setpoint, which the
+            # Control the adjusted setpoint, only in MINIMUM mode: in an UNRESTRICTED burn the flow follows `setpoint`, which the
             # adjuster would raise the minimum towards. Hot water says nothing about heating, so it doesn't adjust
             minimum_mode = mode == ModulationMode.MINIMUM
             if minimum_mode and flame.is_active and not boiler.hot_water_active and boiler.status not in (BoilerStatus.PUMP_STARTING, BoilerStatus.OVERSHOOT_HANDLING) and flame.latest_on_time_seconds is not None and flame.latest_on_time_seconds > 6:
                 target = flow_temperature - 3
-                self._setpoint = self._setpoint_adjuster.adjust(target_setpoint=target)
+                self._adjusted_setpoint = self._setpoint_adjuster.adjust(target_setpoint=target)
             elif minimum_mode and flame.is_inactive and not boiler.hot_water_active and (flame.average_on_time_seconds is None or flame.average_on_time_seconds < 60):
                 target = flow_temperature + 10
-                self._setpoint = self._setpoint_adjuster.force(target_setpoint=target)
+                self._adjusted_setpoint = self._setpoint_adjuster.force(target_setpoint=target)
             elif self._setpoint_adjuster.current is not None:
-                self._setpoint = self._setpoint_adjuster.current
+                self._adjusted_setpoint = self._setpoint_adjuster.current
 
         # Without a duty since start or a reset, the status is OFF and no pulse starts
         if self._duty_cycle is None:
@@ -334,12 +341,12 @@ class PWM:
 
         return None
 
-    def _calculate_duty_cycle(self, requested_setpoint: float, thresholds: CycleThresholds) -> Tuple[int, int]:
+    def _calculate_duty_cycle(self, setpoint: float, thresholds: CycleThresholds) -> Tuple[int, int]:
         """Calculate the duty cycle in seconds based on the output of a PID controller and a heating curve value; records the branch that applied."""
-        on_time, off_time, self._duty_cycle_branch = self._duty_cycle_times(requested_setpoint, thresholds)
+        on_time, off_time, self._duty_cycle_branch = self._duty_cycle_times(setpoint, thresholds)
         return int(on_time), int(off_time)
 
-    def _duty_cycle_times(self, requested_setpoint: float, thresholds: CycleThresholds) -> tuple[float, float, str]:
+    def _duty_cycle_times(self, setpoint: float, thresholds: CycleThresholds) -> tuple[float, float, str]:
         """Return the on and off times in seconds and a short name of the duty cycle branch that applied."""
         # Unrestricted modulation is a 100% period
         if self._mode == ModulationMode.UNRESTRICTED:
@@ -353,7 +360,7 @@ class PWM:
         boiler_temperature = max(boiler_temperature, base_offset + 1)
 
         # Calculate duty cycle percentage
-        self._last_duty_cycle_percentage = (requested_setpoint - base_offset) / (boiler_temperature - base_offset)
+        self._last_duty_cycle_percentage = (setpoint - base_offset) / (boiler_temperature - base_offset)
         self._last_duty_cycle_percentage = min(max(self._last_duty_cycle_percentage, 0), 1)
 
         # Below the minimum duty no pulse starts, whatever the flame state
@@ -447,6 +454,6 @@ class PWM:
         return round(self._last_duty_cycle_percentage * 100, 2) if self._last_duty_cycle_percentage is not None else None
 
     @property
-    def setpoint(self) -> float:
-        """Returns the adjusted setpoint when running an ON duty cycle."""
-        return self._setpoint or MINIMUM_SETPOINT
+    def adjusted_setpoint(self) -> float:
+        """The setpoint adjuster's value, or MINIMUM_SETPOINT when it has none."""
+        return self._adjusted_setpoint or MINIMUM_SETPOINT

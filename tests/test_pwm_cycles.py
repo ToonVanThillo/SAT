@@ -140,7 +140,7 @@ def flame(active=False):
 
 
 def setpoint_for(duty: float) -> float:
-    """Requested setpoint that gives the duty cycle for a boiler temperature of FLOW."""
+    """The setpoint that gives the duty cycle for a boiler temperature of FLOW."""
     return BASE + duty * (FLOW - BASE)
 
 

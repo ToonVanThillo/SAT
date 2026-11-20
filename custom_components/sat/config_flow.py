@@ -624,7 +624,7 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
             )
 
         schema[vol.Required(CONF_MAXIMUM_SETPOINT, default=maximum_setpoint)] = selector.NumberSelector(
-            selector.NumberSelectorConfig(min=10, max=100, step=1, unit_of_measurement="°C")
+            selector.NumberSelectorConfig(min=30, max=100, step=1, unit_of_measurement="°C")
         )
 
         schema[vol.Required(CONF_HEATING_CURVE_COEFFICIENT, default=options[CONF_HEATING_CURVE_COEFFICIENT])] = selector.NumberSelector(

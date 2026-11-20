@@ -105,14 +105,13 @@ class TestDecideAtTheEmsBoundary:
         ("unrestricted-disallowed-floor", {CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False, CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR: 20}),
         ("calculated-below-minimum", {CONF_MINIMUM_SETPOINT: 42}, {}),
     ))
-    async def test_on_minimum_requests_the_minimum_setpoint_and_minimum_modulation(self, entry, options, climate, boiler_data, mqtt_mock, published, caplog):
+    async def test_on_minimum_requests_the_minimum_setpoint_and_minimum_modulation(self, entry, options, climate, boiler_data, mqtt_mock, published):
         await boiler_data(**IDLE | {"heatingoff": "on"})
         minimum = entry.data[CONF_MINIMUM_SETPOINT]
         floor = options.get(CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR, 0)
 
         assert await run_loop(climate, mqtt_mock, published) == [selflowtemp(minimum), burnmaxpower(floor), HEATER_ON]
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
-        assert last_cycle(caplog)["setpoint_rule"] == "pwm on minimum"
 
     # (b) ON with UNRESTRICTED: the smoothed setpoint and the configured maximum
 
@@ -121,9 +120,8 @@ class TestDecideAtTheEmsBoundary:
         await boiler_data(**IDLE | {"heatingoff": "on"})
 
         assert await run_loop(climate, mqtt_mock, published) == [selflowtemp(35), burnmaxpower(80), HEATER_ON]
-        assert climate.setpoint == climate.smoothed_setpoint == 35.0
+        assert last_cycle(caplog)["want"].control_setpoint == climate.smoothed_setpoint == 35.0
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
-        assert last_cycle(caplog)["setpoint_rule"] == "pwm on unrestricted"
 
     # (c) OFF: heater OFF with the control setpoint released from the first cycle
 
@@ -141,7 +139,6 @@ class TestDecideAtTheEmsBoundary:
         assert climate.pwm.status == PWMStatus.OFF
         assert calls == [HEATER_OFF]
         assert released(caplog)
-        assert last_cycle(caplog)["setpoint_rule"] == "pwm off"
 
         off = {"heatingoff": "on", "selflowtemp": 5, "burngas": "off", "heatingactive": "off"}
         calls = await one_cycle(hass, climate, mqtt_mock, published, freezer, caplog, boiler_data(**off))
@@ -164,8 +161,7 @@ class TestDecideAtTheEmsBoundary:
 
         assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
         assert heater_writes(calls) == []
-        assert climate.setpoint == 35.0
-        assert last_cycle(caplog)["setpoint_rule"] == "pwm on unrestricted"
+        assert last_cycle(caplog)["want"].control_setpoint == 35.0
 
     # (d) MINIMUM -> UNRESTRICTED during a burn: the setpoint and modulation change in place, the heater stays on
 
@@ -247,7 +243,7 @@ class TestDecideAtTheEmsBoundary:
             calls = await one_cycle(hass, climate, mqtt_mock, published, freezer, caplog, boiler_data(**BURNING | {"tapwateractive": draw} | echo(published)))
             assert HEATER_OFF not in calls
             assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.UNRESTRICTED)
-            assert climate.setpoint == 35.0
+            assert last_cycle(caplog)["want"].control_setpoint == 35.0
 
     # A hot water draw during a MINIMUM pulse, on the climate side: on EMS-ESP no heater OFF is published, the setpoint stays the minimum of
     # 30 and the relative modulation state stays MINIMUM. The draws fall within the minimum pulse, so PWM's own pulse handling isn't tested
@@ -264,7 +260,7 @@ class TestDecideAtTheEmsBoundary:
             assert coordinator.boiler.hot_water_active
             assert HEATER_OFF not in calls
             assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
-            assert climate.setpoint == 30.0
+            assert last_cycle(caplog)["want"].control_setpoint == 30.0
             # EMS-ESP's max relative modulation doesn't limit hot water: the state follows the mode
             assert climate.relative_modulation_state.name == "MINIMUM"
 
@@ -365,8 +361,8 @@ class TestDecideAtTheEmsBoundary:
         assert burnmaxpower_writes(sent) == [burnmaxpower(floor)]
 
 
-# (h) HOT_WATER and HEATER_OFF_REQUESTED: EMS-ESP's max relative modulation doesn't limit hot water, so OpenTherm over MQTT shows them,
-# and otherwise the mode. A minimum at or below COLD_SETPOINT (28.2) makes the MINIMUM pulse request heater OFF.
+# (h) HOT_WATER: EMS-ESP's max relative modulation doesn't limit hot water, so OpenTherm over MQTT shows it, and otherwise the mode.
+# A minimum at or below COLD_SETPOINT (28.2) still gives a MINIMUM pulse with the heater ON.
 
 def otgw_disallowed(minimum: float, hot_water: str, expected: tuple[str, int], name: str) -> Any:
     return pytest.param(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}, {CONF_MINIMUM_SETPOINT: minimum})[1][0], hot_water, expected, id=name)
@@ -375,7 +371,7 @@ def otgw_disallowed(minimum: float, hot_water: str, expected: tuple[str, int], n
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry")
 @pytest.mark.parametrize(otgw_entry()[0] + ", hot_water, expected", [
     otgw_disallowed(30, "ON", ("HOT_WATER", 100), "hot-water"),
-    otgw_disallowed(20, "OFF", ("HEATER_OFF_REQUESTED", 100), "heater-off"),
+    otgw_disallowed(20, "OFF", ("MINIMUM", 0), "cold-minimum"),
     otgw_disallowed(30, "OFF", ("MINIMUM", 0), "minimum"),
 ])
 async def test_diagnostics_show_the_hot_water_state(hass, hass_client, entry, climate, mqtt_mock, published, hot_water, expected):
@@ -443,7 +439,7 @@ async def test_opentherm_requests_the_maximum_while_off_and_the_minimum_with_the
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*with_data({CONF_MODE: MODE_FAKE, CONF_MINIMUM_SETPOINT: 30}))
 @pytest.mark.parametrize(("setpoint_management", "mode", "setpoint"), [(False, ModulationMode.MINIMUM, 30), (True, ModulationMode.UNRESTRICTED, 35)])
-async def test_without_setpoint_management_the_mode_is_minimum(entry, climate, coordinator, setpoint_management, mode, setpoint):
+async def test_without_setpoint_management_the_mode_is_minimum(entry, climate, coordinator, caplog, setpoint_management, mode, setpoint):
     coordinator.config = SatFakeConfig(setpoint_management, supports_relative_modulation_management=True)
     await coordinator.async_set_boiler_temperature(40)
     await climate.async_set_target_temperature(21.0)
@@ -452,7 +448,7 @@ async def test_without_setpoint_management_the_mode_is_minimum(entry, climate, c
     await climate.async_control_heating_loop()
 
     assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, mode)
-    assert climate.setpoint == setpoint
+    assert last_cycle(caplog)["want"].control_setpoint == setpoint
 
 
 # Dynamic minimum setpoint v1: its normal mode requires UNRESTRICTED

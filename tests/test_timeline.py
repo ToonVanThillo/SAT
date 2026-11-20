@@ -245,7 +245,7 @@ async def test_the_debounced_run_executes_the_loop_body(heating, hass, climate, 
 # The fields per branch
 
 COMMON = ["cycle", "hvac", "inputs", "boiler", "verify", "pwm", "want", "sent"]
-HEAT_ONLY = ["smoothed", "setpoint_rule", "calculated", "curve", "p", "i", "d"]
+HEAT_ONLY = ["smoothed", "calculated", "curve", "p", "i", "d"]
 
 
 @pytest.mark.parametrize(*ems_entry())
@@ -368,14 +368,15 @@ async def test_verify_lists_the_status_changes_with_what_was_sent_and_read_back(
 
 @pytest.mark.parametrize(*with_data({CONF_MINIMUM_SETPOINT: 30}, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
 async def test_the_pwm_state_shows_a_pulse_held_on_for_the_minimum_pulse(heating, climate, caplog, freezer):
-    await heating()
+    await heating(curflowtemp=80.0)
     await climate.async_control_heating_loop()
     assert climate.pwm.status == PWMStatus.ON
     assert last_cycle(caplog)["pwm"].minimum_pulse_held is False
 
-    # A lower target gives a duty with no on time; the pulse is within its minimum
+    # A lower target gives a smoothed setpoint of 29.1, just above the cold threshold: against the hot flow a duty with no on time; the
+    # pulse is within its minimum
     freezer.tick(10)
-    await climate.async_set_target_temperature(15.0)
+    await climate.async_set_target_temperature(20.75)
     await climate.async_control_heating_loop()
 
     assert last_cycle(caplog)["pwm"].status == PWMStatus.ON

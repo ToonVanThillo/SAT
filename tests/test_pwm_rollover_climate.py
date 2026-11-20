@@ -13,7 +13,7 @@ from tests.const import IDLE, with_data
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
 
-# A cold boiler, so the requested setpoint is above the boiler temperature and the duty is in the max branch
+# A cold boiler, so the smoothed setpoint is above the boiler temperature and the duty is in the max branch
 COLD_BOILER = IDLE | {"selflowtemp": 25, "curflowtemp": 25, "rettemp": 25, "burnmaxpower": 0}
 PERIOD = 3600  # the outside temperature of the entry gives 2 cycles per hour, so a 100% period is 2 * 3600 / 2 s
 

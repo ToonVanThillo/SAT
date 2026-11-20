@@ -36,6 +36,7 @@ from custom_components.sat.const import (
     CONF_MANUFACTURER,
     CONF_MAXIMUM_RELATIVE_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
+    CONF_MAXIMUM_SETPOINT,
     CONF_MINIMUM_SETPOINT,
     CONF_MODE,
     CONF_MQTT_TOPIC,
@@ -110,6 +111,21 @@ async def test_maximum_relative_modulation_allows_above_100_only_for_ems(hass, m
     result = await options_flow(mode).async_step_advanced()
 
     assert selector_max(result, CONF_MAXIMUM_RELATIVE_MODULATION) == maximum
+
+
+@pytest.mark.parametrize("mode", [MODE_MQTT_EMS, MODE_MQTT_OPENTHERM])
+async def test_the_maximum_setpoint_selector_starts_at_30(hass, mode):
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_MODE: mode, CONF_NAME: "Test", CONF_DEVICE: "d"})
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "general"})
+    selector = next(value for marker, value in result["data_schema"].schema.items() if marker == CONF_MAXIMUM_SETPOINT)
+
+    assert (selector.config["min"], selector.config["max"]) == (30, 100)
+    assert selector(30) == 30
+    with pytest.raises(vol.Invalid):
+        selector(29)
 
 
 HOT_WATER_OPTIONS = (CONF_HOT_WATER_BURNER_POWER, CONF_HOT_WATER_FLOW_TEMPERATURE)

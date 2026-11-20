@@ -50,7 +50,6 @@ def _control(climate: SatClimate, coordinator: SatDataUpdateCoordinator) -> dict
     return {
         "pid_error": climate.pid.last_error,
         "error_source": climate.max_error.entity_id,
-        "control_setpoint": climate.setpoint,
         "relative_modulation_state": climate.relative_modulation_state.name,
         "relative_modulation_value": climate.get_relative_modulation_value(),
         "valves_open": climate.valves_open,

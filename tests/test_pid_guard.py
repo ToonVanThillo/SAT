@@ -134,7 +134,8 @@ async def test_the_pid_continues_from_the_kept_state_when_the_sensor_returns(has
 async def test_a_humidity_change_during_an_inside_gap_leaves_the_pid_and_pwm_alone(hass, entry, climate, boiler_data, freezer, caplog):
     hass.states.async_set(HUMIDITY, "50")
     await hass.async_block_till_done()
-    before = await steady(hass, climate, boiler_data, freezer, caplog, exact=False)
+    # The Summer Simmer index of 20.9 °C at 50% is 23.7: a target above it gives a demand, so PWM runs
+    before = await steady(hass, climate, boiler_data, freezer, caplog, target=24.5, exact=False)
     await gap(hass)
     skipped = skips(caplog)
 
@@ -168,7 +169,7 @@ async def test_a_target_change_during_an_inside_gap_skips_the_pid_reset_but_not_
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
     skipped = skips(caplog)
-    assert climate.pwm.setpoint != MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint != MINIMUM_SETPOINT
 
     await climate.async_set_temperature(temperature=22.0)
     await hass.async_block_till_done()
@@ -177,7 +178,7 @@ async def test_a_target_change_during_an_inside_gap_skips_the_pid_reset_but_not_
     assert {key: value for key, value in kept(climate).items() if key in pid_before} == pid_before
     assert skips(caplog) == skipped + 1
     # reset_control_state is outside the guard: it resets the setpoint adjuster, not PWM
-    assert climate.pwm.setpoint == MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint == MINIMUM_SETPOINT
     assert climate.pwm.state == before["pwm"]
 
 
@@ -186,7 +187,7 @@ async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
     skipped = skips(caplog)
-    assert climate.pwm.setpoint != MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint != MINIMUM_SETPOINT
 
     await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
@@ -195,7 +196,7 @@ async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not
     assert {key: value for key, value in kept(climate).items() if key in pid_before} == pid_before
     assert skips(caplog) == skipped + 1
     # The control state reset and the PWM reset are outside the guard
-    assert climate.pwm.setpoint == MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint == MINIMUM_SETPOINT
     assert climate.pwm.status == PWMStatus.OFF
 
 

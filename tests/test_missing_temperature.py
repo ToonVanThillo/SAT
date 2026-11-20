@@ -85,7 +85,6 @@ async def missing_cycle(hass, climate, mqtt_mock) -> None:
 
 async def assert_off_then_released(hass, climate, boiler_data, freezer, mqtt_mock, published, caplog, which: str, readback: dict[str, Any], scheduled: bool = False) -> None:
     """`scheduled`: the missing cycle already ran as the loop the debounce timer started (after a time jump), with the publishes cleared before."""
-    setpoint = climate.setpoint
     if not scheduled:
         await missing_cycle(hass, climate, mqtt_mock)
 
@@ -94,7 +93,6 @@ async def assert_off_then_released(hass, climate, boiler_data, freezer, mqtt_moc
     fields = last_cycle(caplog)
     assert getattr(fields["inputs"], INPUT[which]) is None
     assert fields["want"] == DesiredState(control_setpoint=RELEASE, heater_state=DeviceState.OFF)
-    assert climate.setpoint == setpoint
 
     # Heater OFF is read back: nothing more is sent
     freezer.tick(1)

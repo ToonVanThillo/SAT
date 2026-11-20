@@ -52,7 +52,6 @@ async def test_stale_circulation_options_load_cleanly(hass, entry, climate, boil
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     fields = await run_one_loop(hass, climate, caplog, len(caplog.records))
 
-    assert "circulation" not in fields["setpoint_rule"]
     assert not [key for key in fields if "circulation" in key]
 
     # The advanced step opens, without those fields
@@ -99,7 +98,6 @@ async def test_after_a_hot_water_burn_the_heater_stays_off_and_is_released(hass,
 
     assert (fields["inputs"].current_temperature, fields["inputs"].target_temperature) == (20.9, 21.0)
     assert climate.pwm.status == PWMStatus.OFF
-    assert "circulation" not in fields["setpoint_rule"]
     assert fields["want"].heater_state == DeviceState.OFF
     assert {"cmd": "heatingoff", "value": "off"} not in all_writes
     assert {"cmd": "selflowtemp", "value": 20} not in all_writes

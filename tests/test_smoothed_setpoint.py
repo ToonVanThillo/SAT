@@ -122,7 +122,7 @@ async def test_the_smoothed_setpoint_starts_at_the_calculated_one_and_follows_it
     assert (record["smoothed"], record["calculated"]) == (third, heating.calculated_setpoint)
     assert record["smoothed"] != record["calculated"]
     assert not {"setpoint", "requested"} & record.keys()
-    assert {"setpoint_rule", "curve", "p", "i", "d"} <= record.keys()
+    assert {"curve", "p", "i", "d"} <= record.keys()
 
 
 @pytest.mark.usefixtures("loop_entry")

@@ -23,7 +23,7 @@ from custom_components.sat.const import (
     PWMStatus,
 )
 from custom_components.sat.held_input import MISSING_INPUT_GRACE
-from tests.conftest import TIMELINE, advance, run_one_loop
+from tests.conftest import TIMELINE, advance, last_cycle, run_one_loop
 from tests.const import IDLE, with_data
 from tests.test_climate_inputs import ROOM
 from tests.test_pid_guard import (
@@ -61,12 +61,12 @@ async def test_the_pwm_service_is_not_registered_but_reset_integral_is(hass, ent
 async def test_target_changes_keep_a_running_pulse_and_reset_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog):
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     assert before["pwm"].status == PWMStatus.ON
-    assert climate.pwm.setpoint != MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint != MINIMUM_SETPOINT
 
     await climate.async_set_temperature(temperature=22.0)
     await hass.async_block_till_done()
     assert climate.pwm.state == before["pwm"]
-    assert climate.pwm.setpoint == MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint == MINIMUM_SETPOINT
 
     # Changes in a row; the pending loop runs at once on each, and the adjuster may learn again in it
     for target in (23.0, 19.0, 21.5):
@@ -121,7 +121,7 @@ async def test_an_area_target_change_resets_neither_pwm_nor_the_setpoint_adjuste
     hass.states.async_set(ROOM, "heat", ROOM_ATTRS | {"temperature": 22})
     await hass.async_block_till_done()
     before = await steady(hass, climate, boiler_data, freezer, caplog)
-    setpoint = climate.pwm.setpoint
+    setpoint = climate.pwm.adjusted_setpoint
     assert setpoint != MINIMUM_SETPOINT
     resets_before = resets(caplog)
 
@@ -131,16 +131,31 @@ async def test_an_area_target_change_resets_neither_pwm_nor_the_setpoint_adjuste
     # The PID reset branch ran, and left PWM and the adjuster alone
     assert resets(caplog) == resets_before + 1
     assert climate.pwm.state == before["pwm"]
-    assert climate.pwm.setpoint == setpoint
+    assert climate.pwm.adjusted_setpoint == setpoint
 
 
 # The dynamic minimum v2
 
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM, V2 | UNRESTRICTED_DISALLOWED))
+async def test_with_dynamic_minimum_v2_a_minimum_pulse_requests_the_minimum_the_mode_decision_used(hass, entry, climate, boiler_data, caplog):
+    # A cold boiler (flow 35, flame off, no average on time) makes the adjuster force flow + 10 = 45 in the update that starts the pulse
+    await boiler_data(**IDLE | {"heatingoff": "on", "curflowtemp": 35})
+    await climate.async_set_target_temperature(21.0)
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+    fields = await run_one_loop(hass, climate, caplog, len(caplog.records))
+
+    # The pulse setpoint is the effective minimum as it was before that update: the configured 30, not the 45 the update gave
+    assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
+    assert climate.minimum_setpoint_value == 45.0
+    assert fields["want"].control_setpoint == 30.0
+
+
 @pytest.mark.parametrize(*with_data(WARM_MINIMUM, V2))
 async def test_with_dynamic_minimum_v2_a_target_change_drops_the_learned_minimum_and_the_pulse_turns_unrestricted(hass, entry, climate, boiler_data, freezer, caplog):
-    # A cold boiler (flow 35, flame off, no average on time) forces the adjuster to flow + 10 while in MINIMUM mode
+    # A cold boiler (flow 35, flame off, no average on time) forces the adjuster to flow + 10 while in MINIMUM mode; the target gives a
+    # smoothed setpoint of 29.1, above the cold threshold and below the configured minimum
     await boiler_data(**IDLE | {"heatingoff": "on", "curflowtemp": 35})
-    await climate.async_set_target_temperature(20.5)
+    await climate.async_set_target_temperature(20.75)
     await climate.async_set_hvac_mode(HVACMode.HEAT)
     await run_one_loop(hass, climate, caplog, len(caplog.records))
     assert climate.minimum_setpoint_value == 45.0
@@ -157,7 +172,7 @@ async def test_with_dynamic_minimum_v2_a_target_change_drops_the_learned_minimum
         await run_one_loop(hass, climate, caplog, len(caplog.records))
     assert (climate.pwm.status, climate.pwm.mode) == (PWMStatus.ON, ModulationMode.MINIMUM)
     assert 30.0 < climate.smoothed_setpoint < 45.0
-    assert climate.setpoint == 45.0
+    assert last_cycle(caplog)["want"].control_setpoint == 45.0
     period_start = climate.pwm._period_start
 
     # The next loop, which the change may run at once: the minimum is the configured one again and the smoothed setpoint is above it,
@@ -169,21 +184,21 @@ async def test_with_dynamic_minimum_v2_a_target_change_drops_the_learned_minimum
     assert climate.minimum_setpoint_value == 30.0
     assert (climate.pwm.status, climate.pwm.mode, climate.pwm.duty_cycle) == (PWMStatus.ON, ModulationMode.UNRESTRICTED, (3600, 0))
     assert climate.pwm._period_start > period_start
-    assert climate.setpoint == climate.smoothed_setpoint > 30.0
+    assert last_cycle(caplog)["want"].control_setpoint == climate.smoothed_setpoint > 30.0
 
     # The adjuster doesn't learn while UNRESTRICTED, although the flame is still off
     for _ in range(3):
         freezer.tick(30)
         await run_one_loop(hass, climate, caplog, len(caplog.records))
         assert climate.pwm.mode == ModulationMode.UNRESTRICTED
-        assert climate.pwm.setpoint == MINIMUM_SETPOINT
+        assert climate.pwm.adjusted_setpoint == MINIMUM_SETPOINT
         assert climate.minimum_setpoint_value == 30.0
 
 
 @pytest.mark.parametrize(*with_data(WARM_MINIMUM, UNRESTRICTED_DISALLOWED))
 async def test_a_pwm_reset_by_the_control_loop_keeps_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
-    adjusted = climate.pwm.setpoint
+    adjusted = climate.pwm.adjusted_setpoint
     assert adjusted != MINIMUM_SETPOINT
 
     # Missing temperature: PWM is reset by the control loop, the adjuster is not
@@ -195,7 +210,7 @@ async def test_a_pwm_reset_by_the_control_loop_keeps_the_setpoint_adjuster(hass,
 
     assert fields["inputs"].current_temperature is None
     assert climate.pwm.status == PWMStatus.OFF
-    assert climate.pwm.setpoint == adjusted
+    assert climate.pwm.adjusted_setpoint == adjusted
 
 
 # An HVAC mode change
@@ -205,7 +220,7 @@ async def test_a_pwm_reset_by_the_control_loop_keeps_the_setpoint_adjuster(hass,
 async def test_an_hvac_mode_change_resets_pwm_and_the_setpoint_adjuster(hass, entry, climate, boiler_data, freezer, caplog):
     await steady(hass, climate, boiler_data, freezer, caplog)
     assert climate.pwm.status == PWMStatus.ON
-    assert climate.pwm.setpoint != MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint != MINIMUM_SETPOINT
     assert hass.states.get(STATUS).state == PWMStatus.ON.value
     received: list[PWMStatus] = []
 
@@ -220,7 +235,7 @@ async def test_an_hvac_mode_change_resets_pwm_and_the_setpoint_adjuster(hass, en
 
     # The reset signals the PWM sensors, and the last signal says OFF
     assert climate.pwm.status == PWMStatus.OFF
-    assert climate.pwm.setpoint == MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint == MINIMUM_SETPOINT
     assert received
     assert received[-1] == PWMStatus.OFF
     assert hass.states.get(STATUS).state == PWMStatus.OFF.value
@@ -239,9 +254,9 @@ async def heating_with_a_pulse(hass, climate, boiler_data, freezer, caplog) -> d
     """Heating with a running pulse and an adjusted setpoint; returns what setting the active HVAC mode again must leave as it is."""
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     assert before["pwm"].status == PWMStatus.ON
-    assert climate.pwm.setpoint != MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint != MINIMUM_SETPOINT
 
-    return before | {"setpoint": climate.pwm.setpoint}
+    return before | {"setpoint": climate.pwm.adjusted_setpoint}
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
@@ -259,7 +274,7 @@ async def test_setting_the_active_hvac_mode_again_changes_nothing(hass, entry, c
     for spy in (pid, control_state, write, schedule):
         spy.assert_not_called()
     assert climate.pwm.state == before["pwm"]
-    assert climate.pwm.setpoint == before["setpoint"]
+    assert climate.pwm.adjusted_setpoint == before["setpoint"]
     assert received == []
     assert hass.states.get(STATUS).state == PWMStatus.ON.value
 
@@ -281,7 +296,7 @@ async def test_the_climate_services_selecting_the_active_hvac_mode_change_nothin
     schedule.assert_not_called()
     assert climate.hvac_mode == HVACMode.HEAT
     assert climate.pwm.state == before["pwm"]
-    assert climate.pwm.setpoint == before["setpoint"]
+    assert climate.pwm.adjusted_setpoint == before["setpoint"]
 
 
 @pytest.mark.parametrize("service", ["turn_off", "set_hvac_mode"])

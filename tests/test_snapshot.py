@@ -158,7 +158,7 @@ class TestEmsCycle:
         assert coordinator.data["heatingoff"] == "on"
 
 
-# A minimum above COLD_SETPOINT (28.2) and a boiler temperature, so the first cycle starts a pulse at the minimum with heater ON
+# A boiler temperature, so the first cycle starts a pulse at the minimum of 30 with heater ON
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*unrestricted_disallowed_entry(**{CONF_MODE: MODE_FAKE, CONF_MINIMUM_SETPOINT: 30}))
 async def test_fake_modulation_follows_the_cycles_heater_request_not_the_setpoint_read_back(entry, climate, coordinator):
@@ -183,7 +183,7 @@ async def test_fake_modulation_follows_the_cycles_heater_request_not_the_setpoin
     assert written == [0]
 
 
-# A minimum above COLD_SETPOINT (28.2), so the MINIMUM pulse requests heater ON and the minimum max relative modulation
+# A minimum of 30, so the MINIMUM pulse requests the minimum max relative modulation
 @pytest.mark.parametrize(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}, {CONF_MINIMUM_SETPOINT: 30}))
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry")
 async def test_manufacturer_resolved_by_the_update_step_applies_in_the_same_cycle(hass, entry, climate, mqtt_mock, published):
@@ -200,7 +200,7 @@ async def test_manufacturer_resolved_by_the_update_step_applies_in_the_same_cycl
     assert ("otgw/set/gw1/command", "MM=0", 1, False) not in published()
 
 
-# A minimum above COLD_SETPOINT (28.2), so the MINIMUM pulse requests heater ON and the minimum max relative modulation
+# A minimum of 30, so the MINIMUM pulse requests the minimum max relative modulation
 @pytest.mark.parametrize(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}, {CONF_MINIMUM_SETPOINT: 30}))
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry", "no_publish_error")
 async def test_modulation_ignores_hot_water_arriving_mid_cycle(hass, entry, climate, coordinator, mqtt_mock, published):

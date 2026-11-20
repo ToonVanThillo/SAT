@@ -1,4 +1,5 @@
 """Characterization tests for the heating loop, end-to-end from the climate entity to the EMS MQTT messages."""
+import logging
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -10,16 +11,25 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.event import async_call_later
 
+from custom_components.sat.channels import RELEASE
 from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
     CONF_MINIMUM_SETPOINT,
+    PWMStatus,
 )
-from tests.conftest import advance
+from custom_components.sat.coordinator import DeviceState
+from tests.conftest import TIMELINE, advance, last_cycle
 from tests.const import IDLE, ems_entry, with_data
 
 pytestmark = pytest.mark.usefixtures("loop_entry")
+
+
+@pytest.fixture(autouse=True)
+def debug_logs(caplog):
+    caplog.set_level(logging.DEBUG, logger=TIMELINE)
+
 
 BOILER = "ems-esp/boiler"
 
@@ -102,18 +112,19 @@ async def test_hvac_off_with_disabled_heater_publishes_nothing(entry, climate, b
     assert published() == []
 
 
-# A minimum setpoint above COLD_SETPOINT (28.2), so the PWM ON phase requests heater ON
+# A minimum setpoint of 30, above the default of the entries
 WARM_MINIMUM_SETPOINT = {CONF_MINIMUM_SETPOINT: 30}
 
 
 @pytest.mark.parametrize(*ems_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
-async def test_pwm_on_with_cold_minimum_setpoint_stops_heater(entry, climate, boiler_data, mqtt_mock, published):
-    await boiler_data(**IDLE)
+async def test_pwm_on_with_cold_minimum_setpoint_heats_at_the_minimum(entry, climate, boiler_data, mqtt_mock, published):
+    await boiler_data(**IDLE | {"heatingoff": "on"})
 
-    # current behaviour, known bug: with a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase requests heater OFF
+    # With a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase still requests the minimum with the heater ON
     assert await run_loop(climate, mqtt_mock, published) == [
+        message('{"cmd": "selflowtemp", "value": 20}'),
         message('{"cmd": "burnmaxpower", "value": 0}'),
-        message('{"cmd": "heatingoff", "value": "on"}'),
+        message('{"cmd": "heatingoff", "value": "off"}'),
     ]
 
 
@@ -258,3 +269,41 @@ async def test_tap_draw_with_pwm_publishes_no_burnmaxpower(entry, climate, boile
         mqtt_mock.async_publish.reset_mock()
         await climate.async_control_heating_loop()
         assert not any("burnmaxpower" in call[1] for call in published())
+
+
+# No demand: a smoothed setpoint at or below COLD_SETPOINT (28.2) resets PWM, releases the setpoint and requests heater OFF in every modulation mode
+
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
+async def test_a_cold_smoothed_setpoint_releases_with_the_heater_off_in_minimum_mode_with_a_warm_minimum(entry, climate, boiler_data, mqtt_mock, published, caplog):
+    await boiler_data(**IDLE | {"heatingoff": "off"})
+
+    # The minimum of 30 is irrelevant: there is no demand, so no setpoint is requested
+    calls = await run_loop(climate, mqtt_mock, published, target=15.0)
+    assert message('{"cmd": "heatingoff", "value": "on"}') in calls
+    assert not [call for call in calls if "selflowtemp" in call[1]]
+    assert climate.smoothed_setpoint is not None and climate.smoothed_setpoint <= 28.2
+    assert climate.pwm.status == PWMStatus.OFF
+    assert last_cycle(caplog)["want"].control_setpoint is RELEASE
+    assert last_cycle(caplog)["want"].heater_state == DeviceState.OFF
+
+
+@pytest.mark.parametrize(*with_data(WARM_MINIMUM_SETPOINT, {CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
+async def test_a_cold_smoothed_setpoint_ends_a_running_minimum_pulse(entry, climate, boiler_data, mqtt_mock, published, caplog):
+    await boiler_data(**IDLE | {"heatingoff": "on"})
+    await run_loop(climate, mqtt_mock, published, target=21.0)
+    assert climate.pwm.status == PWMStatus.ON
+    assert last_cycle(caplog)["want"].control_setpoint == 30
+
+    await climate.async_set_target_temperature(15.0)
+    # The smoothed setpoint follows the lower target step by step
+    for _ in range(20):
+        await climate.async_control_heating_loop()
+        if climate.smoothed_setpoint <= 28.2:
+            break
+
+    assert climate.smoothed_setpoint <= 28.2
+    assert climate.pwm.status == PWMStatus.OFF
+    # A reset, not the natural end of the pulse, which keeps the duty cycle
+    assert climate.pwm.duty_cycle is None
+    assert last_cycle(caplog)["want"].control_setpoint is RELEASE
+    assert last_cycle(caplog)["want"].heater_state == DeviceState.OFF
