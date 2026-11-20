@@ -35,7 +35,7 @@ class HeatingCurve:
 
     def autotune(self, setpoint: float, target_temperature: float, outside_temperature: float):
         """Calculate an optimal coefficient value."""
-        if setpoint <= MINIMUM_SETPOINT:
+        if setpoint <= HEATER_OFF_SETPOINT:
             return
 
         coefficient = self.calculate_coefficient(setpoint, target_temperature, outside_temperature)

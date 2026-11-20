@@ -33,5 +33,5 @@ async def test_the_option_decides_the_mode_above_the_minimum(climate: SatClimate
 
     assert climate.pwm.status == PWMStatus.ON
     assert (calculated := climate.smoothed_setpoint) is not None
-    assert calculated > climate.minimum_setpoint_value
+    assert calculated > climate.minimum_setpoint
     assert climate.pwm.mode == expected

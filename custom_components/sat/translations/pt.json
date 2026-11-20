@@ -7,9 +7,8 @@
     "error": {
       "connection": "Não foi possível ligar ao gateway.",
       "mqtt_component": "O componente MQTT não está disponível.",
-      "minimum_setpoint_too_low": "O setpoint mínimo tem de estar acima de 28,2 °C.",
       "calibration_failed": "A calibração falhou; introduza o setpoint mínimo manualmente.",
-      "calibration_too_low": "O setpoint mínimo calibrado é igual ou inferior a 28,2 °C; introduza o setpoint mínimo manualmente."
+      "calibration_too_low": "O setpoint mínimo calibrado é inferior a 30 °C; introduza o setpoint mínimo manualmente."
     },
     "progress": {
       "calibration": "A calibrar e a encontrar o valor de proteção contra overshoot...\n\nPor favor, aguarde enquanto otimizamos o seu sistema de aquecimento. Este processo pode demorar aproximadamente 20 minutos."
@@ -31,7 +30,7 @@
         "title": "Ganhos Automáticos"
       },
       "calibrate_system": {
-        "description": "O SAT precisa do setpoint mínimo da sua caldeira: a temperatura de ida mais baixa que consegue manter com a modulação mínima (o valor de proteção contra overshoot). Calibre-o automaticamente, o que demora aproximadamente 20 minutos, ou introduza-o manualmente. Tem de estar acima de 28,2 °C. Os ganhos automáticos ou os valores PID manuais são escolhidos no passo seguinte.",
+        "description": "O SAT precisa do setpoint mínimo da sua caldeira: a temperatura de ida mais baixa que consegue manter com a modulação mínima (o valor de proteção contra overshoot). Calibre-o automaticamente, o que demora aproximadamente 20 minutos, ou introduza-o manualmente. Tem de ser de pelo menos 30 °C. Os ganhos automáticos ou os valores PID manuais são escolhidos no passo seguinte.",
         "menu_options": {
           "calibrate": "Calibrar e determinar o valor de proteção contra overshoot (aprox. 20 min).",
           "overshoot_protection": "Introduzir manualmente o valor de proteção contra overshoot."
@@ -82,9 +81,9 @@
           "minimum_setpoint": "Valor"
         },
         "data_description": {
-          "minimum_setpoint": "O setpoint mínimo em °C. Tem de estar acima de 28,2 °C."
+          "minimum_setpoint": "O setpoint mínimo em °C. Tem de ser de pelo menos 30 °C."
         },
-        "description": "Introduza o setpoint mínimo da sua caldeira: a temperatura de ida mais baixa que consegue manter com a modulação mínima (o valor de proteção contra overshoot). Tem de estar acima de 28,2 °C. Se não o souber, volte atrás e calibre, ou consulte o README para saber como o encontrar.",
+        "description": "Introduza o setpoint mínimo da sua caldeira: a temperatura de ida mais baixa que consegue manter com a modulação mínima (o valor de proteção contra overshoot). Tem de ser de pelo menos 30 °C. Se não o souber, volte atrás e calibre, ou consulte o README para saber como o encontrar.",
         "title": "Proteção contra Overshoot"
       },
       "pid_controller": {

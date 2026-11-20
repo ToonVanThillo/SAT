@@ -7,9 +7,8 @@
     "error": {
       "connection": "Impossible de se connecter à la passerelle.",
       "mqtt_component": "Le composant MQTT n'est pas disponible.",
-      "minimum_setpoint_too_low": "Le point de consigne minimum doit être supérieur à 28,2 °C.",
       "calibration_failed": "La calibration a échoué ; saisissez le point de consigne minimum manuellement.",
-      "calibration_too_low": "Le point de consigne minimum calibré est inférieur ou égal à 28,2 °C ; saisissez le point de consigne minimum manuellement."
+      "calibration_too_low": "Le point de consigne minimum calibré est inférieur à 30 °C ; saisissez le point de consigne minimum manuellement."
     },
     "progress": {
       "calibration": "Calibration et recherche de la valeur de protection contre les dépassements en cours...\n\nVeuillez patienter pendant que nous optimisons votre système de chauffage. Ce processus peut prendre environ 20 minutes."
@@ -31,7 +30,7 @@
         "title": "Gains automatiques"
       },
       "calibrate_system": {
-        "description": "SAT a besoin du point de consigne minimum de votre chaudière : la température de départ la plus basse qu'elle peut maintenir à la modulation minimale (la valeur de protection contre les dépassements). Calibrez-le automatiquement, ce qui prend environ 20 minutes, ou saisissez-le manuellement. Il doit être supérieur à 28,2 °C. Les gains automatiques ou les valeurs PID manuelles se choisissent à l'étape suivante.",
+        "description": "SAT a besoin du point de consigne minimum de votre chaudière : la température de départ la plus basse qu'elle peut maintenir à la modulation minimale (la valeur de protection contre les dépassements). Calibrez-le automatiquement, ce qui prend environ 20 minutes, ou saisissez-le manuellement. Il doit être d'au moins 30 °C. Les gains automatiques ou les valeurs PID manuelles se choisissent à l'étape suivante.",
         "menu_options": {
           "calibrate": "Calibrer et déterminer votre valeur de protection contre les dépassements (env. 20 min).",
           "overshoot_protection": "Entrer manuellement la valeur de protection contre les dépassements."
@@ -82,9 +81,9 @@
           "minimum_setpoint": "Valeur"
         },
         "data_description": {
-          "minimum_setpoint": "Le point de consigne minimum en °C. Doit être supérieur à 28,2 °C."
+          "minimum_setpoint": "Le point de consigne minimum en °C. Doit être d'au moins 30 °C."
         },
-        "description": "Saisissez le point de consigne minimum de votre chaudière : la température de départ la plus basse qu'elle peut maintenir à la modulation minimale (la valeur de protection contre les dépassements). Il doit être supérieur à 28,2 °C. Si vous ne le connaissez pas, revenez en arrière et lancez la calibration, ou consultez le README pour savoir comment le trouver.",
+        "description": "Saisissez le point de consigne minimum de votre chaudière : la température de départ la plus basse qu'elle peut maintenir à la modulation minimale (la valeur de protection contre les dépassements). Il doit être d'au moins 30 °C. Si vous ne le connaissez pas, revenez en arrière et lancez la calibration, ou consultez le README pour savoir comment le trouver.",
         "title": "Protection contre les dépassements"
       },
       "pid_controller": {

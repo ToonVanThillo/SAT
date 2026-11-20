@@ -7,9 +7,8 @@
     "error": {
       "connection": "Kan geen verbinding maken met de gateway.",
       "mqtt_component": "Het MQTT-component is niet beschikbaar.",
-      "minimum_setpoint_too_low": "Het minimale setpoint moet boven 28,2 °C liggen.",
       "calibration_failed": "Kalibratie mislukt; voer het minimale setpoint handmatig in.",
-      "calibration_too_low": "Het gekalibreerde minimale setpoint ligt op of onder 28,2 °C; voer het minimale setpoint handmatig in."
+      "calibration_too_low": "Het gekalibreerde minimale setpoint ligt onder 30 °C; voer het minimale setpoint handmatig in."
     },
     "progress": {
       "calibration": "Kalibreren en de waarde van de overshootbeveiliging vinden...\n\nEven geduld a.u.b. terwijl wij uw verwarmingssysteem optimaliseren. Dit proces kan ongeveer 20 minuten duren."
@@ -31,7 +30,7 @@
         "title": "Automatische Versterkingen"
       },
       "calibrate_system": {
-        "description": "SAT heeft het minimale setpoint van uw ketel nodig: de laagste aanvoertemperatuur die hij bij minimale modulatie kan vasthouden (de overshoot-beveiligingswaarde). Kalibreer het automatisch, wat ongeveer 20 minuten duurt, of voer het handmatig in. Het moet boven 28,2 °C liggen. Automatische versterkingen of handmatige PID-waarden kiest u in de volgende stap.",
+        "description": "SAT heeft het minimale setpoint van uw ketel nodig: de laagste aanvoertemperatuur die hij bij minimale modulatie kan vasthouden (de overshoot-beveiligingswaarde). Kalibreer het automatisch, wat ongeveer 20 minuten duurt, of voer het handmatig in. Het moet minstens 30 °C zijn. Automatische versterkingen of handmatige PID-waarden kiest u in de volgende stap.",
         "menu_options": {
           "calibrate": "Kalibreer en bepaal uw overshoot-beveiligingswaarde (ong. 20 min).",
           "overshoot_protection": "Voer handmatig de overshoot-beveiligingswaarde in."
@@ -82,9 +81,9 @@
           "minimum_setpoint": "Waarde"
         },
         "data_description": {
-          "minimum_setpoint": "Het minimale setpoint in °C. Moet boven 28,2 °C liggen."
+          "minimum_setpoint": "Het minimale setpoint in °C. Moet minstens 30 °C zijn."
         },
-        "description": "Voer het minimale setpoint van uw ketel in: de laagste aanvoertemperatuur die hij bij minimale modulatie kan vasthouden (de overshoot-beveiligingswaarde). Het moet boven 28,2 °C liggen. Als u het niet weet, ga dan terug en kalibreer, of lees in de README hoe u het kunt vinden.",
+        "description": "Voer het minimale setpoint van uw ketel in: de laagste aanvoertemperatuur die hij bij minimale modulatie kan vasthouden (de overshoot-beveiligingswaarde). Het moet minstens 30 °C zijn. Als u het niet weet, ga dan terug en kalibreer, of lees in de README hoe u het kunt vinden.",
         "title": "Overshoot-beveiliging"
       },
       "pid_controller": {

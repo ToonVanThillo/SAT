@@ -280,15 +280,14 @@ the smoothed setpoint in UNRESTRICTED, and in MINIMUM the effective minimum it
 was given, the one its mode decision used.
 
 **Minimum setpoint**
-- Backends with setpoint management require a minimum setpoint above the cold
-  threshold (28.2 °C): a MINIMUM pulse requests heater ON at the minimum, and
-  a boiler does not fire at a lower setpoint. It is calibrated with
-  the overshoot protection calibration or entered manually; a failed
-  calibration, or a result at or below the threshold, shows the manual entry
-  with an error. After the minimum the config flow continues to the automatic
-  gains step.
-- An entry whose minimum is missing or at or below the threshold logs an error
-  at setup; a missing minimum counts as 10 °C.
+- The minimum setpoint is the lowest flow temperature the boiler holds while
+  burning continuously at minimum modulation. Backends with setpoint
+  management require one of at least 30 °C. It is calibrated with the
+  overshoot protection calibration or entered manually (default 40 °C); a
+  failed calibration, or a result below 30 °C, shows the manual entry with an
+  error, and the manual entry accepts no value below 30 °C. After the minimum
+  the config flow continues to the automatic gains step.
+- An entry with a stored minimum below 30 °C logs an error at setup.
 - The effective minimum setpoint is the configured one, raised by the dynamic
   minimum setpoint (v1 or v2) when that is enabled.
 
@@ -533,8 +532,7 @@ too high until the pump runs again.
 13. Follow-ups to burns: last burn duration counts heating burns only, the
     setpoint adjuster pauses during hot water, PWM waits for hot water and the
     hot water delay.
-14. In HEAT, no open valve resets PWM and requests the minimum setpoint, so the
-    heater is OFF.
+14. In HEAT, no open valve resets PWM and requests heater OFF.
 15. Pump state and a reliable flow temperature for control; pump starting from
     the pump signal.
 16. Missing inputs are held for 5 minutes, then the heater is OFF; staleness
@@ -549,7 +547,8 @@ too high until the pump runs again.
     entities are disabled by default.
 20. Timeline: the cycle line shows the calculated setpoint the low-pass filter
     received, the heating curve value and the PID terms.
-21. Always-on PWM: PWM runs every HEAT cycle with a modulation mode;
+21. Always-on PWM: PWM runs every HEAT cycle with heat demand, with a
+    modulation mode;
     continuous heating is a 100% period (see PWM).
 22. Timeline: one structured cycle record per control cycle, at debug,
     replaces the cycle line and the control loop's info lines; the remaining
@@ -559,6 +558,10 @@ too high until the pump runs again.
 24. Heat demand requires a smoothed setpoint above the cold threshold; PWM
     returns the pulse setpoint, and heater OFF is requested exactly when the
     setpoint is released. The maximum setpoint option starts at 30 °C.
+25. Minimum setpoint cleanup: the "boiler not firing" constant is
+    `HEATER_OFF_SETPOINT`; the effective minimum is `minimum_setpoint`; the
+    minimum setpoint is at least 30 °C and defaults to 40 °C, without a
+    fallback for a missing one.
 
 ## Open questions
 - EMS-ESP: with the thermostat contact bridged, `selflowtemp` reads back the
@@ -597,8 +600,15 @@ too high until the pump runs again.
 - Whether the PWM mode needs hysteresis. Mode flips more often than the
   MINIMUM on-time keep a MINIMUM pulse burning without an off phase, since
   each flip during a pulse starts a new period. A candidate: UNRESTRICTED only
-  when the calculated setpoint exceeds the effective minimum by more than
+  when the smoothed setpoint exceeds the effective minimum by more than
   2 °C, back to MINIMUM only at or below it.
 - Device updates as structured events: one event per incoming device message
   with the changed traced values and the flame change, replacing the single
   info lines.
+- Whether heater OFF should switch heating off at all, or keep it enabled at
+  `HEATER_OFF_SETPOINT` (10 °C), which would also leave frost protection to
+  the boiler's heating. Keeping it enabled might avoid restarting the boiler's
+  anti-cycle period on every re-enable (see known issues). But with heating
+  enabled at a low setpoint the tested boiler ran its pump, and once ignited
+  after hot water (see the EMS-ESP question above). Whether the boiler's own
+  frost protection works under `heatingoff` is unknown.

@@ -117,10 +117,10 @@ WARM_MINIMUM_SETPOINT = {CONF_MINIMUM_SETPOINT: 30}
 
 
 @pytest.mark.parametrize(*ems_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}))
-async def test_pwm_on_with_cold_minimum_setpoint_heats_at_the_minimum(entry, climate, boiler_data, mqtt_mock, published):
+async def test_pwm_on_with_a_minimum_below_30_heats_at_the_minimum(entry, climate, boiler_data, mqtt_mock, published):
     await boiler_data(**IDLE | {"heatingoff": "on"})
 
-    # With a minimum setpoint ≤ COLD_SETPOINT (28.2) the PWM ON phase still requests the minimum with the heater ON
+    # With a minimum setpoint below the lowest allowed minimum (30), e.g. from an entry stored before that bound, the PWM ON phase still requests the minimum with the heater ON
     assert await run_loop(climate, mqtt_mock, published) == [
         message('{"cmd": "selflowtemp", "value": 20}'),
         message('{"cmd": "burnmaxpower", "value": 0}'),

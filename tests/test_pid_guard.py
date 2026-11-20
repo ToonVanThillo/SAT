@@ -14,7 +14,7 @@ from custom_components.sat.const import (
     CONF_ROOMS,
     CONF_SENSOR_MAX_VALUE_AGE,
     CONF_THERMAL_COMFORT,
-    MINIMUM_SETPOINT,
+    HEATER_OFF_SETPOINT,
     PWMStatus,
 )
 from tests.conftest import TIMELINE, run_one_loop
@@ -169,7 +169,7 @@ async def test_a_target_change_during_an_inside_gap_skips_the_pid_reset_but_not_
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
     skipped = skips(caplog)
-    assert climate.pwm.adjusted_setpoint != MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint != HEATER_OFF_SETPOINT
 
     await climate.async_set_temperature(temperature=22.0)
     await hass.async_block_till_done()
@@ -178,7 +178,7 @@ async def test_a_target_change_during_an_inside_gap_skips_the_pid_reset_but_not_
     assert {key: value for key, value in kept(climate).items() if key in pid_before} == pid_before
     assert skips(caplog) == skipped + 1
     # reset_control_state is outside the guard: it resets the setpoint adjuster, not PWM
-    assert climate.pwm.adjusted_setpoint == MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint == HEATER_OFF_SETPOINT
     assert climate.pwm.state == before["pwm"]
 
 
@@ -187,7 +187,7 @@ async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not
     before = await steady(hass, climate, boiler_data, freezer, caplog)
     await gap(hass)
     skipped = skips(caplog)
-    assert climate.pwm.adjusted_setpoint != MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint != HEATER_OFF_SETPOINT
 
     await climate.async_set_hvac_mode(HVACMode.OFF)
     await hass.async_block_till_done()
@@ -196,7 +196,7 @@ async def test_an_hvac_mode_set_during_an_inside_gap_skips_the_pid_reset_but_not
     assert {key: value for key, value in kept(climate).items() if key in pid_before} == pid_before
     assert skips(caplog) == skipped + 1
     # The control state reset and the PWM reset are outside the guard
-    assert climate.pwm.adjusted_setpoint == MINIMUM_SETPOINT
+    assert climate.pwm.adjusted_setpoint == HEATER_OFF_SETPOINT
     assert climate.pwm.status == PWMStatus.OFF
 
 

@@ -14,6 +14,7 @@ from ..const import (
     CONF_HOT_WATER_FLOW_TEMPERATURE,
     CONF_MAXIMUM_RELATIVE_MODULATION,
     CONF_MAXIMUM_RELATIVE_MODULATION_FLOOR,
+    HEATER_OFF_SETPOINT,
     OPTIONS_DEFAULTS,
 )
 from ..coordinator import BoilerSnapshot, DeviceState, Reading
@@ -55,9 +56,9 @@ def _reading(snapshot: BoilerSnapshot, key: str, convert: Callable[[Any], Any]) 
 
 
 def _encode_control_setpoint(value: float) -> int:
-    # EMS-ESP takes whole degrees; 10 (the minimum setpoint) is sent as 0.
+    # EMS-ESP takes whole degrees; HEATER_OFF_SETPOINT (the heater-off setpoint) is sent as 0.
     setpoint = round(value)
-    return 0 if setpoint == 10 else setpoint
+    return 0 if setpoint == HEATER_OFF_SETPOINT else setpoint
 
 
 class SatEmsMqttCoordinator(SatMqttCoordinator):

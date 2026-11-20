@@ -524,7 +524,7 @@ CONTROL_SENSORS: tuple[SatControlSensorEntityDescription, ...] = (
     SatControlSensorEntityDescription(key="kd", name="Kd", value_fn=lambda climate, _coordinator: climate.pid.kd),
     SatControlSensorEntityDescription(
         key="minimum-setpoint", name="Minimum Setpoint", device_class=SensorDeviceClass.TEMPERATURE, native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        value_fn=lambda climate, _coordinator: climate.minimum_setpoint_value,
+        value_fn=lambda climate, _coordinator: climate.minimum_setpoint,
     ),
     SatControlSensorEntityDescription(
         key="autotune-coefficient", name="Autotune Coefficient",

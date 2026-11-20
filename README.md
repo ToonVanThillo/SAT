@@ -190,7 +190,7 @@ For more information about which other entities are available for OpenTherm plea
 > [!NOTE]
 > If system calibration fails or you prefer to manually find the Overshoot Protection Value, please look at this [discussion](https://github.com/Alexwijn/SAT/discussions/36).
 
-If you already know this value, then use the "Manually enter the overshoot protection value" option and fill the value. A minimum setpoint is required and must be above 28.2 °C; a failed calibration or a lower result shows the manual entry with an error.
+If you already know this value, then use the "Manually enter the overshoot protection value" option and fill the value. A minimum setpoint is required and must be at least 30 °C; a failed calibration or a result below 30 °C shows the manual entry with an error.
 
 Automatic Gains are recommended for most users as it simplifies the setup process and ensures optimal performance. However, if you're familiar with PID control and prefer to manually set the values, you can switch Automatic Gains off in the step after the minimum setpoint.
 

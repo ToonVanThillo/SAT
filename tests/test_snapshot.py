@@ -12,7 +12,7 @@ from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_MINIMUM_SETPOINT,
     CONF_MODE,
-    MINIMUM_SETPOINT,
+    HEATER_OFF_SETPOINT,
     MODE_FAKE,
     BoilerStatus,
     ModulationMode,
@@ -99,7 +99,7 @@ async def test_relative_modulation_state_precedence(hot_water, heater_off, mode,
     assert relative_modulation.enabled is (expected != RelativeModulationState.MINIMUM)
 
 
-@pytest.mark.parametrize("setpoint", [None, 0.0, MINIMUM_SETPOINT, 40.0])
+@pytest.mark.parametrize("setpoint", [None, 0.0, HEATER_OFF_SETPOINT, 40.0])
 async def test_relative_modulation_ignores_the_read_back_setpoint(setpoint):
     relative_modulation = RelativeModulation("radiators", True)
     relative_modulation.update(replace(BOILER_STATE, setpoint=setpoint), MINIMUM, False)

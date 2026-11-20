@@ -18,9 +18,8 @@ from .const import (
     CONF_MODE,
     CONF_DEVICE,
     CONF_ERROR_MONITORING,
-    CONF_MINIMUM_SETPOINT,
-    COLD_SETPOINT,
-    MINIMUM_SETPOINT,
+    DEFAULT_MINIMUM_SETPOINT,
+    LOWEST_ALLOWED_MINIMUM_SETPOINT,
 )
 from .coordinator import SatDataUpdateCoordinatorFactory
 from .services import async_register_services
@@ -51,12 +50,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass=hass, data=entry.data, options=entry.options, mode=entry.data.get(CONF_MODE), device=entry.data.get(CONF_DEVICE), config_entry=entry
     )
 
-    # PWM pulses at the minimum setpoint, so with setpoint management a pulse only heats above the cold threshold
-    if coordinator.supports_setpoint_management:
-        if (minimum_setpoint := entry.data.get(CONF_MINIMUM_SETPOINT)) is None:
-            _LOGGER.error("Minimum setpoint is missing; using %s °C. Reconfigure SAT to set a minimum setpoint.", MINIMUM_SETPOINT)
-        elif float(minimum_setpoint) <= COLD_SETPOINT:
-            _LOGGER.error("Minimum setpoint %s °C is at or below %s °C; reconfigure SAT to set a minimum setpoint.", minimum_setpoint, COLD_SETPOINT)
+    # PWM pulses at the minimum setpoint, so with setpoint management a too low minimum makes the pulses ineffective
+    if coordinator.supports_setpoint_management and coordinator.minimum_setpoint < LOWEST_ALLOWED_MINIMUM_SETPOINT:
+        _LOGGER.error("Minimum setpoint %s °C is below %s °C; reconfigure SAT to set a minimum setpoint.", coordinator.minimum_setpoint, LOWEST_ALLOWED_MINIMUM_SETPOINT)
 
     # Store the coordinator with the data and options this setup starts with
     hass.data[DOMAIN][entry.entry_id] = {
@@ -141,7 +137,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not entry.data.get("minimum_setpoint"):
                 # Legacy Store
                 store = Store(hass, 1, DOMAIN)
-                new_data["minimum_setpoint"] = 10
+                new_data["minimum_setpoint"] = DEFAULT_MINIMUM_SETPOINT
 
                 if (data := await store.async_load()) and (overshoot_protection_value := data.get("overshoot_protection_value")):
                     new_data["minimum_setpoint"] = overshoot_protection_value

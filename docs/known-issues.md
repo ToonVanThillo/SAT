@@ -42,7 +42,7 @@ known bug".
   reopen may wait about 3 min before the flame lights. A missing temperature
   toggles `heatingoff` once per episode.
 - The temperature tracker skips only a boiler setpoint of exactly
-  `MINIMUM_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
+  `HEATER_OFF_SETPOINT`. EMS-ESP reads back 5 under `heatingoff`, so switching
   heating off counts as a setpoint decrease and starts stabilisation mode at
   the first reliable flow temperature reading under `heatingoff` (the tracker
   takes reliable readings only; on EMS-ESP not while the pump is off).
@@ -197,7 +197,8 @@ known bug".
 ## Device communication
 - Only EMS-ESP is reviewed for always-on PWM (see PWM in `design.md`). On the
   other backends (OpenTherm over MQTT, serial, ESPHome, simulator, switch,
-  fake), PWM runs every HEAT cycle and they get the same setpoint and max
+  fake), PWM runs every HEAT cycle with heat demand and they get the same
+  setpoint and max
   relative modulation decisions, but their behaviour (heater switching,
   read-backs, modulation encoding) has not been checked.
 - EMS-ESP on/off values are only recognised as "on"/"off"; with EMS-ESP's
@@ -337,6 +338,9 @@ known bug".
 - A coordinator whose start fails (e.g. MQTT not available) logs the error and
   isn't started again until the entry reloads; until then it receives no
   device data.
+- The shared EMS-ESP test entry (`ems_entry()` in `tests/const.py`) has a
+  minimum setpoint of 20 °C, below the lowest allowed 30 °C, so the tests
+  built on it run with a configuration that logs an error at setup.
 - The manifest's OpenTherm discovery filter `OTGW/value/+` matches one level
   after `value/`, but the gateway's values are on `OTGW/value/<device>/<key>`,
   so OpenTherm over MQTT is never discovered. If the filter matched those

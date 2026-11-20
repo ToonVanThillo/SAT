@@ -7,9 +7,8 @@
     "error": {
       "connection": "Impossibile connettersi al gateway.",
       "mqtt_component": "Il componente MQTT non è disponibile.",
-      "minimum_setpoint_too_low": "Il setpoint minimo deve essere superiore a 28,2 °C.",
       "calibration_failed": "Calibrazione non riuscita; inserisci il setpoint minimo manualmente.",
-      "calibration_too_low": "Il setpoint minimo calibrato è uguale o inferiore a 28,2 °C; inserisci il setpoint minimo manualmente."
+      "calibration_too_low": "Il setpoint minimo calibrato è inferiore a 30 °C; inserisci il setpoint minimo manualmente."
     },
     "progress": {
       "calibration": "Calibrazione e ricerca del valore di protezione dal superamento in corso...\n\nSi prega di attendere mentre ottimizziamo il tuo sistema di riscaldamento. Questo processo può richiedere circa 20 minuti."
@@ -31,7 +30,7 @@
         "title": "Guadagni Automatici"
       },
       "calibrate_system": {
-        "description": "SAT ha bisogno del setpoint minimo della tua caldaia: la temperatura di mandata più bassa che può mantenere alla modulazione minima (il valore di protezione dal superamento). Calibralo automaticamente, operazione che richiede circa 20 minuti, oppure inseriscilo manualmente. Deve essere superiore a 28,2 °C. I guadagni automatici o i valori PID manuali si scelgono nel passaggio successivo.",
+        "description": "SAT ha bisogno del setpoint minimo della tua caldaia: la temperatura di mandata più bassa che può mantenere alla modulazione minima (il valore di protezione dal superamento). Calibralo automaticamente, operazione che richiede circa 20 minuti, oppure inseriscilo manualmente. Deve essere di almeno 30 °C. I guadagni automatici o i valori PID manuali si scelgono nel passaggio successivo.",
         "menu_options": {
           "calibrate": "Calibra e determina il tuo valore di protezione dal superamento (circa 20 min).",
           "overshoot_protection": "Inserisci manualmente il valore di protezione dal superamento."
@@ -82,9 +81,9 @@
           "minimum_setpoint": "Valore"
         },
         "data_description": {
-          "minimum_setpoint": "Il setpoint minimo in °C. Deve essere superiore a 28,2 °C."
+          "minimum_setpoint": "Il setpoint minimo in °C. Deve essere di almeno 30 °C."
         },
-        "description": "Inserisci il setpoint minimo della tua caldaia: la temperatura di mandata più bassa che può mantenere alla modulazione minima (il valore di protezione dal superamento). Deve essere superiore a 28,2 °C. Se non lo conosci, torna indietro e calibra, oppure consulta il README per sapere come trovarlo.",
+        "description": "Inserisci il setpoint minimo della tua caldaia: la temperatura di mandata più bassa che può mantenere alla modulazione minima (il valore di protezione dal superamento). Deve essere di almeno 30 °C. Se non lo conosci, torna indietro e calibra, oppure consulta il README per sapere come trovarlo.",
         "title": "Protezione dal Superamento"
       },
       "pid_controller": {

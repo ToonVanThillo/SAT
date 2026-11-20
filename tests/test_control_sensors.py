@@ -112,7 +112,7 @@ async def test_the_pwm_mode_sensor_stays_minimum_when_unrestricted_modulation_is
     await hass.async_block_till_done()
 
     # Allowed, the smoothed setpoint above the minimum would give UNRESTRICTED
-    assert climate.smoothed_setpoint > climate.minimum_setpoint_value
+    assert climate.smoothed_setpoint > climate.minimum_setpoint
     assert value(hass, "sensor.pwm_mode") == "minimum"
 
 
@@ -224,7 +224,7 @@ async def test_values_follow_sources_after_a_cycle(hass, entry, climate, coordin
             assert value(hass, entity_id) == STATE_UNKNOWN
         else:
             assert float(value(hass, entity_id)) == source
-    assert float(value(hass, "sensor.minimum_setpoint_test")) == pytest.approx(climate.minimum_setpoint_value, abs=0.1)
+    assert float(value(hass, "sensor.minimum_setpoint_test")) == pytest.approx(climate.minimum_setpoint, abs=0.1)
     assert float(value(hass, HEATING_CURVE)) == pytest.approx(climate.heating_curve.value, abs=0.1)
     assert float(value(hass, ERROR_VALUE)) == pytest.approx(climate.max_error.value, abs=0.1)
     assert float(value(hass, "sensor.calculated_setpoint_test")) == pytest.approx(climate.smoothed_setpoint, abs=0.1)

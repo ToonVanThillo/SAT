@@ -206,7 +206,7 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         if self.producing_hot_water:
             return BoilerStatus.HOT_WATER
 
-        if self.setpoint is None or self.setpoint <= MINIMUM_SETPOINT:
+        if self.setpoint is None or self.setpoint <= HEATER_OFF_SETPOINT:
             return BoilerStatus.IDLE
 
         if self.device_active:
@@ -517,9 +517,8 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
 
     @property
     def minimum_setpoint(self) -> float:
-        """Return the configured minimum setpoint temperature before the device starts to overshoot; a missing one (absent or None) counts as `MINIMUM_SETPOINT`."""
-        minimum_setpoint = self._config_data.get(CONF_MINIMUM_SETPOINT)
-        return float(MINIMUM_SETPOINT if minimum_setpoint is None else minimum_setpoint)
+        """Return the configured minimum setpoint: the lowest flow temperature the boiler can hold at minimum modulation."""
+        return float(self._config_data[CONF_MINIMUM_SETPOINT])
 
     @property
     def maximum_setpoint(self) -> float:

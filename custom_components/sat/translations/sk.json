@@ -8,9 +8,8 @@
       "invalid_device": "Toto je neplatné zariadenie.",
       "connection": "Nedá sa pripojiť k gateway.",
       "mqtt_component": "MQTT komponent je nedostupný.",
-      "minimum_setpoint_too_low": "Minimálna nastavená hodnota musí byť vyššia ako 28,2 °C.",
       "calibration_failed": "Kalibrácia zlyhala; zadajte minimálnu nastavenú hodnotu ručne.",
-      "calibration_too_low": "Kalibrovaná minimálna nastavená hodnota je 28,2 °C alebo nižšia; zadajte minimálnu nastavenú hodnotu ručne."
+      "calibration_too_low": "Kalibrovaná minimálna nastavená hodnota je nižšia ako 30 °C; zadajte minimálnu nastavenú hodnotu ručne."
     },
     "progress": {
       "calibration": "Kalibrácia a nájdenie hodnoty ochrany proti prekročeniu...\n\nPočkajte, prosím, kým optimalizujeme váš vykurovací systém. Tento proces môže trvať približne 20 minút."
@@ -33,7 +32,7 @@
         "title": "Automatické zisky"
       },
       "calibrate_system": {
-        "description": "SAT potrebuje minimálnu nastavenú hodnotu vášho kotla: najnižšiu teplotu výstupnej vody, ktorú dokáže udržať pri minimálnej modulácii (hodnota ochrany proti prekročeniu). Kalibrujte ju automaticky, čo trvá približne 20 minút, alebo ju zadajte ručne. Musí byť vyššia ako 28,2 °C. Automatické zisky alebo ručné hodnoty PID sa vyberajú v ďalšom kroku.",
+        "description": "SAT potrebuje minimálnu nastavenú hodnotu vášho kotla: najnižšiu teplotu výstupnej vody, ktorú dokáže udržať pri minimálnej modulácii (hodnota ochrany proti prekročeniu). Kalibrujte ju automaticky, čo trvá približne 20 minút, alebo ju zadajte ručne. Musí byť aspoň 30 °C. Automatické zisky alebo ručné hodnoty PID sa vyberajú v ďalšom kroku.",
         "menu_options": {
           "calibrate": "Kalibrujte a určte hodnotu ochrany proti prekročeniu (približne 20 min).",
           "overshoot_protection": "Manuálne zadajte hodnotu ochrany proti prekročeniu."
@@ -84,9 +83,9 @@
           "minimum_setpoint": "Hodnota"
         },
         "data_description": {
-          "minimum_setpoint": "Minimálna nastavená hodnota v °C. Musí byť vyššia ako 28,2 °C."
+          "minimum_setpoint": "Minimálna nastavená hodnota v °C. Musí byť aspoň 30 °C."
         },
-        "description": "Zadajte minimálnu nastavenú hodnotu vášho kotla: najnižšiu teplotu výstupnej vody, ktorú dokáže udržať pri minimálnej modulácii (hodnota ochrany proti prekročeniu). Musí byť vyššia ako 28,2 °C. Ak ju nepoznáte, vráťte sa späť a vykonajte kalibráciu, alebo si v README pozrite, ako ju zistiť.",
+        "description": "Zadajte minimálnu nastavenú hodnotu vášho kotla: najnižšiu teplotu výstupnej vody, ktorú dokáže udržať pri minimálnej modulácii (hodnota ochrany proti prekročeniu). Musí byť aspoň 30 °C. Ak ju nepoznáte, vráťte sa späť a vykonajte kalibráciu, alebo si v README pozrite, ako ju zistiť.",
         "title": "Ochrana proti prestreleniu"
       },
       "pid_controller": {

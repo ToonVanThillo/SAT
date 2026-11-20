@@ -180,7 +180,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self._thermal_comfort = bool(config_options.get(CONF_THERMAL_COMFORT))
         self._climate_valve_offset = float(config_options.get(CONF_CLIMATE_VALVE_OFFSET))
         self._target_temperature_step = float(config_options.get(CONF_TARGET_TEMPERATURE_STEP))
-        self._dynamic_minimum_setpoint = bool(config_options.get(CONF_DYNAMIC_MINIMUM_SETPOINT))
+        self._dynamic_minimum_setpoint_enabled = bool(config_options.get(CONF_DYNAMIC_MINIMUM_SETPOINT))
         self._sync_climates_with_mode = bool(config_options.get(CONF_SYNC_CLIMATES_WITH_MODE))
         self._sync_climates_with_preset = bool(config_options.get(CONF_SYNC_CLIMATES_WITH_PRESET))
         self._maximum_relative_modulation = int(config_options.get(CONF_MAXIMUM_RELATIVE_MODULATION))
@@ -202,7 +202,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.heating_curve = create_heating_curve_controller(config_entry.data, config_options)
 
         # Create the Minimum Setpoint controller
-        self.minimum_setpoint = create_minimum_setpoint_controller(coordinator.minimum_setpoint, config_options)
+        self.dynamic_minimum_setpoint = create_minimum_setpoint_controller(coordinator.minimum_setpoint, config_options)
 
         # Create a PWM controller with given configuration options
         self.pwm = create_pwm_controller(self.heating_curve, config_options, self.async_send_pwm_updated)
@@ -508,9 +508,9 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
     def calculated_setpoint(self) -> float:
         """The raw setpoint from the heating curve and PID output, before the low-pass filter."""
         if self.heating_curve.value is None:
-            return MINIMUM_SETPOINT
+            return HEATER_OFF_SETPOINT
 
-        return round(max(self.heating_curve.value + self.pid.output, MINIMUM_SETPOINT), 1)
+        return round(max(self.heating_curve.value + self.pid.output, HEATER_OFF_SETPOINT), 1)
 
     @property
     def valves_open(self) -> bool:
@@ -565,12 +565,12 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         return self._maximum_relative_modulation
 
     @property
-    def minimum_setpoint_value(self) -> float:
-        """Get the minimum allowable setpoint temperature."""
-        if self._dynamic_minimum_setpoint:
+    def minimum_setpoint(self) -> float:
+        """The effective minimum setpoint: the configured one, raised by the dynamic minimum setpoint (v1 or v2) when enabled."""
+        if self._dynamic_minimum_setpoint_enabled:
             # Version 1: Use MinimumSetpoint controller
             if self._minimum_setpoint_version == 1:
-                return max(self.minimum_setpoint.current, self._coordinator.minimum_setpoint)
+                return max(self.dynamic_minimum_setpoint.current, self._coordinator.minimum_setpoint)
 
             # Version 2: Use Pulse Width Modulation controller
             if self._minimum_setpoint_version == 2:
@@ -929,7 +929,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if inputs.valves_open and self.smoothed_setpoint > COLD_SETPOINT:
             pwm_setpoint = await self.pwm.update(
                 flame=snapshot.flame, boiler=snapshot.boiler, setpoint=self.smoothed_setpoint,
-                minimum_setpoint=self.minimum_setpoint_value,
+                minimum_setpoint=self.minimum_setpoint,
                 allow_unrestricted=self._coordinator.supports_setpoint_management and self._allow_unrestricted_modulation,
                 outside_temperature=inputs.outside_temperature,
             )
@@ -956,10 +956,10 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         if not snapshot.boiler.hot_water_active and snapshot.boiler.flame_active:
             # Calculate the base return temperature
             if snapshot.boiler.status == BoilerStatus.HEATING_UP:
-                self.minimum_setpoint.warming_up(snapshot.boiler)
+                self.dynamic_minimum_setpoint.warming_up(snapshot.boiler)
 
             # Calculate the dynamic minimum setpoint
-            self.minimum_setpoint.calculate(snapshot.boiler, self.pwm.mode)
+            self.dynamic_minimum_setpoint.calculate(snapshot.boiler, self.pwm.mode)
 
         # Curve, PID terms and calculated setpoint as held now; calculated may differ from the filter's input
         annotate_event(

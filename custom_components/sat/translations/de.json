@@ -7,9 +7,8 @@
     "error": {
       "connection": "Verbindung zum Gateway konnte nicht hergestellt werden.",
       "mqtt_component": "Die MQTT-Komponente ist nicht verfügbar.",
-      "minimum_setpoint_too_low": "Der minimale Sollwert muss über 28,2 °C liegen.",
       "calibration_failed": "Kalibrierung fehlgeschlagen; geben Sie den minimalen Sollwert manuell ein.",
-      "calibration_too_low": "Der kalibrierte minimale Sollwert liegt bei oder unter 28,2 °C; geben Sie den minimalen Sollwert manuell ein."
+      "calibration_too_low": "Der kalibrierte minimale Sollwert liegt unter 30 °C; geben Sie den minimalen Sollwert manuell ein."
     },
     "progress": {
       "calibration": "Kalibrierung und Ermittlung des Überschwingungsschutzwertes...\n\nBitte warten Sie, während wir Ihr Heizsystem optimieren. Dieser Prozess kann etwa 20 Minuten dauern."
@@ -31,7 +30,7 @@
         "title": "Automatische Verstärkungen"
       },
       "calibrate_system": {
-        "description": "SAT benötigt den minimalen Sollwert Ihres Kessels: die niedrigste Vorlauftemperatur, die er bei minimaler Modulation halten kann (der Überschwingungsschutzwert). Kalibrieren Sie ihn automatisch, was etwa 20 Minuten dauert, oder geben Sie ihn manuell ein. Er muss über 28,2 °C liegen. Automatische Verstärkungen oder manuelle PID-Werte wählen Sie im nächsten Schritt.",
+        "description": "SAT benötigt den minimalen Sollwert Ihres Kessels: die niedrigste Vorlauftemperatur, die er bei minimaler Modulation halten kann (der Überschwingungsschutzwert). Kalibrieren Sie ihn automatisch, was etwa 20 Minuten dauert, oder geben Sie ihn manuell ein. Er muss mindestens 30 °C betragen. Automatische Verstärkungen oder manuelle PID-Werte wählen Sie im nächsten Schritt.",
         "menu_options": {
           "calibrate": "Kalibrieren und Ihren Überschwingungsschutzwert bestimmen (ca. 20 Min.).",
           "overshoot_protection": "Den Überschwingungsschutzwert manuell eingeben."
@@ -82,9 +81,9 @@
           "minimum_setpoint": "Wert"
         },
         "data_description": {
-          "minimum_setpoint": "Der minimale Sollwert in °C. Muss über 28,2 °C liegen."
+          "minimum_setpoint": "Der minimale Sollwert in °C. Muss mindestens 30 °C betragen."
         },
-        "description": "Geben Sie den minimalen Sollwert Ihres Kessels ein: die niedrigste Vorlauftemperatur, die er bei minimaler Modulation halten kann (der Überschwingungsschutzwert). Er muss über 28,2 °C liegen. Wenn Sie ihn nicht kennen, gehen Sie zurück und kalibrieren Sie, oder lesen Sie in der README nach, wie Sie ihn ermitteln.",
+        "description": "Geben Sie den minimalen Sollwert Ihres Kessels ein: die niedrigste Vorlauftemperatur, die er bei minimaler Modulation halten kann (der Überschwingungsschutzwert). Er muss mindestens 30 °C betragen. Wenn Sie ihn nicht kennen, gehen Sie zurück und kalibrieren Sie, oder lesen Sie in der README nach, wie Sie ihn ermitteln.",
         "title": "Überschwingungsschutz"
       },
       "pid_controller": {

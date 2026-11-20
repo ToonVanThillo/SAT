@@ -6,7 +6,7 @@ from typing import Optional, TYPE_CHECKING, Mapping, Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from ..const import CONF_SIMULATED_HEATING, CONF_SIMULATED_COOLING, MINIMUM_SETPOINT, CONF_SIMULATED_WARMING_UP, CONF_MAXIMUM_SETPOINT, PWMStatus
+from ..const import CONF_SIMULATED_HEATING, CONF_SIMULATED_COOLING, HEATER_OFF_SETPOINT, CONF_SIMULATED_WARMING_UP, CONF_MAXIMUM_SETPOINT, PWMStatus
 from ..coordinator import DeviceState, SatDataUpdateCoordinator
 from ..helpers import convert_time_str_to_seconds
 
@@ -19,8 +19,8 @@ class SatSimulatorCoordinator(SatDataUpdateCoordinator):
         """Initialize."""
         super().__init__(hass, config_data, options, config_entry=config_entry)
 
-        self._setpoint = MINIMUM_SETPOINT
-        self._boiler_temperature = MINIMUM_SETPOINT
+        self._setpoint = HEATER_OFF_SETPOINT
+        self._boiler_temperature = HEATER_OFF_SETPOINT
 
         self._device_state = DeviceState.OFF
         self._heating = config_data.get(CONF_SIMULATED_HEATING)
@@ -119,6 +119,6 @@ class SatSimulatorCoordinator(SatDataUpdateCoordinator):
 
         # State check
         if not self._device_on_since or (monotonic() - self._device_on_since) < self._warming_up:
-            return MINIMUM_SETPOINT
+            return HEATER_OFF_SETPOINT
 
         return self.setpoint

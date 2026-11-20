@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from custom_components.sat.const import MINIMUM_SETPOINT, ModulationMode, PWMStatus
+from custom_components.sat.const import HEATER_OFF_SETPOINT, ModulationMode, PWMStatus
 from custom_components.sat.pwm import PWM
 from tests.test_pwm_cycles import MILD, Clock, boiler, setpoint_for
 from tests.test_pwm_hot_water import flame
@@ -39,7 +39,7 @@ async def update(pwm: PWM, flame_state: SimpleNamespace, unrestricted: bool, min
 async def test_switching_to_minimum_mid_burn_adjusts_in_that_update(clock):
     pwm = make_hot_water_pwm()
     await update(pwm, burning(), True, flow=60.0)
-    assert (pwm.mode, pwm.adjusted_setpoint) == (ModulationMode.UNRESTRICTED, MINIMUM_SETPOINT)
+    assert (pwm.mode, pwm.adjusted_setpoint) == (ModulationMode.UNRESTRICTED, HEATER_OFF_SETPOINT)
 
     clock.tick(30)
     await update(pwm, burning(), False, flow=60.0)
@@ -101,17 +101,17 @@ async def test_the_force_branch_needs_a_short_or_missing_average_on_time(clock, 
     await update(pwm, cold(average), False, flow=60.0)
 
     assert pwm.mode == ModulationMode.MINIMUM
-    assert pwm.adjusted_setpoint == (70.0 if forced else MINIMUM_SETPOINT)
+    assert pwm.adjusted_setpoint == (70.0 if forced else HEATER_OFF_SETPOINT)
 
 
 async def test_hot_water_blocks_the_adjust_and_the_force_branch(clock):
     pwm = make_hot_water_pwm()
 
     await update(pwm, cold(None), False, flow=60.0, hot_water=True)
-    assert pwm.adjusted_setpoint == MINIMUM_SETPOINT
+    assert pwm.adjusted_setpoint == HEATER_OFF_SETPOINT
 
     await update(pwm, burning(), False, flow=60.0, hot_water=True)
-    assert pwm.adjusted_setpoint == MINIMUM_SETPOINT
+    assert pwm.adjusted_setpoint == HEATER_OFF_SETPOINT
 
 
 async def test_a_forced_value_is_kept_when_the_mode_turns_unrestricted_in_the_off_phase(clock):
@@ -180,7 +180,7 @@ async def test_reset_setpoint_adjuster_restores_the_default_and_keeps_the_pulse(
     assert (pwm.status, pwm.adjusted_setpoint) == (PWMStatus.ON, 57.0)
 
     pwm.reset_setpoint_adjuster()
-    assert (pwm.status, pwm.adjusted_setpoint) == (PWMStatus.ON, MINIMUM_SETPOINT)
+    assert (pwm.status, pwm.adjusted_setpoint) == (PWMStatus.ON, HEATER_OFF_SETPOINT)
 
     # The adjuster starts afresh at the flow - 3, instead of stepping from the old value towards it
     clock.tick(30)

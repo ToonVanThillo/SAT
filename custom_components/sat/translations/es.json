@@ -7,9 +7,8 @@
     "error": {
       "connection": "No se puede conectar a la puerta de enlace.",
       "mqtt_component": "El componente MQTT no está disponible.",
-      "minimum_setpoint_too_low": "El punto de ajuste mínimo debe estar por encima de 28,2 °C.",
       "calibration_failed": "La calibración ha fallado; introduzca el punto de ajuste mínimo manualmente.",
-      "calibration_too_low": "El punto de ajuste mínimo calibrado es igual o inferior a 28,2 °C; introduzca el punto de ajuste mínimo manualmente."
+      "calibration_too_low": "El punto de ajuste mínimo calibrado es inferior a 30 °C; introduzca el punto de ajuste mínimo manualmente."
     },
     "progress": {
       "calibration": "Calibrando y encontrando el valor de protección contra sobrecalentamiento...\n\nPor favor, espere mientras optimizamos su sistema de calefacción. Este proceso puede tomar aproximadamente 20 minutos."
@@ -31,7 +30,7 @@
         "title": "Ganancias Automáticas"
       },
       "calibrate_system": {
-        "description": "SAT necesita el punto de ajuste mínimo de su caldera: la temperatura de impulsión más baja que puede mantener con la modulación mínima (el valor de protección contra sobrecalentamiento). Calíbrelo automáticamente, lo que tarda aproximadamente 20 minutos, o introdúzcalo manualmente. Debe estar por encima de 28,2 °C. Las ganancias automáticas o los valores PID manuales se eligen en el siguiente paso.",
+        "description": "SAT necesita el punto de ajuste mínimo de su caldera: la temperatura de impulsión más baja que puede mantener con la modulación mínima (el valor de protección contra sobrecalentamiento). Calíbrelo automáticamente, lo que tarda aproximadamente 20 minutos, o introdúzcalo manualmente. Debe ser de al menos 30 °C. Las ganancias automáticas o los valores PID manuales se eligen en el siguiente paso.",
         "menu_options": {
           "calibrate": "Calibrar y determinar su valor de protección contra sobrecalentamiento (aprox. 20 min).",
           "overshoot_protection": "Introducir manualmente el valor de protección contra sobrecalentamiento."
@@ -82,9 +81,9 @@
           "minimum_setpoint": "Valor"
         },
         "data_description": {
-          "minimum_setpoint": "El punto de ajuste mínimo en °C. Debe estar por encima de 28,2 °C."
+          "minimum_setpoint": "El punto de ajuste mínimo en °C. Debe ser de al menos 30 °C."
         },
-        "description": "Introduzca el punto de ajuste mínimo de su caldera: la temperatura de impulsión más baja que puede mantener con la modulación mínima (el valor de protección contra sobrecalentamiento). Debe estar por encima de 28,2 °C. Si no lo conoce, vuelva atrás y calibre, o consulte el README para saber cómo encontrarlo.",
+        "description": "Introduzca el punto de ajuste mínimo de su caldera: la temperatura de impulsión más baja que puede mantener con la modulación mínima (el valor de protección contra sobrecalentamiento). Debe ser de al menos 30 °C. Si no lo conoce, vuelva atrás y calibre, o consulte el README para saber cómo encontrarlo.",
         "title": "Protección contra Sobrecalentamiento"
       },
       "pid_controller": {

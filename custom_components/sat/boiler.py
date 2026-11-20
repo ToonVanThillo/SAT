@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from .const import MINIMUM_SETPOINT, BoilerStatus
+from .const import HEATER_OFF_SETPOINT, BoilerStatus
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class BoilerTemperatureTracker:
 
     def update(self, boiler_temperature: float, boiler_temperature_derivative: float, flame_active: bool, setpoint: float):
         """Update the tracker based on the current boiler temperature, flame status, and setpoint."""
-        if setpoint == MINIMUM_SETPOINT:
+        if setpoint == HEATER_OFF_SETPOINT:
             return
 
         if self._last_boiler_temperature is None:

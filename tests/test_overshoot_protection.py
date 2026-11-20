@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.sat.channels import DesiredState
-from custom_components.sat.const import MAXIMUM_RELATIVE_MODULATION, MINIMUM_SETPOINT
+from custom_components.sat.const import HEATER_OFF_SETPOINT, MAXIMUM_RELATIVE_MODULATION
 from custom_components.sat.coordinator import DeviceState
 from custom_components.sat.overshoot_protection import OvershootProtection
 
@@ -126,7 +126,7 @@ async def test_calibration_continues_once_the_temperature_arrives(coordinator, m
     assert submitted[2].control_setpoint == 30.0
 
 
-RESET = DesiredState(control_setpoint=MINIMUM_SETPOINT, heater_state=DeviceState.OFF)
+RESET = DesiredState(control_setpoint=HEATER_OFF_SETPOINT, heater_state=DeviceState.OFF)
 
 
 async def test_calculate_returns_the_overshoot_without_a_reset(coordinator: MagicMock) -> None:

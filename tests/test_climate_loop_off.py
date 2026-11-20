@@ -169,5 +169,6 @@ async def test_simulator_boiler_moves_toward_its_target_in_off(hass, entry, clim
         await climate.async_control_heating_loop()
         temperatures.append(coordinator.boiler_temperature)
 
-    # Current behaviour, known bug (simulator update step, see known-issues): from 10 °C, the startup and switch-off cycles heat by 5 °C each, up to the target: the minimum setpoint, as the setpoint stays below it
+    # Current behaviour, known bug (simulator update step, see known-issues): from the simulator's start value HEATER_OFF_SETPOINT (10 °C), the startup and
+    # switch-off cycles heat by 5 °C each up to the target, the minimum setpoint (40), as the released setpoint (HEATER_OFF_SETPOINT) stays below it
     assert temperatures == [20, 25, 30, 35, 40, 40]

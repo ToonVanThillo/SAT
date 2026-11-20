@@ -21,7 +21,7 @@ from custom_components.sat.const import (
     CONF_PUSH_SETPOINT_TO_THERMOSTAT,
     CONF_RADIATORS,
     DOMAIN,
-    MINIMUM_SETPOINT,
+    HEATER_OFF_SETPOINT,
 )
 from custom_components.sat.coordinator import DeviceState, SatDataUpdateCoordinator
 from custom_components.sat.mqtt.ems import SatEmsMqttCoordinator
@@ -249,14 +249,14 @@ async def test_overshoot_cancel_publish_order(overshoot, otgw, published):
     with patch.object(overshoot, "_wait_for_flame", new=AsyncMock(side_effect=asyncio.CancelledError)), pytest.raises(asyncio.CancelledError):
         await overshoot.calculate()
 
-    assert [c[1] for c in published()] == [f"CS={MINIMUM_SETPOINT}", "PM=25", "CH=0"]
+    assert [c[1] for c in published()] == [f"CS={HEATER_OFF_SETPOINT}", "PM=25", "CH=0"]
 
 
 async def test_overshoot_timeout_publish_order(overshoot, otgw, published):
     with patch.object(overshoot, "_wait_for_flame", new=AsyncMock(side_effect=asyncio.TimeoutError)), pytest.raises(asyncio.TimeoutError):
         await overshoot.calculate()
 
-    assert [c[1] for c in published()] == [f"CS={MINIMUM_SETPOINT}", "PM=25", "CH=0"]
+    assert [c[1] for c in published()] == [f"CS={HEATER_OFF_SETPOINT}", "PM=25", "CH=0"]
 
 
 async def test_overshoot_on_ems_publishes_nothing(ems, boiler_data, published):

@@ -12,7 +12,7 @@ from custom_components.sat.climate import SatClimate
 from custom_components.sat.const import (
     CONF_MAXIMUM_SETPOINT,
     CONF_MINIMUM_SETPOINT,
-    MINIMUM_SETPOINT,
+    HEATER_OFF_SETPOINT,
     ModulationMode,
     PWMStatus,
 )
@@ -47,10 +47,10 @@ def test_ema_weights_the_value_by_alpha(value, previous, alpha, expected):
 @pytest.mark.usefixtures("loop_entry")
 @pytest.mark.parametrize(*ems_entry())
 @pytest.mark.parametrize(("curve", "output", "expected"), [
-    (None, 5.0, MINIMUM_SETPOINT),
+    (None, 5.0, HEATER_OFF_SETPOINT),
     (40.0, 5.04, 45.0),
     (40.0, -5.06, 34.9),
-    (20.0, -50.0, MINIMUM_SETPOINT),
+    (20.0, -50.0, HEATER_OFF_SETPOINT),
 ])
 async def test_the_calculated_setpoint_is_the_curve_plus_the_pid_output(entry, climate: SatClimate, curve, output, expected):
     # The curve and PID output are patched: a missing curve and a floor-breaking output cannot be reached through the inputs

@@ -13,15 +13,11 @@ import voluptuous as vol
 from homeassistant.components import climate, mqtt
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import entity_registry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.sat.config_flow import (
-    DEFAULT_MINIMUM_SETPOINT,
-    SatFlowHandler,
-    SatOptionsFlowHandler,
-)
+from custom_components.sat.config_flow import SatFlowHandler, SatOptionsFlowHandler
 from custom_components.sat.const import (
     CONF_ALLOW_UNRESTRICTED_MODULATION,
     CONF_AUTOMATIC_GAINS,
@@ -45,10 +41,11 @@ from custom_components.sat.const import (
     CONF_PROPORTIONAL,
     CONF_RADIATORS,
     CONF_ROOMS,
+    DEFAULT_MINIMUM_SETPOINT,
     DOMAIN,
     HEATING_SYSTEM_RADIATORS,
+    LOWEST_ALLOWED_MINIMUM_SETPOINT,
     MAXIMUM_SETPOINT,
-    MINIMUM_SETPOINT,
     MODE_ESPHOME,
     MODE_FAKE,
     MODE_MQTT_EMS,
@@ -120,6 +117,7 @@ async def test_the_maximum_setpoint_selector_starts_at_30(hass, mode):
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "general"})
+    assert result["data_schema"] is not None
     selector = next(value for marker, value in result["data_schema"].schema.items() if marker == CONF_MAXIMUM_SETPOINT)
 
     assert (selector.config["min"], selector.config["max"]) == (30, 100)
@@ -379,7 +377,7 @@ async def test_closing_the_flow_cancels_calibration_and_restores_the_mode_once(
     assert events.count(("coordinator", "removed")) == 1
 
 
-# Minimum setpoint: required, above the cold threshold, then automatic gains, manufacturer (or PID controller) and finish
+# Minimum setpoint: required, at least 30 °C, then automatic gains, manufacturer (or PID controller) and finish
 
 def minimum_default(result: ConfigFlowResult) -> float:
     schema = result["data_schema"]
@@ -393,7 +391,7 @@ async def test_the_calibrate_menu_offers_only_calibration_and_the_manual_minimum
     assert result["menu_options"] == ["calibrate", "overshoot_protection"]
 
 
-async def test_the_manual_minimum_must_be_above_the_cold_threshold(hass: HomeAssistant, flow_id: Callable[[], Awaitable[str]]) -> None:
+async def test_the_manual_minimum_must_be_at_least_30(hass: HomeAssistant, flow_id: Callable[[], Awaitable[str]]) -> None:
     manager = hass.config_entries.flow
     id_ = await flow_id()
 
@@ -402,18 +400,16 @@ async def test_the_manual_minimum_must_be_above_the_cold_threshold(hass: HomeAss
     assert not result["errors"]
     assert minimum_default(result) == DEFAULT_MINIMUM_SETPOINT
 
-    result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: 28.2})
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "overshoot_protection"
-    assert result["errors"] == {CONF_MINIMUM_SETPOINT: "minimum_setpoint_too_low"}
+    with pytest.raises(InvalidData):
+        await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: 29.9})
 
-    result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: 28.3})
+    result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: 30})
     assert result["step_id"] == "automatic_gains"
     assert not result.get("errors")
 
 
-@pytest.mark.parametrize("value", [28.2, 15.0])
-async def test_a_calibration_at_or_below_the_cold_threshold_shows_the_manual_step(
+@pytest.mark.parametrize("value", [29.9, 15.0])
+async def test_a_calibration_below_30_shows_the_manual_step(
         hass: HomeAssistant, events: list[tuple[str, str]], flow_id: Callable[[], Awaitable[str]], value: float) -> None:
     with calculating(events, value):
         id_, _ = await start(hass, flow_id)
@@ -499,8 +495,8 @@ async def test_reconfigure_requires_the_minimum_and_continues_to_automatic_gains
     id_ = result["flow_id"]
     result = await manager.async_configure(id_, {"next_step_id": "overshoot_protection"})
     assert minimum_default(result) == 20
-    result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: 20})
-    assert result["errors"] == {CONF_MINIMUM_SETPOINT: "minimum_setpoint_too_low"}
+    with pytest.raises(InvalidData):
+        await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: 20})
     result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: 42})
     assert result["step_id"] == "automatic_gains"
 
@@ -730,6 +726,35 @@ async def test_retrying_the_calibration_with_a_result_replaces_the_minimum(
     assert result["data"][CONF_MINIMUM_SETPOINT] == 45.5
 
 
+async def test_a_calibration_of_exactly_30_is_stored_and_continues_to_the_calibrated_menu(
+        hass: HomeAssistant, events: list[tuple[str, str]], flow_id: Callable[[], Awaitable[str]]) -> None:
+    with calculating(events, 30.0):
+        id_, _ = await start(hass, flow_id)
+        await hass.async_block_till_done()
+        result = await hass.config_entries.flow.async_configure(id_)
+
+    assert result["step_id"] == "calibrated"
+    assert not result.get("errors")
+
+    await hass.config_entries.flow.async_configure(id_, {"next_step_id": "automatic_gains"})
+    result = await finish(hass, id_, True)
+    assert result["data"][CONF_MINIMUM_SETPOINT] == 30.0
+
+
+async def test_the_simulator_step_defaults_the_minimum_to_40_and_bounds_it_to_30_to_100(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user", "show_advanced_options": True})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "simulator"})
+    assert result["step_id"] == "simulator"
+
+    assert minimum_default(result) == 40
+    assert result["data_schema"] is not None
+    selector = next(value for marker, value in result["data_schema"].schema.items() if marker == CONF_MINIMUM_SETPOINT)
+    assert (selector.config["min"], selector.config["max"]) == (30, 100)
+
+    with pytest.raises(InvalidData):
+        await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_NAME: "Sim", CONF_MINIMUM_SETPOINT: 29})
+
+
 async def test_the_selector_bounds_of_the_manual_minimum(hass: HomeAssistant, flow_id: Callable[[], Awaitable[str]]) -> None:
     manager = hass.config_entries.flow
     id_ = await flow_id()
@@ -738,26 +763,12 @@ async def test_the_selector_bounds_of_the_manual_minimum(hass: HomeAssistant, fl
     schema = result["data_schema"]
     assert schema is not None
     selector = next(value for marker, value in schema.schema.items() if marker == CONF_MINIMUM_SETPOINT)
-    assert (selector.config["min"], selector.config["max"]) == (MINIMUM_SETPOINT, MAXIMUM_SETPOINT)
-
-    result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: selector.config["min"]})
-    assert result["errors"] == {CONF_MINIMUM_SETPOINT: "minimum_setpoint_too_low"}
+    assert (selector.config["min"], selector.config["max"]) == (LOWEST_ALLOWED_MINIMUM_SETPOINT, MAXIMUM_SETPOINT)
 
     result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: selector.config["max"]})
     assert result["step_id"] == "automatic_gains"
     result = await finish(hass, id_, True)
     assert result["data"][CONF_MINIMUM_SETPOINT] == MAXIMUM_SETPOINT
-
-
-async def test_a_rejected_manual_minimum_keeps_the_calibration_result_as_the_default(
-        hass: HomeAssistant, events: list[tuple[str, str]], flow_id: Callable[[], Awaitable[str]]) -> None:
-    with calculating(events, 20.0):
-        id_, _ = await start(hass, flow_id)
-        result = await settle(hass, id_)
-
-    assert minimum_default(result) == 20.0
-    result = await hass.config_entries.flow.async_configure(id_, {CONF_MINIMUM_SETPOINT: 25})
-    assert result["errors"] == {CONF_MINIMUM_SETPOINT: "minimum_setpoint_too_low"}
 
 
 async def test_a_backend_without_setpoint_management_goes_from_areas_to_automatic_gains(
@@ -828,8 +839,8 @@ async def test_reconfigure_prefills_the_stored_minimum_or_40_and_rejects_it_when
     result = await manager.async_configure(id_, {"next_step_id": "overshoot_protection"})
     assert minimum_default(result) == expected_default
 
-    result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: minimum_default(result) if expected_default <= 28.2 else 28.2})
-    assert result["errors"] == {CONF_MINIMUM_SETPOINT: "minimum_setpoint_too_low"}
+    with pytest.raises(InvalidData):
+        await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: minimum_default(result) if expected_default < LOWEST_ALLOWED_MINIMUM_SETPOINT else 29.9})
     result = await manager.async_configure(id_, {CONF_MINIMUM_SETPOINT: 33})
     with patch.object(hass.config_entries, "async_schedule_reload"):
         result = await finish(hass, id_, True)
@@ -870,8 +881,9 @@ def test_the_translations_have_the_new_keys_and_not_the_removed_ones(language: s
         assert CONF_ALLOW_UNRESTRICTED_MODULATION in options[section]
         assert LEGACY_FORCE not in options[section]
 
-    for error in ("minimum_setpoint_too_low", "calibration_failed", "calibration_too_low"):
+    for error in ("calibration_failed", "calibration_too_low"):
         assert config["error"][error]
+    assert "minimum_setpoint_too_low" not in config["error"]
 
     assert "automatic_gains" in config["step"]["calibrated"]["menu_options"]
     assert "finish" not in config["step"]["calibrated"]["menu_options"]
@@ -884,10 +896,10 @@ def test_every_error_the_flow_can_emit_is_translated(language: str) -> None:
     source = (Path(__file__).parent.parent / "custom_components/sat/config_flow.py").read_text(encoding="utf-8").split("class SatOptionsFlowHandler")[0]
     emitted = set(re.findall(r'(?:errors?\[[^\]]+\]|errors) = (?:\{[^:]+: )?"([a-z_]+)"', source))
 
-    assert {"calibration_failed", "calibration_too_low", "minimum_setpoint_too_low"} <= emitted
+    assert {"calibration_failed", "calibration_too_low"} <= emitted
     assert emitted <= set(translation("en")["config"]["error"])
     # Only the keys of the calibration and minimum steps; "invalid_device" of the serial step is missing from some languages already
-    assert {"calibration_failed", "calibration_too_low", "minimum_setpoint_too_low"} <= set(translation(language)["config"]["error"])
+    assert {"calibration_failed", "calibration_too_low"} <= set(translation(language)["config"]["error"])
 
 
 @pytest.mark.parametrize("language", LANGUAGES)

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 
-from .const import OVERSHOOT_PROTECTION_SETPOINT, MINIMUM_SETPOINT, DEADBAND, MAXIMUM_RELATIVE_MODULATION
+from .const import OVERSHOOT_PROTECTION_SETPOINT, HEATER_OFF_SETPOINT, DEADBAND, MAXIMUM_RELATIVE_MODULATION
 from .channels import DesiredState
 from .coordinator import DeviceState, SatDataUpdateCoordinator
 from .helpers import ema
@@ -44,7 +44,7 @@ class OvershootProtection:
 
             return self._calculate_overshoot_value()
         except (Exception, asyncio.CancelledError):
-            await self._coordinator.async_submit(DesiredState(control_setpoint=MINIMUM_SETPOINT, heater_state=DeviceState.OFF))
+            await self._coordinator.async_submit(DesiredState(control_setpoint=HEATER_OFF_SETPOINT, heater_state=DeviceState.OFF))
 
             raise
 

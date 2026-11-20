@@ -7,11 +7,11 @@ from typing import Optional, Tuple, TYPE_CHECKING
 
 from .const import (
     BOILER_TEMPERATURE_SMOOTHING_TIME,
+    HEATER_OFF_SETPOINT,
     MAXIMUM_CYCLES_PER_HOUR,
     MINIMUM_CYCLES_PER_HOUR,
     MINIMUM_OFF_TIME,
     MINIMUM_PULSE_TIME,
-    MINIMUM_SETPOINT,
     BoilerStatus,
     ModulationMode,
     PWMStatus,
@@ -176,7 +176,7 @@ class PWM:
         self._on_change()
 
     def reset_setpoint_adjuster(self) -> None:
-        """Reset the setpoint adjuster and drop the setpoint it gave, so `adjusted_setpoint` is the default minimum again; PWM itself is not reset."""
+        """Reset the setpoint adjuster and drop the setpoint it gave, so `adjusted_setpoint` falls back to HEATER_OFF_SETPOINT; PWM itself is not reset."""
         self._setpoint_adjuster.reset()
         self._adjusted_setpoint = None
 
@@ -455,5 +455,5 @@ class PWM:
 
     @property
     def adjusted_setpoint(self) -> float:
-        """The setpoint adjuster's value, or MINIMUM_SETPOINT when it has none."""
-        return self._adjusted_setpoint or MINIMUM_SETPOINT
+        """The setpoint adjuster's value, or HEATER_OFF_SETPOINT when it has none."""
+        return self._adjusted_setpoint or HEATER_OFF_SETPOINT

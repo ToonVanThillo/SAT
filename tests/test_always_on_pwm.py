@@ -1,4 +1,5 @@
-"""Always-on PWM: in HEAT with a valve open the climate always runs PWM and decides from its status and mode.
+"""Always-on PWM: in HEAT with heat demand (a valve open and the smoothed setpoint above COLD_SETPOINT, 28.2) the climate always runs PWM
+and decides from its status and mode.
 
 PWM OFF requests heater OFF and releases the control setpoint; ON
 with MINIMUM requests the effective minimum setpoint and the minimum max relative modulation; ON with UNRESTRICTED requests the smoothed
@@ -296,7 +297,7 @@ class TestDecideAtTheEmsBoundary:
     async def test_the_pwm_mode_reaches_dynamic_minimum_v1(self, entry, options, climate, boiler_data, mqtt_mock, published):
         await boiler_data(**IDLE | BURNING)
 
-        with patch.object(climate.minimum_setpoint, "calculate", wraps=climate.minimum_setpoint.calculate) as calculate:
+        with patch.object(climate.dynamic_minimum_setpoint, "calculate", wraps=climate.dynamic_minimum_setpoint.calculate) as calculate:
             await run_loop(climate, mqtt_mock, published)
 
         expected = ModulationMode.UNRESTRICTED if options.get(CONF_ALLOW_UNRESTRICTED_MODULATION, True) else ModulationMode.MINIMUM
@@ -362,7 +363,7 @@ class TestDecideAtTheEmsBoundary:
 
 
 # (h) HOT_WATER: EMS-ESP's max relative modulation doesn't limit hot water, so OpenTherm over MQTT shows it, and otherwise the mode.
-# A minimum at or below COLD_SETPOINT (28.2) still gives a MINIMUM pulse with the heater ON.
+# A minimum below the lowest allowed minimum (30), e.g. from an entry stored before that bound, still gives a MINIMUM pulse with the heater ON.
 
 def otgw_disallowed(minimum: float, hot_water: str, expected: tuple[str, int], name: str) -> Any:
     return pytest.param(*otgw_entry({CONF_ALLOW_UNRESTRICTED_MODULATION: False}, {CONF_MINIMUM_SETPOINT: minimum})[1][0], hot_water, expected, id=name)
@@ -371,7 +372,7 @@ def otgw_disallowed(minimum: float, hot_water: str, expected: tuple[str, int], n
 @pytest.mark.usefixtures("mqtt_mock", "no_publish_delay", "loop_entry")
 @pytest.mark.parametrize(otgw_entry()[0] + ", hot_water, expected", [
     otgw_disallowed(30, "ON", ("HOT_WATER", 100), "hot-water"),
-    otgw_disallowed(20, "OFF", ("MINIMUM", 0), "cold-minimum"),
+    otgw_disallowed(20, "OFF", ("MINIMUM", 0), "minimum-below-30"),
     otgw_disallowed(30, "OFF", ("MINIMUM", 0), "minimum"),
 ])
 async def test_diagnostics_show_the_hot_water_state(hass, hass_client, entry, climate, mqtt_mock, published, hot_water, expected):

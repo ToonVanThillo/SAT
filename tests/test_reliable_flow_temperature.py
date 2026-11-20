@@ -22,7 +22,7 @@ from custom_components.sat.const import (
     CONF_MAXIMUM_RELATIVE_MODULATION,
     CONF_MQTT_TOPIC,
     DOMAIN,
-    MINIMUM_SETPOINT,
+    HEATER_OFF_SETPOINT,
     BoilerStatus,
     ModulationMode,
     PWMStatus,
@@ -382,7 +382,7 @@ async def test_the_force_step_is_skipped_while_hot_water_is_active_and_runs_afte
     short_burns = flame_state(average=30)
 
     await pwm.update(boiler_state(60.0, 45.0, hot_water_active=True), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
-    assert pwm.adjusted_setpoint == MINIMUM_SETPOINT
+    assert pwm.adjusted_setpoint == HEATER_OFF_SETPOINT
 
     await pwm.update(boiler_state(60.0, 45.0), short_burns, setpoint_for(0.5), minimum_setpoint=10.0, allow_unrestricted=False, outside_temperature=MILD)  # type: ignore[arg-type]
     assert pwm.adjusted_setpoint == 55.0

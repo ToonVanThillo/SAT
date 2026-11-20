@@ -25,8 +25,6 @@ from .overshoot_protection import OvershootProtection
 from .validators import valid_serial_device
 
 DEFAULT_NAME = "Living Room"
-# Pre-fill of the manual minimum setpoint without a calibration result or stored minimum; above COLD_SETPOINT
-DEFAULT_MINIMUM_SETPOINT = 40
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -250,8 +248,8 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_SIMULATED_COOLING, default=OPTIONS_DEFAULTS[CONF_SIMULATED_COOLING]): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=1, max=100, step=1)
                 ),
-                vol.Required(CONF_MINIMUM_SETPOINT, default=OPTIONS_DEFAULTS[CONF_MINIMUM_SETPOINT]): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=10, max=100, step=1)
+                vol.Required(CONF_MINIMUM_SETPOINT, default=DEFAULT_MINIMUM_SETPOINT): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=LOWEST_ALLOWED_MINIMUM_SETPOINT, max=100, step=1)
                 ),
                 vol.Required(CONF_SIMULATED_WARMING_UP, default=OPTIONS_DEFAULTS[CONF_SIMULATED_WARMING_UP]): selector.TimeSelector()
             }),
@@ -437,7 +435,7 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             self.errors = {"base": "calibration_failed"}
             return self.async_show_progress_done(next_step_id="overshoot_protection")
 
-        if self.overshoot_protection_value <= COLD_SETPOINT:
+        if self.overshoot_protection_value < LOWEST_ALLOWED_MINIMUM_SETPOINT:
             self.errors = {"base": "calibration_too_low"}
             return self.async_show_progress_done(next_step_id="overshoot_protection")
 
@@ -453,17 +451,12 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_overshoot_protection(self, _user_input: dict[str, Any] | None = None):
-        """Enter the minimum setpoint manually; it must be above the cold threshold.
+        """Enter the minimum setpoint manually; the selector enforces `LOWEST_ALLOWED_MINIMUM_SETPOINT`.
 
         Shows the errors a failed or too low calibration left, pre-filled with that calibration's result if there is one.
         """
         if _user_input is not None:
             self.errors = {}
-
-            if _user_input[CONF_MINIMUM_SETPOINT] <= COLD_SETPOINT:
-                self.errors[CONF_MINIMUM_SETPOINT] = "minimum_setpoint_too_low"
-                return await self.async_step_overshoot_protection()
-
             self.data[CONF_MINIMUM_SETPOINT] = _user_input[CONF_MINIMUM_SETPOINT]
 
             return await self.async_step_automatic_gains()
@@ -478,7 +471,7 @@ class SatFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="overshoot_protection",
             data_schema=vol.Schema({
                 vol.Required(CONF_MINIMUM_SETPOINT, default=default_minimum_setpoint): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=MINIMUM_SETPOINT, max=MAXIMUM_SETPOINT, step=1, unit_of_measurement="°C")
+                    selector.NumberSelectorConfig(min=LOWEST_ALLOWED_MINIMUM_SETPOINT, max=MAXIMUM_SETPOINT, step=1, unit_of_measurement="°C")
                 ),
             })
         )
@@ -624,7 +617,7 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
             )
 
         schema[vol.Required(CONF_MAXIMUM_SETPOINT, default=maximum_setpoint)] = selector.NumberSelector(
-            selector.NumberSelectorConfig(min=30, max=100, step=1, unit_of_measurement="°C")
+            selector.NumberSelectorConfig(min=LOWEST_ALLOWED_MINIMUM_SETPOINT, max=100, step=1, unit_of_measurement="°C")
         )
 
         schema[vol.Required(CONF_HEATING_CURVE_COEFFICIENT, default=options[CONF_HEATING_CURVE_COEFFICIENT])] = selector.NumberSelector(
